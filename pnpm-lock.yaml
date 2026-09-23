@@ -7,6 +7,10 @@ settings:
 importers:
 
   .:
+    dependencies:
+      '@opencodingpartner/cli':
+        specifier: workspace:*
+        version: link:packages/cli
     devDependencies:
       typescript:
         specifier: ^5.9.2

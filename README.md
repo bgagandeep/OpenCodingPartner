@@ -43,15 +43,19 @@ pnpm demo
 1. A status question. The conversation manager answers. No file is written.
 2. A create-file instruction. The policy router selects the coding manager and the local sandbox worker. The worker writes `.sandbox/BOARD.md`.
 
-Run the same binary directly:
+`pnpm install` links both binaries from the workspace root. They are the same program.
+
+```bash
+pnpm exec ocp demo --sandbox .sandbox
+pnpm exec opencodingpartner run --sandbox .sandbox --message "$(printf 'create notes/hello.txt with content:\nHello from the mesh.\n')"
+pnpm exec ocp route --message "Summarize the mesh status for Board review."
+```
+
+The compiled entry is the same file the binaries run:
 
 ```bash
 node packages/cli/dist/main.js demo --sandbox .sandbox
-node packages/cli/dist/main.js run --sandbox .sandbox --message "$(printf 'create notes/hello.txt with content:\nHello from the mesh.\n')"
-node packages/cli/dist/main.js route --message "Summarize the mesh status for Board review."
 ```
-
-After `pnpm install`, the package bins are `ocp` and `opencodingpartner` (`pnpm exec ocp demo --sandbox .sandbox`).
 
 A create-file turn uses this grammar, and only this grammar, in the foundation manager:
 

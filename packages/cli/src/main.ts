@@ -1,6 +1,7 @@
 #!/usr/bin/env node
+import { realpathSync } from "node:fs";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
 import { createFoundationMesh, runBoardDemo, type FoundationOptions } from "@opencodingpartner/gateway";
 import type { TurnResult } from "@opencodingpartner/mesh";
@@ -49,8 +50,16 @@ async function main(argv: readonly string[]): Promise<number> {
   return turns.every((turn) => turn.ok) ? 0 : 1;
 }
 
+function sameFile(left: string, right: string): boolean {
+  try {
+    return realpathSync(left) === realpathSync(right);
+  } catch {
+    return path.resolve(left) === path.resolve(right);
+  }
+}
+
 const entry = process.argv[1];
-const isDirect = entry !== undefined && import.meta.url === pathToFileURL(path.resolve(entry)).href;
+const isDirect = entry !== undefined && sameFile(fileURLToPath(import.meta.url), entry);
 
 if (isDirect) {
   main(process.argv.slice(2))

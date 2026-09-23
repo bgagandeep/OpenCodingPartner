@@ -18,3 +18,18 @@ test("ocp demo writes BOARD.md through the mesh", async () => {
   assert.match(result.stdout, /mock-heuristic/);
   assert.equal(await readFile(path.join(root, BOARD_DEMO_FILE.relativePath), "utf8"), BOARD_DEMO_FILE.contents);
 });
+
+test("ocp and opencodingpartner binaries write a sandbox file", async () => {
+  const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
+  for (const binName of ["ocp", "opencodingpartner"] as const) {
+    const root = await mkdtemp(path.join(tmpdir(), `${binName}-`));
+    const bin = path.join(repoRoot, "node_modules", ".bin", binName);
+    const result = spawnSync(bin, ["run", "--sandbox", root, "--message", "create hello.txt with content:\nHello from the mesh.\n"], {
+      encoding: "utf8",
+    });
+    assert.equal(result.status, 0, `${binName}\n${result.stderr}\n${result.stdout}`);
+    assert.match(result.stdout, /coding-manager/);
+    assert.match(result.stdout, /local-sandbox/);
+    assert.equal(await readFile(path.join(root, "hello.txt"), "utf8"), "Hello from the mesh.\n");
+  }
+});

@@ -12,6 +12,9 @@
     "demo": "tsc -b && node packages/cli/dist/main.js demo --sandbox .sandbox",
     "ocp": "node packages/cli/dist/main.js"
   },
+  "dependencies": {
+    "@opencodingpartner/cli": "workspace:*"
+  },
   "devDependencies": {
     "typescript": "^5.9.2"
   }

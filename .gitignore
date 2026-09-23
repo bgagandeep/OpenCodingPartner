@@ -3,3 +3,5 @@ dist/
 *.tsbuildinfo
 .sandbox/
 .DS_Store
+__pycache__/
+*.pyc

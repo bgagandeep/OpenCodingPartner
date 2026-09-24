@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
-import { codingRunnerForEnv, deleteViaOpenClaw, discoverStack, mkdirViaOpenClaw, predictWithLaya, renameViaOpenClaw, runConnectedPath, runDoctor, sendOrchestrationTurn, startSandboxWriteBridge, writeViaOpenClaw } from "@opencodingpartner/bundle";
+import { codingRunnerForEnv, deleteViaOpenClaw, discoverStack, mkdirViaOpenClaw, predictWithLaya, renameViaOpenClaw, rmdirViaOpenClaw, runConnectedPath, runDoctor, sendOrchestrationTurn, startSandboxWriteBridge, writeViaOpenClaw } from "@opencodingpartner/bundle";
 import { access, readFile } from "node:fs/promises";
 import { runChatTurn, runDemo, type ChatTurnInput } from "@opencodingpartner/gateway";
 import { playwrightBrowserDriver } from "@opencodingpartner/workers";
@@ -163,6 +163,7 @@ async function runProductTurn(message: string, sandbox: string, computerExecute:
     openclawWrite: (relativePath, content) => writeViaOpenClaw({ env, bins }, sandbox, relativePath, content),
     openclawDelete: (relativePath) => deleteViaOpenClaw({ env, bins }, sandbox, relativePath),
     openclawMkdir: (relativePath) => mkdirViaOpenClaw({ env, bins }, sandbox, relativePath),
+    openclawRmdir: (relativePath) => rmdirViaOpenClaw({ env, bins }, sandbox, relativePath),
     openclawRename: (fromPath, toPath) => renameViaOpenClaw({ env, bins }, sandbox, fromPath, toPath),
   };
   if (bins.layaPython) {

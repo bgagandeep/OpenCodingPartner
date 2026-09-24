@@ -1,15 +1,16 @@
-import { mkdir, readdir, readFile, rename, rmdir, stat, unlink } from "node:fs/promises";
+import { mkdir, readdir, readFile, rename, rmdir, stat, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { securityGate } from "./security.js";
 
 export interface ToolStep {
-  tool: "list" | "read" | "grep" | "glob" | "run" | "write" | "patch" | "delete" | "rename" | "mkdir" | "rmdir";
+  tool: "list" | "read" | "grep" | "glob" | "run" | "write" | "patch" | "delete" | "rename" | "mkdir" | "rmdir" | "todo";
   path?: string;
   to?: string;
   query?: string;
   content?: string;
   diff?: string;
   argv?: string[];
+  action?: string;
 }
 
 export interface CodingReply {
@@ -58,11 +59,12 @@ export function parseCodingReply(stdout: string): CodingReply | null {
     const steps: ToolStep[] = [];
     for (const item of parsed.steps) {
       if (!item || typeof item !== "object") return null;
-      const record = item as { tool?: unknown; path?: unknown; to?: unknown; query?: unknown; content?: unknown; diff?: unknown; argv?: unknown };
-      if (record.tool !== "list" && record.tool !== "read" && record.tool !== "grep" && record.tool !== "glob" && record.tool !== "run" && record.tool !== "write" && record.tool !== "patch" && record.tool !== "delete" && record.tool !== "rename" && record.tool !== "mkdir" && record.tool !== "rmdir") {
+      const record = item as { tool?: unknown; path?: unknown; to?: unknown; query?: unknown; content?: unknown; diff?: unknown; argv?: unknown; action?: unknown };
+      if (record.tool !== "list" && record.tool !== "read" && record.tool !== "grep" && record.tool !== "glob" && record.tool !== "run" && record.tool !== "write" && record.tool !== "patch" && record.tool !== "delete" && record.tool !== "rename" && record.tool !== "mkdir" && record.tool !== "rmdir" && record.tool !== "todo") {
         return null;
       }
       const step: ToolStep = { tool: record.tool };
+      if (typeof record.action === "string") step.action = record.action;
       if (typeof record.path === "string") step.path = record.path;
       if (typeof record.to === "string") step.to = record.to;
       if (typeof record.query === "string") step.query = record.query;
@@ -322,6 +324,78 @@ export async function rmdirSandboxDir(sandboxRoot: string, relativePath: string)
     return { ok: false, detail: "directory was not removed" };
   }
   return { ok: true, detail: "removed" };
+}
+
+export const TODO_CAP = 12;
+
+export interface SandboxTodo {
+  id: string;
+  text: string;
+  done: boolean;
+}
+
+const TODOS_FILE = path.join(".ocp", "todos.json");
+
+/** Add or complete one todo for this sandbox. Stored in `.ocp/todos.json`. Cap is 12. */
+export async function applySandboxTodo(
+  sandboxRoot: string,
+  action: string,
+  text: string,
+): Promise<{ ok: boolean; detail: string; todos: SandboxTodo[] }> {
+  const todos = await readTodos(sandboxRoot);
+  const body = text.trim();
+  if (action === "add") {
+    if (!body || body.includes("\0") || body.includes("../") || body.startsWith("/") || body.startsWith("\\")) {
+      return { ok: false, detail: "todo text refused", todos };
+    }
+    const gate = securityGate({ relativePath: "todo.txt", content: body, sandboxRoot });
+    if (!gate.allow) return { ok: false, detail: `blocked (${gate.reasons.join(", ")})`, todos };
+    if (todos.length >= TODO_CAP) return { ok: false, detail: "todo cap is 12", todos };
+    todos.push({ id: String(todos.length + 1), text: body, done: false });
+    await writeTodos(sandboxRoot, todos);
+    return { ok: true, detail: `add ${body}`, todos };
+  }
+  if (action === "complete") {
+    const index = Number(body);
+    const hit = Number.isInteger(index) && index >= 1 && index <= todos.length
+      ? todos[index - 1]
+      : todos.find((item) => item.id === body);
+    if (!hit) return { ok: false, detail: "todo missing", todos };
+    if (hit.done) return { ok: false, detail: "todo already done", todos };
+    hit.done = true;
+    await writeTodos(sandboxRoot, todos);
+    return { ok: true, detail: `complete ${hit.id}`, todos };
+  }
+  return { ok: false, detail: "todo action refused", todos };
+}
+
+/** Short list for the transcript. Empty when there are no todos. */
+export function formatTodoBlock(todos: readonly SandboxTodo[]): string {
+  if (todos.length === 0) return "";
+  const lines = todos.map((item) => `${item.id}. [${item.done ? "done" : "open"}] ${item.text}`);
+  return `Todos:\n${lines.join("\n")}`;
+}
+
+async function readTodos(sandboxRoot: string): Promise<SandboxTodo[]> {
+  try {
+    const raw = await readFile(path.join(sandboxRoot, TODOS_FILE), "utf8");
+    const parsed = JSON.parse(raw) as { todos?: unknown };
+    if (!Array.isArray(parsed.todos)) return [];
+    return parsed.todos.flatMap((item) => {
+      if (!item || typeof item !== "object") return [];
+      const record = item as { id?: unknown; text?: unknown; done?: unknown };
+      if (typeof record.id !== "string" || typeof record.text !== "string") return [];
+      return [{ id: record.id, text: record.text, done: record.done === true }];
+    });
+  } catch {
+    return [];
+  }
+}
+
+async function writeTodos(sandboxRoot: string, todos: readonly SandboxTodo[]): Promise<void> {
+  const dir = path.join(sandboxRoot, ".ocp");
+  await mkdir(dir, { recursive: true });
+  await writeFile(path.join(dir, "todos.json"), `${JSON.stringify({ todos }, null, 2)}\n`);
 }
 
 /** Unlink one file inside the sandbox. Directories and gtm/ evidence stay. */

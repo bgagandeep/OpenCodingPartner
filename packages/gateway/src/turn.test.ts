@@ -1085,6 +1085,57 @@ test("a coding turn removes an empty directory it just made", async () => {
   }
 });
 
+test("a coding turn adds two todos and completes one", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-todo-turn-"));
+  try {
+    const turn = await runChatTurn({
+      message: "fix the checklist",
+      sandboxRoot: root,
+      grokRunner: {
+        async run(argv) {
+          const prompt = argv[argv.indexOf("-p") + 1] ?? "";
+          if (!prompt.includes("Tool observations:\n")) {
+            return {
+              exitCode: 0,
+              stdout: JSON.stringify({
+                steps: [
+                  { tool: "todo", action: "add", content: "write the test" },
+                  { tool: "todo", action: "add", content: "patch add" },
+                ],
+              }),
+            };
+          }
+          assert.match(prompt, /Todo: add write the test/);
+          assert.match(prompt, /Todos:/);
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify({
+              done: true,
+              steps: [
+                { tool: "todo", action: "complete", content: "1" },
+                { tool: "todo", action: "add", content: "../secret" },
+              ],
+            }),
+          };
+        },
+      },
+    });
+    assert.match(turn.transcript, /Todo: add write the test/);
+    assert.match(turn.transcript, /Todo: add patch add/);
+    assert.match(turn.transcript, /Todo: complete 1/);
+    assert.match(turn.transcript, /Todo: add \(todo text refused\)/);
+    assert.match(turn.transcript, /Todos:\n1\. \[done\] write the test\n2\. \[open\] patch add/);
+    const stored = JSON.parse(await readFile(path.join(root, ".ocp/todos.json"), "utf8")) as { todos: { done: boolean; text: string }[] };
+    assert.equal(stored.todos[0]?.done, true);
+    assert.equal(stored.todos[1]?.done, false);
+    assert.equal(stored.todos.some((item) => item.text.includes("../")), false);
+    const listed = await listSandboxDir(root, ".");
+    assert.doesNotMatch(listed.detail, /\.ocp/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("a coding turn globs a pattern and patches only the hit file", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "ocp-glob-turn-"));
   try {

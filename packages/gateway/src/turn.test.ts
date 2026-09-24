@@ -753,6 +753,38 @@ test("a coding turn writes a file and then deletes it", async () => {
   }
 });
 
+test("a coding turn writes a file and then renames it", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-rename-turn-"));
+  try {
+    const turn = await runChatTurn({
+      message: "refactor the helper into src/lib",
+      sandboxRoot: root,
+      grokRunner: {
+        async run(argv) {
+          const prompt = argv[argv.indexOf("-p") + 1] ?? "";
+          if (!prompt.includes("Tool observations:\n")) {
+            return {
+              exitCode: 0,
+              stdout: JSON.stringify({ steps: [{ tool: "write", path: "src/old.ts", content: "export const old = 1;\n" }] }),
+            };
+          }
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify({ done: true, steps: [{ tool: "rename", path: "src/old.ts", to: "src/lib/old.ts" }] }),
+          };
+        },
+      },
+    });
+    assert.match(turn.transcript, /Tool: rename src\/old.ts → src\/lib\/old.ts/);
+    assert.match(turn.transcript, /Rename path: local sandbox/);
+    assert.match(turn.transcript, /OpenClaw does not rename files/);
+    await assert.rejects(readFile(path.join(root, "src/old.ts"), "utf8"));
+    assert.match(await readFile(path.join(root, "src/lib/old.ts"), "utf8"), /export const old/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("a coding turn greps for a symbol and patches only the hit file", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "ocp-grep-turn-"));
   try {

@@ -10,6 +10,7 @@ import {
   applyUnifiedDiff,
   commandDecision,
   deleteSandboxFile,
+  renameSandboxFile,
   grepSandbox,
   listSandboxDir,
   parseCodingReply,
@@ -681,6 +682,7 @@ async function applyToolReply(
   let security: GateDecision | null = null;
   let check: { code: number; stdout: string; stderr: string } | null = null;
   let deletedLocal = false;
+  let renamedLocal = false;
   let nextStdout = stdout;
   for (let round = 1; round <= TOOL_ROUND_CAP; round += 1) {
     const reply = parseCodingReply(nextStdout);
@@ -770,6 +772,17 @@ async function applyToolReply(
           const index = kept.indexOf(step.path);
           if (index >= 0) kept.splice(index, 1);
         }
+      } else if (step.tool === "rename" && step.path && step.to) {
+        const moved = await renameSandboxFile(input.sandboxRoot, step.path, step.to);
+        const line = moved.ok ? `Tool: rename ${step.path} → ${step.to}` : `Tool: rename ${step.path} → ${step.to} (${moved.detail})`;
+        log.push(line);
+        observations.push(line);
+        if (moved.ok) {
+          renamedLocal = true;
+          const index = kept.indexOf(step.path);
+          if (index >= 0) kept.splice(index, 1);
+          kept.push(step.to);
+        }
       }
     }
     if (reply.done || reply.steps.length === 0) break;
@@ -794,6 +807,7 @@ async function applyToolReply(
     ...log,
     openclawDrove ? "Write path: OpenClaw-driven. The gateway invoked the sandbox write bridge." : "Write path: local sandbox.",
     deletedLocal ? "Delete path: local sandbox. OpenClaw does not delete files." : "",
+    renamedLocal ? "Rename path: local sandbox. OpenClaw does not rename files." : "",
     blocked.length > 0 ? `Security agent removed ${blocked.join(", ")} after the edit.` : "",
   ].filter((line) => line.length > 0).join("\n");
   return {
@@ -915,7 +929,7 @@ async function codingPrompt(sandboxRoot: string, message: string): Promise<strin
   }
   const filesNote = message.startsWith("Tool observations:") || blocks.length === 0 ? "" : `Sandbox files already on disk:\n${blocks.join("\n")}\n`;
   const history = await priorTurns(sandboxRoot);
-  return `${history}${filesNote}User request:\n${message}\nReply with JSON only: {"steps":[{"tool":"list"|"read"|"grep"|"run"|"write"|"patch"|"delete","query":"text or /regex/","path":"relative","content":"full text for write","diff":"unified diff for patch","argv":["node","--test","relative.test.ts"]}],"done":false}. One reply is one round. After you see Tool observations, send the next round. Set "done" to true when finished. List or read before you edit. Patch a file that already exists. Write only a new file. The only command is node --test plus relative paths.`;
+  return `${history}${filesNote}User request:\n${message}\nReply with JSON only: {"steps":[{"tool":"list"|"read"|"grep"|"run"|"write"|"patch"|"delete"|"rename","to":"relative destination","query":"text or /regex/","path":"relative","content":"full text for write","diff":"unified diff for patch","argv":["node","--test","relative.test.ts"]}],"done":false}. One reply is one round. After you see Tool observations, send the next round. Set "done" to true when finished. List or read before you edit. Patch a file that already exists. Write only a new file. The only command is node --test plus relative paths.`;
 }
 
 async function fileMatches(sandboxRoot: string, relativePath: string, content: string): Promise<boolean> {

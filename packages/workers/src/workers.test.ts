@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { applyUnifiedDiff, commandDecision, deleteSandboxFile, grepSandbox, parseCodingReply } from "./agent-tools.js";
+import { applyUnifiedDiff, commandDecision, deleteSandboxFile, grepSandbox, parseCodingReply, renameSandboxFile } from "./agent-tools.js";
 import { parseCreateFileInstruction, writeSandboxFile } from "./coding.js";
 import { COMPUTER_WAIT_CAP_MS, computerChain, executeComputerVisit, pageClaim, planGtmActions, selectorDecision, urlDecision } from "./computer.js";
 import { grokBuildArgv, runOnGrokBuild } from "./grok.js";
@@ -65,6 +65,29 @@ test("delete removes one file and refuses escape, secrets, and gtm", async () =>
     const evidence = await deleteSandboxFile(root, "gtm/last-run.json");
     assert.equal(evidence.ok, false);
     assert.match(await readFile(path.join(root, "gtm/last-run.json"), "utf8"), /\{\}/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("rename moves one file and refuses escape, secrets, gtm, and overwrite", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-rename-"));
+  try {
+    await mkdir(path.join(root, "src"), { recursive: true });
+    await mkdir(path.join(root, "gtm"), { recursive: true });
+    await writeFile(path.join(root, "src/old.ts"), "export const old = 1;\n");
+    await writeFile(path.join(root, "src/kept.ts"), "export const kept = 1;\n");
+    await writeFile(path.join(root, "src/secret.ts"), "password=hunter2\n");
+    await writeFile(path.join(root, "gtm/last-run.json"), "{}\n");
+    assert.equal((await renameSandboxFile(root, "src/old.ts", "src/lib/old.ts")).ok, true);
+    await assert.rejects(readFile(path.join(root, "src/old.ts"), "utf8"));
+    assert.match(await readFile(path.join(root, "src/lib/old.ts"), "utf8"), /export const old/);
+    assert.equal((await renameSandboxFile(root, "../secret.txt", "src/x.ts")).ok, false);
+    assert.equal((await renameSandboxFile(root, "src/secret.ts", "src/moved-secret.ts")).ok, false);
+    assert.match(await readFile(path.join(root, "src/secret.ts"), "utf8"), /hunter2/);
+    assert.equal((await renameSandboxFile(root, "gtm/last-run.json", "src/run.json")).ok, false);
+    assert.equal((await renameSandboxFile(root, "src/lib/old.ts", "src/kept.ts")).detail, "target already exists");
+    assert.match(await readFile(path.join(root, "src/kept.ts"), "utf8"), /kept/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

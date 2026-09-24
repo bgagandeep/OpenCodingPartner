@@ -71,7 +71,7 @@ export interface ChatTurnInput {
   computerAllowHosts?: readonly string[];
   /** Gateway `write` tool. Set when the product talks to OpenClaw. This process does not write the bytes. */
   openclawWrite?: (relativePath: string, content: string) => Promise<{ ok: boolean; detail: string }>;
-  /** Bounded `node --test` runner. Tests inject this. The default does not use a shell. */
+  /** Bounded check runner. Tests inject this. The default does not use a shell. */
   checkExec?: (argv: readonly string[], cwd: string) => Promise<{ code: number; stdout: string; stderr: string }>;
 }
 
@@ -929,7 +929,7 @@ async function codingPrompt(sandboxRoot: string, message: string): Promise<strin
   }
   const filesNote = message.startsWith("Tool observations:") || blocks.length === 0 ? "" : `Sandbox files already on disk:\n${blocks.join("\n")}\n`;
   const history = await priorTurns(sandboxRoot);
-  return `${history}${filesNote}User request:\n${message}\nReply with JSON only: {"steps":[{"tool":"list"|"read"|"grep"|"run"|"write"|"patch"|"delete"|"rename","to":"relative destination","query":"text or /regex/","path":"relative","content":"full text for write","diff":"unified diff for patch","argv":["node","--test","relative.test.ts"]}],"done":false}. One reply is one round. After you see Tool observations, send the next round. Set "done" to true when finished. List or read before you edit. Patch a file that already exists. Write only a new file. The only command is node --test plus relative paths.`;
+  return `${history}${filesNote}User request:\n${message}\nReply with JSON only: {"steps":[{"tool":"list"|"read"|"grep"|"run"|"write"|"patch"|"delete"|"rename","to":"relative destination","query":"text or /regex/","path":"relative","content":"full text for write","diff":"unified diff for patch","argv":["node","--test","relative.test.ts"]}],"done":false}. One reply is one round. After you see Tool observations, send the next round. Set "done" to true when finished. List or read before you edit. Patch a file that already exists. Write only a new file. Allowed commands are node --test plus relative paths, pnpm test with no extra arguments, and tsc --noEmit plus relative paths.`;
 }
 
 async function fileMatches(sandboxRoot: string, relativePath: string, content: string): Promise<boolean> {

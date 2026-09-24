@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { applyUnifiedDiff, commandDecision, deleteSandboxFile, globSandbox, grepSandbox, parseCodingReply, renameSandboxFile } from "./agent-tools.js";
+import { applyUnifiedDiff, commandDecision, deleteSandboxFile, globSandbox, grepSandbox, mkdirSandboxDir, parseCodingReply, renameSandboxFile } from "./agent-tools.js";
 import { parseCreateFileInstruction, writeSandboxFile } from "./coding.js";
 import { COMPUTER_WAIT_CAP_MS, computerChain, executeComputerVisit, pageClaim, planGtmActions, selectorDecision, urlDecision } from "./computer.js";
 import { grokBuildArgv, runOnGrokBuild } from "./grok.js";
@@ -120,6 +120,33 @@ test("rename moves one file and refuses escape, secrets, gtm, and overwrite", as
     assert.equal((await renameSandboxFile(root, "gtm/last-run.json", "src/run.json")).ok, false);
     assert.equal((await renameSandboxFile(root, "src/lib/old.ts", "src/kept.ts")).detail, "target already exists");
     assert.match(await readFile(path.join(root, "src/kept.ts"), "utf8"), /kept/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("mkdir creates a nested directory and refuses escape, files, and gtm", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-mkdir-"));
+  try {
+    await writeFile(path.join(root, "note.txt"), "plain\n");
+    await mkdir(path.join(root, "gtm"), { recursive: true });
+    await mkdir(path.join(root, ".ocp"), { recursive: true });
+    const made = await mkdirSandboxDir(root, "src/lib");
+    assert.equal(made.ok, true);
+    assert.equal(made.detail, "created");
+    const again = await mkdirSandboxDir(root, "src/lib");
+    assert.equal(again.ok, true);
+    assert.equal(again.detail, "already exists");
+    const file = await mkdirSandboxDir(root, "note.txt");
+    assert.equal(file.ok, false);
+    assert.equal(file.detail, "path is a file");
+    assert.equal((await mkdirSandboxDir(root, "../outside")).ok, false);
+    assert.equal((await mkdirSandboxDir(root, "/tmp/outside")).ok, false);
+    assert.equal((await mkdirSandboxDir(root, "gtm/shots")).ok, false);
+    assert.equal((await mkdirSandboxDir(root, ".ocp/cache")).ok, false);
+    assert.equal((await mkdirSandboxDir(root, "src/password=hunter2")).ok, false);
+    const { stat } = await import("node:fs/promises");
+    assert.equal((await stat(path.join(root, "src/lib"))).isDirectory(), true);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

@@ -10,6 +10,7 @@ import {
   applyUnifiedDiff,
   commandDecision,
   deleteSandboxFile,
+  mkdirSandboxDir,
   renameSandboxFile,
   globSandbox,
   grepSandbox,
@@ -691,6 +692,7 @@ async function applyToolReply(
   let deletedRemote = false;
   let renamedLocal = false;
   let renamedRemote = false;
+  let madeDir = false;
   let nextStdout = stdout;
   for (let round = 1; round <= TOOL_ROUND_CAP; round += 1) {
     const reply = parseCodingReply(nextStdout);
@@ -776,6 +778,12 @@ async function applyToolReply(
         const line = `Tool: ${step.tool} ${step.path}`;
         log.push(line);
         observations.push(line);
+      } else if (step.tool === "mkdir" && step.path) {
+        const made = await mkdirSandboxDir(input.sandboxRoot, step.path);
+        const line = made.ok ? `Tool: mkdir ${step.path}` : `Tool: mkdir ${step.path} (${made.detail})`;
+        log.push(line);
+        observations.push(line);
+        if (made.ok) madeDir = true;
       } else if (step.tool === "delete" && step.path) {
         const removed = await deleteThroughTurn(input, openclawDrove, step.path);
         const line = removed.ok ? `Tool: delete ${step.path}` : `Tool: delete ${step.path} (${removed.detail})`;
@@ -826,6 +834,7 @@ async function applyToolReply(
     deletedLocal ? "Delete path: local sandbox." : "",
     renamedRemote ? "Rename path: OpenClaw-driven." : "",
     renamedLocal ? "Rename path: local sandbox." : "",
+    madeDir ? "Mkdir path: local sandbox." : "",
     blocked.length > 0 ? `Security agent removed ${blocked.join(", ")} after the edit.` : "",
   ].filter((line) => line.length > 0).join("\n");
   return {
@@ -947,7 +956,7 @@ async function codingPrompt(sandboxRoot: string, message: string): Promise<strin
   }
   const filesNote = message.startsWith("Tool observations:") || blocks.length === 0 ? "" : `Sandbox files already on disk:\n${blocks.join("\n")}\n`;
   const history = await priorTurns(sandboxRoot);
-  return `${history}${filesNote}User request:\n${message}\nReply with JSON only: {"steps":[{"tool":"list"|"read"|"grep"|"glob"|"run"|"write"|"patch"|"delete"|"rename","to":"relative destination","query":"text or /regex/","path":"relative","content":"full text for write","diff":"unified diff for patch","argv":["node","--test","relative.test.ts"]}],"done":false}. One reply is one round. After you see Tool observations, send the next round. Set "done" to true when finished. List or read before you edit. Patch a file that already exists. Write only a new file. Allowed commands are node --test plus relative paths, pnpm test with no extra arguments, and tsc --noEmit plus relative paths.`;
+  return `${history}${filesNote}User request:\n${message}\nReply with JSON only: {"steps":[{"tool":"list"|"read"|"grep"|"glob"|"run"|"write"|"patch"|"delete"|"rename"|"mkdir","to":"relative destination","query":"text or /regex/","path":"relative","content":"full text for write","diff":"unified diff for patch","argv":["node","--test","relative.test.ts"]}],"done":false}. One reply is one round. After you see Tool observations, send the next round. Set "done" to true when finished. List or read before you edit. Patch a file that already exists. Write only a new file. Allowed commands are node --test plus relative paths, pnpm test with no extra arguments, and tsc --noEmit plus relative paths.`;
 }
 
 async function deleteThroughTurn(

@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { applyUnifiedDiff, commandDecision, deleteSandboxFile, globSandbox, grepSandbox, mkdirSandboxDir, parseCodingReply, renameSandboxFile, rmdirSandboxDir } from "./agent-tools.js";
+import { applySandboxTodo, applyUnifiedDiff, commandDecision, deleteSandboxFile, formatTodoBlock, globSandbox, grepSandbox, listSandboxDir, mkdirSandboxDir, parseCodingReply, renameSandboxFile, rmdirSandboxDir } from "./agent-tools.js";
 import { parseCreateFileInstruction, writeSandboxFile } from "./coding.js";
 import { COMPUTER_SCROLL_CAP_PX, COMPUTER_WAIT_CAP_MS, computerChain, executeComputerVisit, pageClaim, planGtmActions, selectorDecision, urlDecision } from "./computer.js";
 import { grokBuildArgv, runOnGrokBuild } from "./grok.js";
@@ -191,6 +191,39 @@ test("rmdir removes one empty directory and refuses the rest", async () => {
     assert.equal((await rmdirSandboxDir(root, ".ocp")).ok, false);
     assert.equal((await rmdirSandboxDir(root, "src/password=hunter2")).ok, false);
     assert.equal((await stat(path.join(root, "src/note.txt"))).isFile(), true);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("todos add and complete stay in .ocp and refuse secrets and escape", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-todos-"));
+  try {
+    const first = await applySandboxTodo(root, "add", "write the test");
+    assert.equal(first.ok, true);
+    const second = await applySandboxTodo(root, "add", "patch add");
+    assert.equal(second.ok, true);
+    const done = await applySandboxTodo(root, "complete", "1");
+    assert.equal(done.ok, true);
+    assert.equal(done.todos[0]?.done, true);
+    assert.equal(done.todos[1]?.done, false);
+    assert.match(formatTodoBlock(done.todos), /Todos:\n1\. \[done\] write the test\n2\. \[open\] patch add/);
+    const byId = await applySandboxTodo(root, "complete", "2");
+    assert.equal(byId.ok, true);
+    const secret = await applySandboxTodo(root, "add", "password=hunter2");
+    assert.equal(secret.ok, false);
+    const escaped = await applySandboxTodo(root, "add", "../secret");
+    assert.equal(escaped.ok, false);
+    const stored = JSON.parse(await readFile(path.join(root, ".ocp/todos.json"), "utf8")) as { todos: { text: string }[] };
+    assert.equal(stored.todos.some((item) => item.text.includes("password") || item.text.includes("../")), false);
+    for (let n = stored.todos.length; n < 12; n += 1) {
+      assert.equal((await applySandboxTodo(root, "add", `task ${n + 1}`)).ok, true);
+    }
+    assert.equal((await applySandboxTodo(root, "add", "one too many")).detail, "todo cap is 12");
+    const listed = await listSandboxDir(root, ".");
+    assert.doesNotMatch(listed.detail, /\.ocp/);
+    const grepped = await grepSandbox(root, "write the test");
+    assert.equal(grepped.detail, "(no matches)");
   } finally {
     await rm(root, { recursive: true, force: true });
   }

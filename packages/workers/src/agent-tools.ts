@@ -1,10 +1,11 @@
-import { readdir, readFile, stat, unlink } from "node:fs/promises";
+import { mkdir, readdir, readFile, rename, stat, unlink } from "node:fs/promises";
 import path from "node:path";
 import { securityGate } from "./security.js";
 
 export interface ToolStep {
-  tool: "list" | "read" | "grep" | "run" | "write" | "patch" | "delete";
+  tool: "list" | "read" | "grep" | "run" | "write" | "patch" | "delete" | "rename";
   path?: string;
+  to?: string;
   query?: string;
   content?: string;
   diff?: string;
@@ -39,12 +40,13 @@ export function parseCodingReply(stdout: string): CodingReply | null {
     const steps: ToolStep[] = [];
     for (const item of parsed.steps) {
       if (!item || typeof item !== "object") return null;
-      const record = item as { tool?: unknown; path?: unknown; query?: unknown; content?: unknown; diff?: unknown; argv?: unknown };
-      if (record.tool !== "list" && record.tool !== "read" && record.tool !== "grep" && record.tool !== "run" && record.tool !== "write" && record.tool !== "patch" && record.tool !== "delete") {
+      const record = item as { tool?: unknown; path?: unknown; to?: unknown; query?: unknown; content?: unknown; diff?: unknown; argv?: unknown };
+      if (record.tool !== "list" && record.tool !== "read" && record.tool !== "grep" && record.tool !== "run" && record.tool !== "write" && record.tool !== "patch" && record.tool !== "delete" && record.tool !== "rename") {
         return null;
       }
       const step: ToolStep = { tool: record.tool };
       if (typeof record.path === "string") step.path = record.path;
+      if (typeof record.to === "string") step.to = record.to;
       if (typeof record.query === "string") step.query = record.query;
       if (typeof record.content === "string") step.content = record.content;
       if (typeof record.diff === "string") step.diff = record.diff;
@@ -225,4 +227,56 @@ export async function deleteSandboxFile(sandboxRoot: string, relativePath: strin
   if (!gate.allow) return { ok: false, detail: `blocked (${gate.reasons.join(", ")})` };
   await unlink(target);
   return { ok: true, detail: "deleted" };
+}
+
+/** Move one file inside the sandbox. Does not overwrite, and does not move directories. */
+export async function renameSandboxFile(
+  sandboxRoot: string,
+  fromPath: string,
+  toPath: string,
+): Promise<{ ok: boolean; detail: string }> {
+  const from = await sandboxFile(sandboxRoot, fromPath);
+  if (!from.ok) return from;
+  const dest = await sandboxFile(sandboxRoot, toPath);
+  if (!dest.ok) return dest;
+  let content = "";
+  try {
+    const info = await stat(from.target);
+    if (info.isDirectory()) return { ok: false, detail: "directories are not renamed" };
+    content = await readFile(from.target, "utf8");
+  } catch (error) {
+    const code = (error as { code?: string }).code;
+    if (code === "ENOENT") return { ok: false, detail: "file missing" };
+    return { ok: false, detail: "file could not be read" };
+  }
+  if (content.includes("\0")) return { ok: false, detail: "not a text file" };
+  const sourceGate = securityGate({ relativePath: fromPath, content, sandboxRoot });
+  if (!sourceGate.allow) return { ok: false, detail: `blocked (${sourceGate.reasons.join(", ")})` };
+  const destGate = securityGate({ relativePath: toPath, content, sandboxRoot });
+  if (!destGate.allow) return { ok: false, detail: `blocked (${destGate.reasons.join(", ")})` };
+  try {
+    await stat(dest.target);
+    return { ok: false, detail: "target already exists" };
+  } catch (error) {
+    const code = (error as { code?: string }).code;
+    if (code !== "ENOENT") return { ok: false, detail: "target could not be checked" };
+  }
+  await mkdir(path.dirname(dest.target), { recursive: true });
+  await rename(from.target, dest.target);
+  return { ok: true, detail: "renamed" };
+}
+
+async function sandboxFile(
+  sandboxRoot: string,
+  relativePath: string,
+): Promise<{ ok: true; target: string } | { ok: false; detail: string }> {
+  const root = path.resolve(sandboxRoot);
+  const target = path.resolve(root, relativePath);
+  const rootPrefix = root.endsWith(path.sep) ? root : `${root}${path.sep}`;
+  if (!target.startsWith(rootPrefix)) return { ok: false, detail: "path left the sandbox" };
+  const rel = path.relative(root, target);
+  if (rel === "gtm" || rel.startsWith(`gtm${path.sep}`) || rel === ".ocp" || rel.startsWith(`.ocp${path.sep}`)) {
+    return { ok: false, detail: "gtm and .ocp stay" };
+  }
+  return { ok: true, target };
 }

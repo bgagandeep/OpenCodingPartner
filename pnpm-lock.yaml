@@ -21,6 +21,9 @@ importers:
       '@opencodingpartner/mesh':
         specifier: workspace:*
         version: link:../mesh
+      '@opencodingpartner/policy':
+        specifier: workspace:*
+        version: link:../policy
       '@opencodingpartner/workers':
         specifier: workspace:*
         version: link:../workers
@@ -37,6 +40,9 @@ importers:
       '@opencodingpartner/gateway':
         specifier: workspace:*
         version: link:../gateway
+      '@opencodingpartner/policy':
+        specifier: workspace:*
+        version: link:../policy
     devDependencies:
       '@types/node':
         specifier: ^22.14.0

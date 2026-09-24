@@ -4,9 +4,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
-import { discoverStack, grokRunnerForBin, runConnectedPath, sendOrchestrationTurn } from "@opencodingpartner/bundle";
+import { codingRunnerForEnv, discoverStack, predictWithLaya, runConnectedPath, sendOrchestrationTurn } from "@opencodingpartner/bundle";
 import { readFile } from "node:fs/promises";
 import { runChatTurn, runDemo, type ChatTurnInput } from "@opencodingpartner/gateway";
+import { routeWithPredict } from "@opencodingpartner/policy";
 import { runChatRepl } from "./repl.js";
 
 function sameFile(left: string, right: string): boolean {
@@ -114,10 +115,18 @@ async function runProductTurn(message: string, sandbox: string, computerExecute:
     message,
     sandboxRoot: sandbox,
     computerExecute,
-    orchestration: () => sendOrchestrationTurn(message, { env: process.env, bins }),
+    orchestration: (plan) => sendOrchestrationTurn(message, { env: process.env, bins }, plan),
   };
-  if (bins.grokBin && process.env.XAI_API_KEY) {
-    input.grokRunner = grokRunnerForBin(bins.grokBin, process.env);
+  if (bins.layaPython) {
+    const pythonBin = bins.layaPython;
+    const script = path.join(repoRoot, "integrations/laya/predict.py");
+    input.layaPredict = (text) =>
+      routeWithPredict(text, (state, questions) => predictWithLaya(pythonBin, script, state, questions));
+  }
+  const meter = codingRunnerForEnv(bins, process.env);
+  if (meter.runner && meter.via) {
+    input.grokRunner = meter.runner;
+    input.codingVia = meter.via;
   }
   return runChatTurn(input);
 }

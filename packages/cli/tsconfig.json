@@ -2,5 +2,5 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": { "rootDir": "src", "outDir": "dist" },
   "include": ["src/**/*.ts"],
-  "references": [{ "path": "../gateway" }, { "path": "../bundle" }]
+  "references": [{ "path": "../gateway" }, { "path": "../bundle" }, { "path": "../policy" }]
 }

@@ -38,6 +38,14 @@ export interface RouteDecision {
   note: string;
 }
 
+/** One session plan. OpenClaw owns it when the gateway accepts it. */
+export interface ManagerPlan {
+  sessionKey: string;
+  source: "openclaw" | "local-manager";
+  roles: AgentRole[];
+  steps: string[];
+}
+
 const ROUTE_QUESTIONS: LayaQuestion[] = [
   {
     id: "route",
@@ -95,17 +103,88 @@ export function wantsAgents(state: string): boolean {
   );
 }
 
+const FALLBACK_NOTE = "System-1: fallback. Laya is not installed or the call failed.";
+const REAL_NOTE = "System-1: real Laya.";
+
 /** System-1 route only. This function does not write files or run tools. */
 export function routeMessage(message: string): RouteDecision {
-  const answers = mockPredict(message, ROUTE_QUESTIONS);
-  const choice = answers.find((answer) => answer.type === "choice");
+  return decisionFromAnswers(mockPredict(message, ROUTE_QUESTIONS), "System-1: fallback. Laya is not installed.");
+}
+
+export type LayaPredict = (state: string, questions: readonly LayaQuestion[]) => Promise<unknown>;
+
+/**
+ * Use a real Laya `Router.predict` result when the caller can produce one.
+ * A thrown call or an unreadable choice falls back and says so.
+ */
+export async function routeWithPredict(message: string, predict: LayaPredict): Promise<RouteDecision> {
+  try {
+    const raw = await predict(message, ROUTE_QUESTIONS);
+    const answers = parseLayaAnswers(raw);
+    const choice = answers.find((answer) => answer.id === "route" && answer.type === "choice");
+    if (choice?.type !== "choice" || (choice.choice !== "multi-agent" && choice.choice !== "status")) {
+      return decisionFromAnswers(mockPredict(message, ROUTE_QUESTIONS), FALLBACK_NOTE);
+    }
+    return decisionFromAnswers(answers, REAL_NOTE);
+  } catch {
+    return decisionFromAnswers(mockPredict(message, ROUTE_QUESTIONS), FALLBACK_NOTE);
+  }
+}
+
+export function questionsForRoute(): readonly LayaQuestion[] {
+  return ROUTE_QUESTIONS;
+}
+
+function decisionFromAnswers(answers: LayaAnswer[], note: string): RouteDecision {
+  const choice = answers.find((answer) => answer.id === "route" && answer.type === "choice");
   const route = choice?.type === "choice" && choice.choice === "multi-agent" ? "multi-agent" : "status";
-  const roles: AgentRole[] =
-    route === "multi-agent" ? ["coding", "qa", "security", "computer"] : [];
-  return {
-    route,
-    roles,
-    answers,
-    note: "Laya-class System-1 mock. Route and policy only.",
-  };
+  const roles: AgentRole[] = route === "multi-agent" ? ["coding", "qa", "security", "computer"] : [];
+  return { route, roles, answers, note };
+}
+
+/** Accept Laya's `{ answers, routing }` object or a flat answer list. */
+export function parseLayaAnswers(raw: unknown): LayaAnswer[] {
+  if (Array.isArray(raw)) return raw.flatMap((item) => parseOneAnswer(item));
+  if (!raw || typeof raw !== "object") return [];
+  const answers = (raw as { answers?: unknown }).answers;
+  if (!answers || typeof answers !== "object" || Array.isArray(answers)) return [];
+  return Object.entries(answers as Record<string, unknown>).flatMap(([id, value]) => {
+    if (!value || typeof value !== "object") return [];
+    return parseOneAnswer({ id, ...(value as Record<string, unknown>) });
+  });
+}
+
+function parseOneAnswer(raw: unknown): LayaAnswer[] {
+  if (!raw || typeof raw !== "object") return [];
+  const record = raw as Record<string, unknown>;
+  const id = typeof record.id === "string" ? record.id : "";
+  if (!id) return [];
+  if (typeof record.choice === "string") {
+    const probabilities =
+      record.probabilities && typeof record.probabilities === "object"
+        ? (record.probabilities as Record<string, number>)
+        : { [record.choice]: 1 };
+    return [
+      {
+        id,
+        type: "choice",
+        choice: record.choice,
+        probabilities,
+        confidence: typeof record.confidence === "number" ? record.confidence : 0,
+        rl_agent: typeof record.rl_agent === "string" ? record.rl_agent : "laya",
+      },
+    ];
+  }
+  if (typeof record.noul === "number") return [{ id, type: "noul", noul: record.noul }];
+  if (typeof record.score === "number") {
+    return [
+      {
+        id,
+        type: "score",
+        score: record.score,
+        legend: typeof record.legend === "string" ? record.legend : "",
+      },
+    ];
+  }
+  return [];
 }

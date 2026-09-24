@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { BOARD_SESSION_KEY } from "@opencodingpartner/mesh";
-import { runOnGrokBuild, type InjectedRunner } from "@opencodingpartner/workers";
+import { openAiCompatibleRunner, runOnGrokBuild, type InjectedRunner } from "@opencodingpartner/workers";
 import type { StackBins } from "./discover.js";
 
 export interface ExecResult {
@@ -32,7 +32,24 @@ export interface OrchestrationNotice {
   driver: "openclaw" | "local-swarm";
 }
 
-function sessionPlan(message: string): string {
+export interface SessionPlanInput {
+  sessionKey: string;
+  roles: readonly string[];
+  steps: readonly string[];
+}
+
+function sessionPlan(message: string, plan?: SessionPlanInput): string {
+  if (plan) {
+    return [
+      `Session plan for ${plan.sessionKey}.`,
+      `Roles: ${plan.roles.join(", ") || "none"}.`,
+      ...plan.steps,
+      "User request:",
+      message,
+      "Plan JSON:",
+      JSON.stringify({ sessionKey: plan.sessionKey, roles: plan.roles, steps: plan.steps }),
+    ].join("\n");
+  }
   return [
     `Session plan for ${BOARD_SESSION_KEY}.`,
     "Stand up a coding agent, a QA agent, a security agent, and a computer agent.",
@@ -45,7 +62,11 @@ function sessionPlan(message: string): string {
 }
 
 /** Ask the OpenClaw gateway to own the session plan. The local swarm runs only when the gateway is down. */
-export async function sendOrchestrationTurn(message: string, deps: ConnectedDeps): Promise<OrchestrationNotice> {
+export async function sendOrchestrationTurn(
+  message: string,
+  deps: ConnectedDeps,
+  plan?: SessionPlanInput,
+): Promise<OrchestrationNotice> {
   const fetchImpl = deps.fetchImpl ?? fetch;
   const exec = deps.exec ?? defaultExec;
   const gatewayHttp = (deps.gatewayHttp ?? deps.env.OPENCLAW_GATEWAY_URL ?? "http://127.0.0.1:18789").replace(/\/$/, "");
@@ -53,13 +74,13 @@ export async function sendOrchestrationTurn(message: string, deps: ConnectedDeps
   if (!up) {
     return { state: "skipped", driver: "local-swarm", detail: `OpenClaw gateway skipped (${gatewayHttp}/healthz did not answer).` };
   }
-  const plan = sessionPlan(message);
+  const planText = sessionPlan(message, plan);
   if (deps.bins.openclawBin) {
     const port = new URL(gatewayHttp).port || "18789";
     const tokenArgs = deps.env.OPENCLAW_GATEWAY_TOKEN ? ["--token", deps.env.OPENCLAW_GATEWAY_TOKEN] : [];
     const sent = await exec(
       deps.bins.openclawBin,
-      ["gateway", "call", "sessions.send", "--params", JSON.stringify({ key: BOARD_SESSION_KEY, message: plan }), "--timeout", "15000", "--port", port, ...tokenArgs],
+      ["gateway", "call", "sessions.send", "--params", JSON.stringify({ key: plan?.sessionKey ?? BOARD_SESSION_KEY, message: planText }), "--timeout", "15000", "--port", port, ...tokenArgs],
       deps.env,
     );
     if (sent.code !== 0) {
@@ -79,7 +100,7 @@ export async function sendOrchestrationTurn(message: string, deps: ConnectedDeps
     const response = await fetchImpl(`${gatewayHttp}/v1/chat/completions`, {
       method: "POST",
       headers,
-      body: JSON.stringify({ model: "openclaw/default", user: "conv:board", messages: [{ role: "user", content: plan }] }),
+      body: JSON.stringify({ model: "openclaw/default", user: "conv:board", messages: [{ role: "user", content: planText }] }),
       signal: AbortSignal.timeout(15000),
     });
     if (!response.ok) return { state: "failed", driver: "openclaw", detail: `Chat completions returned HTTP ${response.status}.` };
@@ -94,6 +115,22 @@ export async function sendOrchestrationTurn(message: string, deps: ConnectedDeps
   } catch {
     return { state: "failed", driver: "openclaw", detail: "OpenClaw gateway was up, but the session plan did not finish." };
   }
+}
+
+export function codingRunnerForEnv(
+  bins: StackBins,
+  env: NodeJS.ProcessEnv,
+): { runner?: InjectedRunner; via?: "grok-build" | "openai-compatible" } {
+  if (env.OPENAI_API_KEY && env.OPENAI_BASE_URL) {
+    return {
+      runner: openAiCompatibleRunner({ apiKey: env.OPENAI_API_KEY, baseUrl: env.OPENAI_BASE_URL, model: env.OPENAI_MODEL }),
+      via: "openai-compatible",
+    };
+  }
+  if (bins.grokBin && env.XAI_API_KEY) {
+    return { runner: grokRunnerForBin(bins.grokBin, env), via: "grok-build" };
+  }
+  return {};
 }
 
 export function grokRunnerForBin(bin: string, env: NodeJS.ProcessEnv, exec?: ConnectedDeps["exec"]): InjectedRunner {
@@ -161,8 +198,8 @@ export async function runConnectedPath(deps: ConnectedDeps): Promise<ConnectedRe
 
   if (!deps.bins.grokBin && !deps.grokRunner) {
     lines.push("Coding/QA on Grok Build: skipped (grok binary not installed). Run: pnpm bundle:install");
-  } else if (!deps.env.XAI_API_KEY) {
-    lines.push("Coding/QA on Grok Build: skipped (set XAI_API_KEY to the operator key; this repo does not store one).");
+  } else if (!deps.env.XAI_API_KEY && !(deps.env.OPENAI_API_KEY && deps.env.OPENAI_BASE_URL)) {
+    lines.push("Coding/QA on Grok Build: skipped (set XAI_API_KEY, or OPENAI_API_KEY and OPENAI_BASE_URL; this repo does not store a key).");
   } else {
     const runner = deps.grokRunner ?? spawnGrokRunner(deps.bins.grokBin ?? "grok", deps.env, exec);
     const cwd = deps.cwd ?? process.cwd();

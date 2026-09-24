@@ -11,19 +11,20 @@ There is a temporary early-test cap of 8 agents in the code. That cap is for ear
 Each turn does this:
 
 1. The chat agent opens the orchestration session `agent:board:main`.
-2. If the OpenClaw gateway answers `/healthz`, it drives the turn. The chat agent sends a session plan on `agent:board:main` with `sessions.send`, then calls `tools.invoke` for `skills.status` on that session. The plan stands up a coding agent, a QA agent, a security agent, and a computer agent. The local swarm does not also decide the turn. If the gateway is up but rejects the plan, the turn stops. The local swarm runs only when the gateway is down. OpenClaw does not write the sandbox itself: its tool API blocks remote `fs_write` and `sessions_spawn`. After the session accepts the plan, Grok Build or the local sandbox worker still performs the file edit from this process.
-3. The swarm stands up a coding agent, a QA agent, a security agent, and a computer agent.
-4. The security agent checks the path and the contents before a write.
-5. The coding agent edits the sandbox. A general request is passed to Grok Build as you wrote it, with the sandbox as the working directory, when `XAI_API_KEY` is set. The QA agent reviews the files that changed. The security agent checks the request before the edit and the written files after it. Without the key, a simple create-file message still uses the local sandbox worker. Any other request is refused with a clear note that general edits need `XAI_API_KEY`. The offline path is not a stand-in for Grok Build.
-6. The computer agent writes a go-to-market plan. Actions stay `executed: false` unless you pass `--computer-execute`. Even then, this build does not run a live browser, so the actions stay `executed: false`.
+2. System-1 picks the route. If Laya is installed, the turn runs `integrations/laya/predict.py` (`Router.predict`) and the transcript says `System-1: real Laya.` If Laya is absent or the call fails, the fallback router runs and the transcript says `System-1: fallback.`
+3. That route becomes one manager plan: session `agent:board:main`, the roles, and the steps. If the OpenClaw gateway answers `/healthz`, the chat agent sends that plan with `sessions.send`, then calls `tools.invoke` for `skills.status` on that session. The accepted plan is the only standup list. The local swarm does not build a second plan. If the gateway is up but rejects the plan, the turn stops and no worker runs. If the gateway is down, the transcript prints the same plan object with source `local-manager` before workers run. OpenClaw does not write the sandbox itself: its tool API blocks remote `fs_write` and `sessions_spawn`. After the session accepts the plan, the file edit still runs from this process.
+4. The swarm stands up only the roles in that plan.
+5. The security agent checks the path and the contents before a write.
+6. The coding agent edits the sandbox. A general request is the prompt, with the sandbox as the working directory. Native Grok uses `XAI_API_KEY` and the `grok` binary (`grok -p ... --cwd ... --output-format streaming-json`). An OpenAI-compatible meter uses `OPENAI_API_KEY` and `OPENAI_BASE_URL` (LiteLLM or OpenRouter) and writes the files the model returns. The QA agent reviews the files that changed. The security agent checks the request before the edit and the written files after it. Without a key, a simple create-file message still uses the local sandbox worker. Any other request is refused with a clear note that general edits need `XAI_API_KEY` or `OPENAI_API_KEY` and `OPENAI_BASE_URL`. The offline path is not a stand-in for Grok Build.
+7. The computer agent writes a go-to-market plan. Actions stay `executed: false` unless you pass `--computer-execute`. Even then, this build does not run a live browser, so the actions stay `executed: false`.
 
-The transcript is one block: session, route, which agents stood up, the security decision, the file write, the QA result, and the computer plan.
+The transcript is one block: session, route, which System-1 path ran, the manager plan, which agents stood up, the security decision, the file write, the QA result, and the computer plan.
 
 ## A turn
 
 1. You send a message to the chat agent (`ocp` or `opencodingpartner`).
 2. The orchestration agent swarm opens a session. The session shape follows OpenClaw: a binding of channel, account, and agent, and a session key like `agent:board:main`.
-3. A Laya-class System-1 router picks the route. It does not write code. Offline, a mock router runs. The real bridge is `integrations/laya/predict.py`. The demo does not run that script.
+3. System-1 picks the route and does not write code. The real bridge is `integrations/laya/predict.py`. The chat turn runs it when Laya is installed. Otherwise the transcript says the fallback ran. The offline demo does not download weights.
 4. The swarm stands up the agents the route needs. A build-and-sell request stands up all four roles.
 5. The security agent checks the path and the file contents before any write. It blocks path escape and secrets.
 6. The coding agent writes files. Offline, a local sandbox worker does the write. The Grok Build seam builds `grok -p "<prompt>" --cwd <dir> --output-format streaming-json` and calls an injected runner. The demo does not spawn `grok`.
@@ -60,7 +61,7 @@ The chat agent reads `.bundle/stack.json` or `OCP_OPENCLAW_BIN`, `OCP_GROK_BIN`,
 `pnpm demo:connected` (`ocp demo --live`) does two real steps:
 
 1. It checks `GET /healthz` on the OpenClaw gateway (`http://127.0.0.1:18789`, or `OPENCLAW_GATEWAY_URL`). If the gateway answers, the chat agent sends a turn with `openclaw gateway call sessions.send` on session `agent:board:main`. If the `openclaw` binary is missing but HTTP is up, it uses `POST /v1/chat/completions`. If nothing answers `/healthz`, the chat turn is skipped.
-2. Coding and QA agents call the bundled `grok` binary through the Grok Build runner (`grok -p ... --cwd ... --output-format streaming-json`). That call runs only when `XAI_API_KEY` is set. The key stays in the operator environment. This repo does not store it. If the key or the binary is missing, that step is skipped.
+2. Coding and QA agents call the bundled `grok` binary through the Grok Build runner (`grok -p ... --cwd ... --output-format streaming-json`) when `XAI_API_KEY` is set. `OPENAI_API_KEY` plus `OPENAI_BASE_URL` selects the OpenAI-compatible meter instead. The key stays in the operator environment. This repo does not store it. If no key is set, that step is skipped.
 
 The report says what ran and what was skipped. The offline sandbox demo does not use this path. Optional gateway auth is `OPENCLAW_GATEWAY_TOKEN`. Do not put that token in the repo.
 
@@ -69,7 +70,7 @@ The report says what ran and what was skipped. The offline sandbox demo does not
 | Package | Job |
 | --- | --- |
 | `mesh` | Roles, session binding, temporary agent cap |
-| `policy` | Mock System-1 route |
+| `policy` | System-1 route (real Laya result or fallback) |
 | `swarm` | Stand up, list, and dispatch agents |
 | `workers` | Local coding write, QA check, security gate, computer plan, Grok Build argv |
 | `gateway` | One chat turn |

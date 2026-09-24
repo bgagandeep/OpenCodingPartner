@@ -1,9 +1,9 @@
-import { mkdir, readdir, readFile, rename, stat, unlink } from "node:fs/promises";
+import { mkdir, readdir, readFile, rename, rmdir, stat, unlink } from "node:fs/promises";
 import path from "node:path";
 import { securityGate } from "./security.js";
 
 export interface ToolStep {
-  tool: "list" | "read" | "grep" | "glob" | "run" | "write" | "patch" | "delete" | "rename" | "mkdir";
+  tool: "list" | "read" | "grep" | "glob" | "run" | "write" | "patch" | "delete" | "rename" | "mkdir" | "rmdir";
   path?: string;
   to?: string;
   query?: string;
@@ -59,7 +59,7 @@ export function parseCodingReply(stdout: string): CodingReply | null {
     for (const item of parsed.steps) {
       if (!item || typeof item !== "object") return null;
       const record = item as { tool?: unknown; path?: unknown; to?: unknown; query?: unknown; content?: unknown; diff?: unknown; argv?: unknown };
-      if (record.tool !== "list" && record.tool !== "read" && record.tool !== "grep" && record.tool !== "glob" && record.tool !== "run" && record.tool !== "write" && record.tool !== "patch" && record.tool !== "delete" && record.tool !== "rename" && record.tool !== "mkdir") {
+      if (record.tool !== "list" && record.tool !== "read" && record.tool !== "grep" && record.tool !== "glob" && record.tool !== "run" && record.tool !== "write" && record.tool !== "patch" && record.tool !== "delete" && record.tool !== "rename" && record.tool !== "mkdir" && record.tool !== "rmdir") {
         return null;
       }
       const step: ToolStep = { tool: record.tool };
@@ -298,6 +298,30 @@ export async function mkdirSandboxDir(sandboxRoot: string, relativePath: string)
     return { ok: false, detail: "directory was not created" };
   }
   return { ok: true, detail: "created" };
+}
+
+/** Remove one empty directory inside the sandbox. A file or a non-empty directory stays. */
+export async function rmdirSandboxDir(sandboxRoot: string, relativePath: string): Promise<{ ok: boolean; detail: string }> {
+  const gate = securityGate({ relativePath, content: relativePath, sandboxRoot });
+  if (!gate.allow) return { ok: false, detail: `blocked (${gate.reasons.join(", ")})` };
+  const place = await sandboxFile(sandboxRoot, relativePath);
+  if (!place.ok) return place;
+  try {
+    const info = await stat(place.target);
+    if (!info.isDirectory()) return { ok: false, detail: "path is a file" };
+    const names = await readdir(place.target);
+    if (names.length > 0) return { ok: false, detail: "directory is not empty" };
+  } catch (error) {
+    const code = (error as { code?: string }).code;
+    if (code === "ENOENT") return { ok: false, detail: "directory missing" };
+    return { ok: false, detail: "directory could not be checked" };
+  }
+  try {
+    await rmdir(place.target);
+  } catch {
+    return { ok: false, detail: "directory was not removed" };
+  }
+  return { ok: true, detail: "removed" };
 }
 
 /** Unlink one file inside the sandbox. Directories and gtm/ evidence stay. */

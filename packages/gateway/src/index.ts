@@ -60,7 +60,7 @@ export interface ChatTurnInput {
   /** When set, the coding agent edits the sandbox through Grok Build or an OpenAI-compatible meter. */
   grokRunner?: InjectedRunner;
   /** Which meter the runner uses. Defaults to grok-build when a runner is set. */
-  codingVia?: "grok-build" | "openai-compatible" | "litellm";
+  codingVia?: "grok-build" | "openai-compatible" | "litellm" | "scripted";
   /** Real Laya route. When omitted, the turn uses the fallback router and says so. */
   layaPredict?: (message: string) => Promise<RouteDecision>;
   /** Ask the computer agent to open a named URL. Without a driver, actions stay executed: false. */
@@ -102,7 +102,7 @@ const sessionHistory = new Map<string, string[]>();
 const HISTORY_TURNS = 6;
 const HISTORY_CHARS = 4000;
 
-type CodingVia = "local-sandbox" | "grok-build" | "openai-compatible" | "litellm" | "openclaw-write";
+type CodingVia = "local-sandbox" | "grok-build" | "openai-compatible" | "litellm" | "openclaw-write" | "scripted";
 
 function idempotencyKey(input: ChatTurnInput, sessionKey: string): string {
   const mode = input.codingVia ?? (input.grokRunner ? "grok-build" : "local-sandbox");
@@ -668,6 +668,7 @@ function meterLine(via: CodingVia): string {
   if (via === "litellm") return "Meter: LiteLLM";
   if (via === "openai-compatible") return "Meter: OpenAI-compatible";
   if (via === "grok-build") return "Meter: Grok Build";
+  if (via === "scripted") return "Meter: scripted";
   return "Meter: none";
 }
 

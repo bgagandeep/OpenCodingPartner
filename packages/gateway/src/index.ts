@@ -34,7 +34,11 @@ export interface ChatTurnInput {
   message: string;
   sandboxRoot: string;
   /** When set, the turn also notifies a live OpenClaw gateway. */
-  orchestration?: () => Promise<{ state: "ran" | "skipped" | "failed"; detail: string }>;
+  orchestration?: () => Promise<{
+    state: "ran" | "skipped" | "failed";
+    detail: string;
+    driver?: "openclaw" | "local-swarm";
+  }>;
   /** When set, the coding agent edits the sandbox through Grok Build. */
   grokRunner?: InjectedRunner;
   /** Ask the computer agent to run. The stub still records executed: false. */
@@ -91,8 +95,42 @@ async function executeTurn(input: ChatTurnInput, session: SwarmSession, key: str
   let coding: ChatTurnResult["coding"] = null;
   let qa: QaResult | null = null;
   let computer: GtmPlan | null = null;
-  const notice = input.orchestration ? await input.orchestration() : { state: "skipped" as const, detail: "OpenClaw gateway was not used. The local swarm ran this turn." };
-  const orchestration = `${notice.state}: ${notice.detail}`;
+  const notice = input.orchestration
+    ? await input.orchestration()
+    : { state: "skipped" as const, detail: "OpenClaw gateway was not used. The local swarm ran this turn.", driver: "local-swarm" as const };
+  const openclawDrove = notice.driver === "openclaw" && notice.state === "ran";
+  const openclawFailed = notice.driver === "openclaw" && notice.state === "failed";
+  if (openclawDrove) {
+    decision.route = "multi-agent";
+    decision.roles = ["coding", "qa", "security", "computer"];
+    decision.note = "OpenClaw session plan stood up the agents.";
+    swarm.standUp(decision.roles);
+    agents.splice(0, agents.length, ...swarm.list());
+  }
+  const orchestration = openclawDrove
+    ? `ran: OpenClaw drove this turn. ${notice.detail} File edits still run here because the gateway blocks remote fs_write and sessions_spawn.`
+    : openclawFailed
+      ? `failed: OpenClaw gateway was up but did not accept the session plan. ${notice.detail} The local swarm did not take over.`
+      : `${notice.state}: ${notice.detail}`;
+
+  if (openclawFailed) {
+    const failedResult: ChatTurnResult = {
+      session,
+      decision,
+      agents,
+      security,
+      coding,
+      qa,
+      computer,
+      orchestration,
+      computerExecuteRequested: input.computerExecute === true,
+      replayed: false,
+      transcript: "",
+    };
+    failedResult.transcript = formatTranscript(failedResult);
+    completed.set(key, failedResult);
+    return failedResult;
+  }
 
   if (instruction && agents.some((agent) => agent.role === "security")) {
     security = swarm.dispatch("security", () =>
@@ -140,7 +178,7 @@ async function executeTurn(input: ChatTurnInput, session: SwarmSession, key: str
         via: "grok-build",
       };
       if (agents.some((agent) => agent.role === "qa")) {
-        qa = await swarm.dispatch("qa", () => reviewChangedFiles(kept));
+        qa = await swarm.dispatch("qa", () => reviewChangedFiles(input.sandboxRoot, kept, grok.exitCode === 0));
       }
       if (blocked.length > 0) {
         coding.note = `Security agent removed ${blocked.join(", ")} after the edit.`;

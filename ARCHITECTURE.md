@@ -11,7 +11,7 @@ There is a temporary early-test cap of 8 agents in the code. That cap is for ear
 Each turn does this:
 
 1. The chat agent opens the orchestration session `agent:board:main`.
-2. If the OpenClaw gateway answers `/healthz`, the same message is sent with `sessions.send`. If it does not answer, the transcript says the gateway was skipped and the local swarm continues.
+2. If the OpenClaw gateway answers `/healthz`, it drives the turn. The chat agent sends a session plan on `agent:board:main` with `sessions.send`, then calls `tools.invoke` for `skills.status` on that session. The plan stands up a coding agent, a QA agent, a security agent, and a computer agent. The local swarm does not also decide the turn. If the gateway is up but rejects the plan, the turn stops. The local swarm runs only when the gateway is down. OpenClaw does not write the sandbox itself: its tool API blocks remote `fs_write` and `sessions_spawn`. After the session accepts the plan, Grok Build or the local sandbox worker still performs the file edit from this process.
 3. The swarm stands up a coding agent, a QA agent, a security agent, and a computer agent.
 4. The security agent checks the path and the contents before a write.
 5. The coding agent edits the sandbox. A general request is passed to Grok Build as you wrote it, with the sandbox as the working directory, when `XAI_API_KEY` is set. The QA agent reviews the files that changed. The security agent checks the request before the edit and the written files after it. Without the key, a simple create-file message still uses the local sandbox worker. Any other request is refused with a clear note that general edits need `XAI_API_KEY`. The offline path is not a stand-in for Grok Build.

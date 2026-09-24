@@ -55,8 +55,25 @@ export function changedSandboxFiles(before: ReadonlyMap<string, string>, after: 
   return [...names].filter((name) => before.get(name) !== after.get(name)).sort();
 }
 
-/** QA looks at the files a general coding turn changed. */
-export function reviewChangedFiles(files: readonly string[]): QaResult {
-  if (files.length === 0) return { pass: false, summary: "no files changed" };
-  return { pass: true, summary: `reviewed ${files.join(", ")}` };
+/** QA reads each kept file. An empty list fails when coding reported success. */
+export async function reviewChangedFiles(
+  sandboxRoot: string,
+  files: readonly string[],
+  codingExitOk: boolean,
+): Promise<QaResult> {
+  if (files.length === 0) {
+    return {
+      pass: false,
+      summary: codingExitOk ? "coding reported success but kept no files" : "no files changed",
+    };
+  }
+  const ok: string[] = [];
+  const bad: string[] = [];
+  for (const file of files) {
+    const check = await qaCheckFile(sandboxRoot, file);
+    if (check.pass) ok.push(`${file} is non-empty`);
+    else bad.push(`${file}: ${check.summary}`);
+  }
+  if (bad.length > 0) return { pass: false, summary: bad.join("; ") };
+  return { pass: true, summary: `checked ${ok.join("; ")}` };
 }

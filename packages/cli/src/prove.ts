@@ -5,6 +5,7 @@ import { runChatTurn } from "@opencodingpartner/gateway";
 import type { BrowserDriver } from "@opencodingpartner/workers";
 
 const MATH = "src/math.mjs";
+const COPY = "src/math.copy.mjs";
 const TEST = "src/math.test.mjs";
 const BUGGY = "export function add(left, right) {\n  return left - right;\n}\n";
 const FIXED = "export function add(left, right) {\n  return left + right;\n}\n";
@@ -53,6 +54,7 @@ export async function proveCoding(): Promise<{ code: number; text: string }> {
               done: true,
               steps: [
                 { tool: "patch", path: MATH, diff: PATCH },
+                { tool: "copy", path: MATH, to: COPY },
                 { tool: "run", argv: ["node", "--test", TEST] },
               ],
             }),
@@ -68,15 +70,24 @@ export async function proveCoding(): Promise<{ code: number; text: string }> {
     }
     const reasons: string[] = [];
     if (math !== FIXED) reasons.push(`${MATH} was not patched to add`);
+    let copied = "";
+    try {
+      copied = await readFile(path.join(root, COPY), "utf8");
+    } catch {
+      copied = "";
+    }
+    if (copied !== FIXED) reasons.push(`${COPY} did not match the patched source`);
     try {
       await readFile(path.join(root, TEST), "utf8");
     } catch {
       reasons.push(`${TEST} is missing`);
     }
-    for (const line of [`Tool: mkdir src`, `Tool: write ${MATH}`, `Tool: glob src/**/*.mjs`, `Tool: patch ${MATH}`, `Tool: run node --test ${TEST}`]) {
+    for (const line of [`Tool: mkdir src`, `Tool: write ${MATH}`, `Tool: glob src/**/*.mjs`, `Tool: patch ${MATH}`, `Tool: copy ${MATH} → ${COPY}`, `Tool: run node --test ${TEST}`]) {
       if (!turn.transcript.includes(line)) reasons.push(`transcript missing ${line}`);
     }
     if (!turn.transcript.includes("Mkdir path: local sandbox.")) reasons.push("mkdir was not local");
+    if (!turn.transcript.includes("Copy path: local sandbox.")) reasons.push("copy was not local");
+    if (turn.transcript.includes("Copy path: OpenClaw-driven.")) reasons.push("copy claimed OpenClaw");
     if (turn.qa?.pass !== true) reasons.push("the check did not pass");
     if (reasons.length > 0) {
       return {
@@ -86,7 +97,7 @@ export async function proveCoding(): Promise<{ code: number; text: string }> {
     }
     return {
       code: 0,
-      text: `ocp prove coding\nPassed. A scripted runner made src/, wrote ${MATH}, globbed it, patched add, and node --test exited 0.\nNo live meter ran. No API key was used.\n\n${turn.transcript}`,
+      text: `ocp prove coding\nPassed. A scripted runner made src/, wrote ${MATH}, globbed it, patched add, copied it to ${COPY}, and node --test exited 0.\nThe copy is local. OpenClaw did not copy the file. No live meter ran. No API key was used.\n\n${turn.transcript}`,
     };
   } finally {
     await rm(root, { recursive: true, force: true });

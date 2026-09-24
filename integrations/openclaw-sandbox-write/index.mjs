@@ -46,6 +46,21 @@ export default function register(api) {
     },
   });
   api.registerTool({
+    name: "ocp_sandbox_mkdir",
+    description: "Create one sandbox directory through the OpenCodingPartner write bridge.",
+    parameters: {
+      type: "object",
+      properties: {
+        bridgeUrl: { type: "string" },
+        relativePath: { type: "string" },
+      },
+      required: ["bridgeUrl", "relativePath"],
+    },
+    async execute(_id, args) {
+      return postBridge(args.bridgeUrl, { relativePath: args.relativePath });
+    },
+  });
+  api.registerTool({
     name: "ocp_sandbox_rename",
     description: "Rename one sandbox file through the OpenCodingPartner write bridge.",
     parameters: {

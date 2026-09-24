@@ -3,5 +3,5 @@
   "name": "OpenCodingPartner sandbox write",
   "description": "Gateway tool that calls the local OpenCodingPartner write bridge. It does not use fs_write.",
   "activation": { "onStartup": true },
-  "contracts": { "tools": ["ocp_sandbox_write", "ocp_sandbox_delete", "ocp_sandbox_rename"] }
+  "contracts": { "tools": ["ocp_sandbox_write", "ocp_sandbox_delete", "ocp_sandbox_rename", "ocp_sandbox_mkdir"] }
 }

@@ -2,12 +2,12 @@ import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import test from "node:test";
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { routeWithPredict } from "@opencodingpartner/policy";
 import { runOnGrokBuild } from "@opencodingpartner/workers";
-import { deleteViaOpenClaw, LITELLM_LOCAL_BASE_URL, renameViaOpenClaw, resolveCodingMeter, runConnectedPath, writeViaOpenClaw } from "./connected.js";
+import { deleteViaOpenClaw, LITELLM_LOCAL_BASE_URL, mkdirViaOpenClaw, renameViaOpenClaw, resolveCodingMeter, runConnectedPath, writeViaOpenClaw } from "./connected.js";
 import { startSandboxWriteBridge } from "./write-bridge.js";
 import { predictWithLaya } from "./laya.js";
 
@@ -240,6 +240,78 @@ test("the gateway invokes delete and rename and does not send fs_delete", async 
     );
     assert.equal(missing.missing, true);
     assert.equal(await readFile(path.join(root, "src", "secret.ts"), "utf8"), "password=hunter2\n");
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+    await bridge.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("the gateway invokes mkdir and does not send fs_mkdir", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-mkdir-http-"));
+  const bridge = await startSandboxWriteBridge(root);
+  const seen: { tool?: string }[] = [];
+  const server = createServer(async (req, res) => {
+    if (req.url === "/healthz") {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end('{"ok":true}');
+      return;
+    }
+    const chunks: Buffer[] = [];
+    for await (const chunk of req) chunks.push(chunk as Buffer);
+    const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as {
+      tool?: string;
+      args?: { bridgeUrl?: string; relativePath?: string };
+    };
+    seen.push({ tool: body.tool });
+    if (body.tool === "fs_mkdir" || body.tool === "fs_write") {
+      res.writeHead(404, { "content-type": "application/json" });
+      res.end('{"ok":false}');
+      return;
+    }
+    if (body.args?.bridgeUrl && body.tool === "ocp_sandbox_mkdir") {
+      const forwarded = await fetch(body.args.bridgeUrl, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ relativePath: body.args.relativePath }),
+      });
+      res.writeHead(forwarded.status, { "content-type": "application/json" });
+      res.end(await forwarded.text());
+      return;
+    }
+    res.writeHead(404, { "content-type": "application/json" });
+    res.end('{"ok":false}');
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+  const port = (server.address() as AddressInfo).port;
+  const deps = { env: { OCP_WRITE_BRIDGE_URL: bridge.url }, bins: {}, gatewayHttp: `http://127.0.0.1:${port}` };
+  try {
+    const made = await mkdirViaOpenClaw(deps, root, "src/lib");
+    assert.equal(made.ok, true);
+    assert.equal(made.missing, false);
+    assert.equal((await stat(path.join(root, "src/lib"))).isDirectory(), true);
+    const escaped = await mkdirViaOpenClaw(deps, root, "../outside");
+    assert.equal(escaped.ok, false);
+    assert.equal(escaped.missing, false);
+    const secret = await mkdirViaOpenClaw(deps, root, "src/password=hunter2");
+    assert.equal(secret.ok, false);
+    assert.equal(seen.some((call) => call.tool === "fs_mkdir"), false);
+    assert.equal(seen.some((call) => call.tool === "ocp_sandbox_mkdir"), true);
+    const missing = await mkdirViaOpenClaw(
+      {
+        env: { OCP_WRITE_BRIDGE_URL: bridge.url },
+        bins: {},
+        gatewayHttp: `http://127.0.0.1:${port}`,
+        fetchImpl: async (url) => {
+          if (String(url).endsWith("/healthz")) return new Response('{"ok":true}', { status: 200 });
+          return new Response('{"ok":false}', { status: 404 });
+        },
+      },
+      root,
+      "src/later",
+    );
+    assert.equal(missing.missing, true);
+    await assert.rejects(stat(path.join(root, "src/later")));
   } finally {
     await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
     await bridge.close();

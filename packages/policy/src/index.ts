@@ -88,7 +88,11 @@ export function mockPredict(state: string, questions: readonly LayaQuestion[]): 
 }
 
 export function wantsAgents(state: string): boolean {
-  return /stand up|coding agent|qa agent|security agent|computer agent|\bcreate\b|\bsell\b/i.test(state);
+  const text = state.trim();
+  if (/^(hello|hi|hey|status|help)\.?$/i.test(text)) return false;
+  return /stand up|coding agent|qa agent|security agent|computer agent|\bcreate\b|\bsell\b|\badd\b|\bedit\b|\bfix\b|\bwrite\b|\brefactor\b|\breadme\b/i.test(
+    text,
+  );
 }
 
 /** System-1 route only. This function does not write files or run tools. */

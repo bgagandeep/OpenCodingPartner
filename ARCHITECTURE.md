@@ -14,7 +14,7 @@ Each turn does this:
 2. If the OpenClaw gateway answers `/healthz`, the same message is sent with `sessions.send`. If it does not answer, the transcript says the gateway was skipped and the local swarm continues.
 3. The swarm stands up a coding agent, a QA agent, a security agent, and a computer agent.
 4. The security agent checks the path and the contents before a write.
-5. The coding agent writes the file. It uses the bundled `grok` binary when `XAI_API_KEY` is set. Otherwise it uses the local sandbox worker. The QA agent then checks that file.
+5. The coding agent edits the sandbox. A general request is passed to Grok Build as you wrote it, with the sandbox as the working directory, when `XAI_API_KEY` is set. The QA agent reviews the files that changed. The security agent checks the request before the edit and the written files after it. Without the key, a simple create-file message still uses the local sandbox worker. Any other request is refused with a clear note that general edits need `XAI_API_KEY`. The offline path is not a stand-in for Grok Build.
 6. The computer agent writes a go-to-market plan. Actions stay `executed: false` unless you pass `--computer-execute`. Even then, this build does not run a live browser, so the actions stay `executed: false`.
 
 The transcript is one block: session, route, which agents stood up, the security decision, the file write, the QA result, and the computer plan.

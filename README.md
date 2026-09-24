@@ -46,7 +46,11 @@ pnpm exec ocp chat --sandbox .sandbox
 
 Type a message, then type `exit`. One turn stands up a coding agent, a QA agent, a security agent, and a computer agent. The transcript says what each one did.
 
-This message writes a file with the local sandbox worker:
+A general request, such as "add a README section explaining install", is sent to Grok Build with the sandbox as the working directory. The QA agent then reviews the files that changed. The security agent checks the request first, and checks the written files after. A file that escapes the sandbox or contains a secret is removed.
+
+That general path needs `XAI_API_KEY` and the `grok` binary. Without them, the chat agent says so. It does not pretend the offline sandbox can do open-ended edits.
+
+This simple message still writes a file on the local sandbox worker:
 
 ```text
 Use Grok Build to create hello.txt with content:
@@ -63,7 +67,7 @@ hello
 "
 ```
 
-When the OpenClaw gateway is up, the same chat turn is also sent to session `agent:board:main`. When `XAI_API_KEY` is set and the bundled `grok` binary is installed, the coding agent edits the sandbox with Grok Build instead of the local writer. If the gateway is down, or the key is missing, the local swarm still writes the file. Do not commit `XAI_API_KEY` or `OPENCLAW_GATEWAY_TOKEN`.
+When the OpenClaw gateway is up, the same chat turn is also sent to session `agent:board:main`. The local swarm still coordinates the roles. When `XAI_API_KEY` is set and the bundled `grok` binary is installed, the coding agent passes your message to Grok Build and lets it edit the sandbox. If the gateway is down, that notify step is skipped. If the key is missing, only a simple create-file message is written locally. Do not commit `XAI_API_KEY` or `OPENCLAW_GATEWAY_TOKEN`.
 
 ```bash
 pnpm bundle:install

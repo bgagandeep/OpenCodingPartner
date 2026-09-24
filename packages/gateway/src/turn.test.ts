@@ -856,6 +856,57 @@ test("git status and git diff run, and git commit is refused", async () => {
   }
 });
 
+test("git log --oneline -n runs, and a wide log is refused", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-git-log-"));
+  try {
+    const seen: string[][] = [];
+    const turn = await runChatTurn({
+      message: "fix the note and show git log",
+      sandboxRoot: root,
+      checkExec: async (argv) => {
+        seen.push([...argv]);
+        return { code: 0, stdout: "abc123 note\n", stderr: "" };
+      },
+      grokRunner: {
+        async run() {
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify({
+              done: true,
+              steps: [{ tool: "run", argv: ["git", "log", "--oneline", "-n", "5"] }],
+            }),
+          };
+        },
+      },
+    });
+    assert.deepEqual(seen, [["git", "log", "--oneline", "-n", "5"]]);
+    assert.match(turn.transcript, /Tool: run git log --oneline -n 5 \(exit 0\)/);
+    const refused = await runChatTurn({
+      message: "fix the note and refuse a long git log",
+      sandboxRoot: root,
+      checkExec: async () => {
+        throw new Error("refused log must not run");
+      },
+      grokRunner: {
+        async run(argv) {
+          const prompt = argv[argv.indexOf("-p") + 1] ?? "";
+          if (prompt.includes("QA failed")) return { exitCode: 0, stdout: JSON.stringify({ done: true, steps: [] }) };
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify({
+              done: true,
+              steps: [{ tool: "run", argv: ["git", "log", "--oneline", "-n", "50"] }],
+            }),
+          };
+        },
+      },
+    });
+    assert.match(refused.transcript, /Tool: run refused/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("a coding turn writes a file and then renames it", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "ocp-rename-turn-"));
   try {

@@ -85,6 +85,8 @@ export interface ChatTurnInput {
   openclawMkdir?: (relativePath: string) => Promise<{ ok: boolean; missing: boolean; detail: string }>;
   /** Gateway rmdir tool. `missing` means the plugin is absent and a local rmdir is allowed. */
   openclawRmdir?: (relativePath: string) => Promise<{ ok: boolean; missing: boolean; detail: string }>;
+  /** Gateway copy tool. `missing` means the plugin is absent and a local copy is allowed. */
+  openclawCopy?: (fromPath: string, toPath: string) => Promise<{ ok: boolean; missing: boolean; detail: string }>;
   /** Bounded check runner. Tests inject this. The default does not use a shell. */
   checkExec?: (argv: readonly string[], cwd: string) => Promise<{ code: number; stdout: string; stderr: string }>;
 }
@@ -226,7 +228,7 @@ async function executeTurn(input: ChatTurnInput, session: SwarmSession, key: str
     security = messageGate;
     if (!messageGate.allow) {
       coding = { relativePath: "the request", wrote: false, via };
-    } else if (input.grokRunner && openclawDrove && (input.openclawWrite || input.openclawDelete || input.openclawRename || input.openclawMkdir || input.openclawRmdir)) {
+    } else if (input.grokRunner && openclawDrove && (input.openclawWrite || input.openclawDelete || input.openclawRename || input.openclawMkdir || input.openclawRmdir || input.openclawCopy)) {
       const runner = input.grokRunner;
       const write = input.openclawWrite;
       const stage = await mkdtemp(path.join(tmpdir(), "ocp-stage-"));
@@ -702,6 +704,7 @@ async function applyToolReply(
   let renamedLocal = false;
   let renamedRemote = false;
   let copiedLocal = false;
+  let copiedRemote = false;
   let madeDirLocal = false;
   let madeDirRemote = false;
   let removedDirLocal = false;
@@ -841,12 +844,13 @@ async function applyToolReply(
           kept.push(step.to);
         }
       } else if (step.tool === "copy" && step.path && step.to) {
-        const copied = await copySandboxFile(input.sandboxRoot, step.path, step.to);
+        const copied = await copyThroughTurn(input, openclawDrove, step.path, step.to);
         const line = copied.ok ? `Tool: copy ${step.path} → ${step.to}` : `Tool: copy ${step.path} → ${step.to} (${copied.detail})`;
         log.push(line);
         observations.push(line);
         if (copied.ok) {
-          copiedLocal = true;
+          if (copied.via === "openclaw") copiedRemote = true;
+          else copiedLocal = true;
           kept.push(step.to);
         }
       }
@@ -876,6 +880,7 @@ async function applyToolReply(
     deletedLocal ? "Delete path: local sandbox." : "",
     renamedRemote ? "Rename path: OpenClaw-driven." : "",
     renamedLocal ? "Rename path: local sandbox." : "",
+    copiedRemote ? "Copy path: OpenClaw-driven." : "",
     copiedLocal ? "Copy path: local sandbox." : "",
     madeDirRemote ? "Mkdir path: OpenClaw-driven." : "",
     madeDirLocal ? "Mkdir path: local sandbox." : "",
@@ -1073,6 +1078,25 @@ async function deleteThroughTurn(
     }
   }
   const local = await deleteSandboxFile(input.sandboxRoot, relativePath);
+  return { ok: local.ok, via: "local", detail: local.detail };
+}
+
+async function copyThroughTurn(
+  input: ChatTurnInput,
+  openclawDrove: boolean,
+  fromPath: string,
+  toPath: string,
+): Promise<{ ok: boolean; via: "openclaw" | "local"; detail: string }> {
+  if (openclawDrove && input.openclawCopy) {
+    const remote = await input.openclawCopy(fromPath, toPath);
+    if (remote.ok && (await fileExists(input.sandboxRoot, fromPath)) && (await fileExists(input.sandboxRoot, toPath))) {
+      return { ok: true, via: "openclaw", detail: remote.detail };
+    }
+    if (remote.ok || !remote.missing) {
+      return { ok: false, via: "openclaw", detail: remote.ok ? "OpenClaw copy did not copy the file." : remote.detail };
+    }
+  }
+  const local = await copySandboxFile(input.sandboxRoot, fromPath, toPath);
   return { ok: local.ok, via: "local", detail: local.detail };
 }
 

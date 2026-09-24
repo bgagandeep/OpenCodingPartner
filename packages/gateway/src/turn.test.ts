@@ -979,6 +979,101 @@ test("a coding turn copies a file and leaves the source", async () => {
   }
 });
 
+test("an OpenClaw-driven turn copies a file through the bridge", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-remote-copy-"));
+  try {
+    await writeSandboxFile(root, "src/old.ts", "export const old = 1;\n");
+    const calls: string[] = [];
+    const turn = await runChatTurn({
+      message: "refactor a copy of the helper",
+      sandboxRoot: root,
+      orchestration: async () => ({
+        state: "ran",
+        driver: "openclaw",
+        detail: "Session agent:board:main accepted the plan.",
+      }),
+      grokRunner: {
+        async run() {
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify({ done: true, steps: [{ tool: "copy", path: "src/old.ts", to: "src/lib/old.ts" }] }),
+          };
+        },
+      },
+      openclawCopy: async (fromPath, toPath) => {
+        calls.push(`${fromPath} ${toPath}`);
+        const { copyFile, mkdir } = await import("node:fs/promises");
+        await mkdir(path.join(root, "src/lib"), { recursive: true });
+        await copyFile(path.join(root, fromPath), path.join(root, toPath));
+        return { ok: true, missing: false, detail: "bridge" };
+      },
+    });
+    assert.deepEqual(calls, ["src/old.ts src/lib/old.ts"]);
+    assert.match(turn.transcript, /Copy path: OpenClaw-driven/);
+    assert.doesNotMatch(turn.transcript, /Copy path: local sandbox/);
+    assert.match(await readFile(path.join(root, "src/old.ts"), "utf8"), /export const old/);
+    assert.match(await readFile(path.join(root, "src/lib/old.ts"), "utf8"), /export const old/);
+
+    const blocked = await mkdtemp(path.join(tmpdir(), "ocp-copy-refuse-"));
+    await writeSandboxFile(blocked, "src/old.ts", "export const old = 1;\n");
+    const refused = await runChatTurn({
+      message: "refactor a copy of the helper",
+      sandboxRoot: blocked,
+      orchestration: async () => ({
+        state: "ran",
+        driver: "openclaw",
+        detail: "Session agent:board:main accepted the plan.",
+      }),
+      grokRunner: {
+        async run() {
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify({ done: true, steps: [{ tool: "copy", path: "src/old.ts", to: "src/lib/old.ts" }] }),
+          };
+        },
+      },
+      openclawCopy: async () => ({ ok: false, missing: false, detail: "target already exists" }),
+    });
+    assert.doesNotMatch(refused.transcript, /Copy path: local sandbox/);
+    assert.doesNotMatch(refused.transcript, /Copy path: OpenClaw-driven/);
+    await assert.rejects(readFile(path.join(blocked, "src/lib/old.ts"), "utf8"));
+    await rm(blocked, { recursive: true, force: true });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a missing OpenClaw copy plugin falls back to the local sandbox", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-copy-fallback-"));
+  try {
+    await writeSandboxFile(root, "src/old.ts", "export const old = 1;\n");
+    const turn = await runChatTurn({
+      message: "refactor a copy of the helper",
+      sandboxRoot: root,
+      orchestration: async () => ({
+        state: "ran",
+        driver: "openclaw",
+        detail: "Session agent:board:main accepted the plan.",
+      }),
+      grokRunner: {
+        async run() {
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify({ done: true, steps: [{ tool: "copy", path: "src/old.ts", to: "src/lib/old.ts" }] }),
+          };
+        },
+      },
+      openclawCopy: async () => ({ ok: false, missing: true, detail: "plugin missing" }),
+    });
+    assert.match(turn.transcript, /Copy path: local sandbox/);
+    assert.doesNotMatch(turn.transcript, /Copy path: OpenClaw-driven/);
+    assert.match(await readFile(path.join(root, "src/old.ts"), "utf8"), /export const old/);
+    assert.match(await readFile(path.join(root, "src/lib/old.ts"), "utf8"), /export const old/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("an OpenClaw-driven turn deletes and renames through the bridge", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "ocp-remote-move-"));
   try {

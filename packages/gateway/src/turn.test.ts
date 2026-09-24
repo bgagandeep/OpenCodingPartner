@@ -787,6 +787,46 @@ test("pnpm test is allowed and a failed check still retries", async () => {
   }
 });
 
+test("git status and git diff run, and git commit is refused", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-git-run-"));
+  try {
+    const seen: string[][] = [];
+    const turn = await runChatTurn({
+      message: "fix the note and show git status",
+      sandboxRoot: root,
+      checkExec: async (argv) => {
+        seen.push([...argv]);
+        if (argv[1] === "diff") return { code: 0, stdout: `${"x".repeat(2500)}\n`, stderr: "" };
+        return { code: 0, stdout: "## main\n", stderr: "" };
+      },
+      grokRunner: {
+        async run() {
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify({
+              done: true,
+              steps: [
+                { tool: "run", argv: ["git", "status", "-sb"] },
+                { tool: "run", argv: ["git", "commit", "-m", "nope"] },
+                { tool: "run", argv: ["git", "diff", "src/math.ts"] },
+              ],
+            }),
+          };
+        },
+      },
+    });
+    assert.deepEqual(seen, [
+      ["git", "status", "-sb"],
+      ["git", "diff", "src/math.ts"],
+    ]);
+    assert.match(turn.transcript, /Tool: run git status -sb \(exit 0\)/);
+    assert.match(turn.transcript, /Tool: run refused/);
+    assert.match(turn.transcript, /Tool: run git diff src\/math.ts \(exit 0, truncated\)/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("a coding turn writes a file and then renames it", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "ocp-rename-turn-"));
   try {

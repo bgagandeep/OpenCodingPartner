@@ -737,9 +737,9 @@ async function applyToolReply(
         }
         const result = await (input.checkExec ?? defaultCheckExec)(step.argv ?? [], input.sandboxRoot);
         check = result;
-        const line = `Tool: run ${(step.argv ?? []).join(" ")} (exit ${result.code})`;
+        const detail = capRunOutput(result.stderr || result.stdout || "no output");
+        const line = `Tool: run ${(step.argv ?? []).join(" ")} (exit ${result.code}${detail.endsWith("(truncated)") ? ", truncated" : ""})`;
         log.push(line);
-        const detail = (result.stderr || result.stdout || "no output").slice(0, 500);
         observations.push(`${line}\n${detail}`);
       } else if ((step.tool === "write" || step.tool === "patch") && step.path) {
         let content = step.content ?? "";
@@ -843,6 +843,13 @@ async function applyToolReply(
     qa,
     security,
   };
+}
+
+const RUN_OUTPUT_CAP = 2000;
+
+function capRunOutput(text: string): string {
+  if (text.length <= RUN_OUTPUT_CAP) return text;
+  return `${text.slice(0, RUN_OUTPUT_CAP)}\n(truncated)`;
 }
 
 function defaultCheckExec(argv: readonly string[], cwd: string): Promise<{ code: number; stdout: string; stderr: string }> {
@@ -957,7 +964,7 @@ async function codingPrompt(sandboxRoot: string, message: string): Promise<strin
   }
   const filesNote = message.startsWith("Tool observations:") || blocks.length === 0 ? "" : `Sandbox files already on disk:\n${blocks.join("\n")}\n`;
   const history = await priorTurns(sandboxRoot);
-  return `${history}${filesNote}User request:\n${message}\nReply with JSON only: {"steps":[{"tool":"list"|"read"|"grep"|"glob"|"run"|"write"|"patch"|"delete"|"rename"|"mkdir","to":"relative destination","query":"text or /regex/","path":"relative","content":"full text for write","diff":"unified diff for patch","argv":["node","--test","relative.test.ts"]}],"done":false}. One reply is one round. After you see Tool observations, send the next round. Set "done" to true when finished. List or read before you edit. Patch a file that already exists. Write only a new file. Allowed commands are node --test plus relative paths, pnpm test with no extra arguments, and tsc --noEmit plus relative paths.`;
+  return `${history}${filesNote}User request:\n${message}\nReply with JSON only: {"steps":[{"tool":"list"|"read"|"grep"|"glob"|"run"|"write"|"patch"|"delete"|"rename"|"mkdir","to":"relative destination","query":"text or /regex/","path":"relative","content":"full text for write","diff":"unified diff for patch","argv":["node","--test","relative.test.ts"]}],"done":false}. One reply is one round. After you see Tool observations, send the next round. Set "done" to true when finished. List or read before you edit. Patch a file that already exists. Write only a new file. Allowed commands are node --test plus relative paths, pnpm test with no extra arguments, tsc --noEmit plus relative paths, git status, git status -sb, git status --short --branch, and git diff plus relative paths.`;
 }
 
 async function deleteThroughTurn(

@@ -35,6 +35,28 @@ test("ocp demo writes a file, blocks a secret, and records GTM actions", async (
   }
 });
 
+test("ocp doctor prints a status and does not print the meter key", async () => {
+  let captured = "";
+  const original = process.stdout.write.bind(process.stdout);
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    captured += String(chunk);
+    return true;
+  }) as typeof process.stdout.write;
+  const previous = process.env.LITELLM_API_KEY;
+  process.env.LITELLM_API_KEY = "doctor-secret-value";
+  try {
+    const code = await main(["doctor"]);
+    assert.ok(code === 0 || code === 1);
+    assert.match(captured, /ocp doctor/);
+    assert.match(captured, /Meter: LiteLLM/);
+    assert.doesNotMatch(captured, /doctor-secret-value/);
+  } finally {
+    if (previous === undefined) delete process.env.LITELLM_API_KEY;
+    else process.env.LITELLM_API_KEY = previous;
+    process.stdout.write = original;
+  }
+});
+
 test("the cli file is the ocp entry when spawned", () => {
   const root = mkdtempSync(path.join(tmpdir(), "ocp-spawn-"));
   try {

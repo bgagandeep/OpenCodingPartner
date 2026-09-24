@@ -4,8 +4,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
-import { codingRunnerForEnv, discoverStack, predictWithLaya, runConnectedPath, sendOrchestrationTurn, startSandboxWriteBridge, writeViaOpenClaw } from "@opencodingpartner/bundle";
-import { readFile } from "node:fs/promises";
+import { codingRunnerForEnv, discoverStack, predictWithLaya, runConnectedPath, runDoctor, sendOrchestrationTurn, startSandboxWriteBridge, writeViaOpenClaw } from "@opencodingpartner/bundle";
+import { access, readFile } from "node:fs/promises";
 import { runChatTurn, runDemo, type ChatTurnInput } from "@opencodingpartner/gateway";
 import { playwrightBrowserDriver } from "@opencodingpartner/workers";
 import { routeWithPredict } from "@opencodingpartner/policy";
@@ -64,6 +64,31 @@ export async function main(argv: readonly string[]): Promise<number> {
     process.stdout.write(demo.transcript);
     return demo.code;
   }
+  if (command === "doctor") {
+    const repoRoot = path.resolve(fileURLToPath(new URL("../../../", import.meta.url)));
+    let stack: { openclawBin?: string; grokBin?: string; layaPython?: string; layaHfHome?: string } | undefined;
+    try {
+      stack = JSON.parse(await readFile(path.join(repoRoot, ".bundle/stack.json"), "utf8")) as {
+        openclawBin?: string;
+        grokBin?: string;
+        layaPython?: string;
+        layaHfHome?: string;
+      };
+    } catch {
+      stack = undefined;
+    }
+    const bins = await discoverStack({ env: process.env, repoRoot, stack });
+    let playwrightPresent = false;
+    try {
+      await access(path.join(repoRoot, "node_modules/playwright/package.json"));
+      playwrightPresent = true;
+    } catch {
+      playwrightPresent = false;
+    }
+    const report = await runDoctor({ env: process.env, bins, repoRoot, playwrightPresent });
+    process.stdout.write(report.transcript);
+    return report.code;
+  }
   if (command === "chat") {
     const computerExecute = tail.includes("--computer-execute") || process.env.OCP_COMPUTER_EXECUTE === "1";
     const { value, rest } = takeFlag(
@@ -94,7 +119,7 @@ export async function main(argv: readonly string[]): Promise<number> {
     return 0;
   }
   process.stdout.write(
-    "OpenCodingPartner chat agent\n\n  ocp chat --sandbox .sandbox\n  ocp chat --sandbox .sandbox \"Use Grok Build to create hello.txt with content:\nhello\n\"\n  ocp chat --sandbox .sandbox --computer-execute \"Open https://example.com\"\n  ocp demo --sandbox .sandbox\n\nOpenClaw owns the session plan. After it accepts the plan, it invokes the sandbox write bridge. The transcript says Write path: OpenClaw-driven. When the gateway is down, the transcript says Write path: local sandbox. fs_write, apply_patch, and sessions_spawn stay blocked.\nThe computer agent opens a browser only with --computer-execute or OCP_COMPUTER_EXECUTE=1. It opens a named http(s) URL, reads the screen, and types into one selector when you ask.\n",
+    "OpenCodingPartner chat agent\n\n  ocp chat --sandbox .sandbox\n  ocp chat --sandbox .sandbox \"Use Grok Build to create hello.txt with content:\nhello\n\"\n  ocp chat --sandbox .sandbox --computer-execute \"Open https://example.com\"\n  ocp demo --sandbox .sandbox\n  ocp doctor\n\nOpenClaw owns the session plan. After it accepts the plan, it invokes the sandbox write bridge. The transcript says Write path: OpenClaw-driven. When the gateway is down, the transcript says Write path: local sandbox. fs_write, apply_patch, and sessions_spawn stay blocked.\nThe computer agent opens a browser only with --computer-execute or OCP_COMPUTER_EXECUTE=1. It opens a named http(s) URL, reads the screen, and types into one selector when you ask.\n",
   );
   return command === undefined || command === "--help" || command === "-h" ? 0 : 2;
 }

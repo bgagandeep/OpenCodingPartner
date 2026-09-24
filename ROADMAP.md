@@ -4,7 +4,7 @@ OpenCodingPartner is a chat agent plus an orchestration agent swarm. The swarm s
 
 ## Now
 
-The offline core runs without OpenClaw, Grok Build, or Laya installed.
+The offline core runs without OpenClaw, Grok Build, or Laya installed. `ocp doctor` tells a new operator which of those pieces are present. The offline demo still does not pretend they are live.
 
 - Chat agent CLI: `ocp` and `opencodingpartner`.
 - Orchestration agent swarm with an OpenClaw-shaped session (`agent:board:main`).

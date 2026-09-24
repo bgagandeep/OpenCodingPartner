@@ -1,0 +1,9 @@
+OpenCodingPartner
+Copyright 2026 OpenCodingPartner contributors
+Licensed under the Apache License, Version 2.0.
+
+This product can install and connect other open source tools. Those tools stay under their own licenses and credits. See THIRD_PARTY_NOTICES.md.
+
+OpenClaw — MIT — OpenClaw Foundation — https://github.com/openclaw/openclaw
+Grok Build — Apache-2.0 — xAI (SpaceXAI) — https://github.com/xai-org/grok-build
+Laya — Apache-2.0 — Convai Innovations — https://pypi.org/project/laya/

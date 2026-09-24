@@ -18,7 +18,24 @@ The core is free forever and open source. The operator owns the meter. Consult a
 | Computer agents (GTM) | Computer-use worker seam |
 | Security agents | Policy/security worker seam in the coding environment |
 
-We cite those projects. We do not vendor them. See [Independence](#independence).
+We cite those projects. We do not copy their source into this repo. See [Credits](#credits) and [Independence](#independence).
+
+## Install the connected stack
+
+```bash
+pnpm install
+pnpm bundle:install
+```
+
+That one command installs pinned OpenClaw, Grok Build, and Laya under `.bundle/`. It uses npm and pip. It does not copy their source trees into this repo. Upstream license files stay inside those installs.
+
+Optional OpenClaw gateway:
+
+```bash
+docker compose up -d openclaw-gateway
+```
+
+The image is `ghcr.io/openclaw/openclaw:2026.9.6`.
 
 ## Demo
 
@@ -27,14 +44,28 @@ pnpm install
 pnpm test
 pnpm exec ocp demo --sandbox .sandbox
 pnpm exec opencodingpartner demo --sandbox .sandbox
+pnpm demo:connected
 ```
+
+`ocp demo --live` is the same connected check as `pnpm demo:connected`. If OpenClaw or Grok Build is missing, it skips and says to run `pnpm bundle:install`. It does not pretend the live tools ran.
 
 The demo stands up a coding agent, a QA agent, a security agent, and a computer agent. The coding agent writes `PRODUCT.md` in the sandbox. The QA agent checks that file. The security agent blocks a path escape and a secret. The computer agent writes `gtm/action-plan.json`. Every computer action is marked not executed. No live browser ran.
 
+## Credits
+
+| Piece | License | Credit |
+| --- | --- | --- |
+| OpenClaw | MIT | OpenClaw Foundation — https://github.com/openclaw/openclaw |
+| Grok Build | Apache-2.0 | xAI (SpaceXAI) — https://github.com/xai-org/grok-build |
+| Laya | Apache-2.0 | Convai Innovations — https://pypi.org/project/laya/ and https://huggingface.co/convaiinnovations/laya |
+| OpenCodingPartner | Apache-2.0 | OpenCodingPartner contributors |
+
+Full wording is in [NOTICE](NOTICE) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
 ## License
 
-Apache-2.0. See [LICENSE](LICENSE). Grok Build and Laya use Apache-2.0, and this license includes a patent grant. OpenClaw is MIT. We do not copy its code into this repo.
+Apache-2.0. See [LICENSE](LICENSE).
 
 ## Independence
 
-We do not ship OpenClaw, Grok Build, or Laya. The operator installs them. This project is not affiliated with those projects, with xAI, or with Convai Innovations. The offline demo uses a local sandbox and a mock System-1 router so you can run it without those installs.
+We package and connect these tools for the operator. We are not affiliated with OpenClaw, xAI, SpaceXAI, or Convai Innovations. The offline demo still uses a local sandbox and a mock System-1 router when those tools are not installed.

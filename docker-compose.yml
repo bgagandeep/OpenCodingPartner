@@ -1,0 +1,10 @@
+# Optional OpenClaw gateway. The image is upstream. This file does not build OpenClaw from source.
+# Pin matches packages/bundle/pins.json. Start it after you want a live gateway:
+#   docker compose up -d openclaw-gateway
+services:
+  openclaw-gateway:
+    image: ghcr.io/openclaw/openclaw:2026.9.6
+    ports:
+      - "127.0.0.1:18789:18789"
+    command: ["node", "dist/index.js", "gateway", "--bind", "lan", "--port", "18789"]
+    restart: unless-stopped

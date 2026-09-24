@@ -9,7 +9,10 @@
   "scripts": {
     "build": "tsc -b",
     "test": "tsc -b && pnpm install --offline && node --test --test-reporter spec $(find packages tests \\( -name '*.test.js' -o -name '*.test.mjs' \\))",
-    "demo": "tsc -b && node packages/cli/dist/main.js demo --sandbox .sandbox"
+    "demo": "tsc -b && node packages/cli/dist/main.js demo --sandbox .sandbox",
+    "demo:connected": "tsc -b && node packages/cli/dist/main.js demo --live --sandbox .sandbox",
+    "bundle:install": "tsc -b && node packages/bundle/dist/install.js",
+    "bundle:plan": "tsc -b && node packages/bundle/dist/install.js --dry-run"
   },
   "dependencies": {
     "@opencodingpartner/cli": "workspace:*"

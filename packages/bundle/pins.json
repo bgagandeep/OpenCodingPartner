@@ -1,0 +1,26 @@
+{
+  "openclaw": {
+    "npm": "openclaw",
+    "version": "2026.9.6",
+    "license": "MIT",
+    "credit": "OpenClaw Foundation",
+    "url": "https://github.com/openclaw/openclaw",
+    "image": "ghcr.io/openclaw/openclaw:2026.9.6"
+  },
+  "grokBuild": {
+    "npm": "@xai-official/grok",
+    "version": "1.0.41",
+    "license": "Apache-2.0",
+    "credit": "xAI (SpaceXAI)",
+    "url": "https://github.com/xai-org/grok-build",
+    "docs": "https://docs.x.ai/build/overview"
+  },
+  "laya": {
+    "pypi": "laya",
+    "version": "0.3.13",
+    "license": "Apache-2.0",
+    "credit": "Convai Innovations",
+    "url": "https://pypi.org/project/laya/",
+    "weights": "https://huggingface.co/convaiinnovations/laya"
+  }
+}

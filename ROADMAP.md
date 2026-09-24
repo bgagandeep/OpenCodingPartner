@@ -19,10 +19,12 @@ Ads are off. Payments are off in the core.
 
 ## Next
 
-- Point the swarm at an OpenClaw gateway the operator installed.
-- Inject a Grok Build runner for coding agents and QA agents.
+`pnpm bundle:install` already installs pinned OpenClaw, Grok Build, and Laya beside this repo. `ocp demo --live` checks that OpenClaw and Grok Build answer.
+
+- Start the OpenClaw gateway with `docker compose up -d openclaw-gateway` and send session traffic through it.
+- Send a real coding prompt through Grok Build when the operator has a key.
 - Replace the computer-use stub with a real computer-use worker. Keep the record of what ran honest.
-- Run the Laya bridge against a local install. Keep it on route and policy only.
+- Run `integrations/laya/predict.py` against the installed Laya package. Keep it on route and policy only.
 
 ## Later
 

@@ -18,7 +18,7 @@ export interface CodingReply {
   done: boolean;
 }
 
-/** `node --test`, `pnpm test`, `tsc --noEmit`, `git status`, `git diff`, or `git log --oneline -n N`. Argv only. No shell. */
+/** `node --test`, `pnpm test`, `tsc --noEmit`, `git status`, `git diff`, `git log --oneline -n N`, or `git show HEAD:path`. Argv only. No shell. */
 export function commandDecision(argv: readonly string[]): { allow: boolean; reason: string } {
   if (argv.length < 2 || argv.length > 8) return { allow: false, reason: "command is not on the allow list" };
   const unsafe = (arg: string) => !arg || arg.startsWith("/") || arg.includes("..") || /[\n\r\0;&|`$><\\]/.test(arg);
@@ -29,10 +29,10 @@ export function commandDecision(argv: readonly string[]): { allow: boolean; reas
   if (bin === "pnpm" && sub === "test" && rest.length === 0) return { allow: true, reason: "" };
   if (bin === "tsc" && sub === "--noEmit" && rest.every(relative)) return { allow: true, reason: "" };
   if (bin === "git" && gitReadOnly(sub, rest)) return { allow: true, reason: "" };
-  return { allow: false, reason: "only node --test, pnpm test, tsc --noEmit, git status, git diff, and git log --oneline -n N are allowed" };
+  return { allow: false, reason: "only node --test, pnpm test, tsc --noEmit, git status, git diff, git log --oneline -n N, and git show HEAD:path are allowed" };
 }
 
-/** Read-only git. `git log` is only `--oneline -n N` with N from 1 to 20. */
+/** Read-only git. `git log` is only `--oneline -n N` with N from 1 to 20. `git show` is only `HEAD:` plus one relative path. */
 function gitReadOnly(sub: string | undefined, rest: readonly string[]): boolean {
   if (sub === "status") {
     if (rest.length === 0) return true;
@@ -45,7 +45,18 @@ function gitReadOnly(sub: string | undefined, rest: readonly string[]): boolean 
     const count = Number(rest[2]);
     return Number.isInteger(count) && count >= 1 && count <= 20;
   }
+  if (sub === "show") return gitShowHead(rest);
   return false;
+}
+
+/** `git show HEAD:relative/path` only. No flags, no other revision, no extra args. */
+function gitShowHead(rest: readonly string[]): boolean {
+  if (rest.length !== 1) return false;
+  const spec = rest[0] ?? "";
+  if (!spec.startsWith("HEAD:")) return false;
+  const rel = spec.slice("HEAD:".length);
+  if (!rel || rel.startsWith("/") || rel.startsWith("-") || rel.includes("..") || rel.includes(":") || rel.includes("\\")) return false;
+  return true;
 }
 
 export function parseCodingReply(stdout: string): CodingReply | null {

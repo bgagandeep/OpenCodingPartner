@@ -7,6 +7,7 @@ OpenCodingPartner installs these tools for the operator. We do not copy their so
 | OpenClaw | MIT | OpenClaw Foundation | https://github.com/openclaw/openclaw | npm package `openclaw@2026.9.6`. Optional image `ghcr.io/openclaw/openclaw:2026.9.6`. |
 | Grok Build | Apache-2.0 | xAI (SpaceXAI) | https://github.com/xai-org/grok-build | npm package `@xai-official/grok@1.0.41`, which ships the `grok` binary. |
 | Laya | Apache-2.0 | Convai Innovations | https://pypi.org/project/laya/ and https://huggingface.co/convaiinnovations/laya | PyPI package `laya==0.3.13`. Weights download only if you run the bridge. |
+| LiteLLM | MIT | BerriAI | https://github.com/BerriAI/litellm | Optional proxy image `docker.litellm.ai/berriai/litellm:v1.102.1`. We do not copy its source. |
 | OpenCodingPartner | Apache-2.0 | OpenCodingPartner contributors | This repository | The chat agent, swarm, and installer. |
 
 Pins live in `packages/bundle/pins.json`.

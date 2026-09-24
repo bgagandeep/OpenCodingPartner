@@ -8,7 +8,7 @@ The offline core runs without OpenClaw, Grok Build, or Laya installed.
 
 - Chat agent CLI: `ocp` and `opencodingpartner`.
 - Orchestration agent swarm with an OpenClaw-shaped session (`agent:board:main`).
-- Coding agent and QA agent on a Grok Build seam, with a local sandbox for real file writes and a QA check.
+- Coding agent and QA agent on a Grok Build seam, or on the operator's LiteLLM proxy, with a local sandbox for real file writes and a QA check.
 - Security agent gate before writes.
 - Computer agent seam. It records a plan with `executed: false` until you pass `--computer-execute` and name a URL. Then Playwright opens that URL, reads the screen, and types into one selector when the message asks.
 - System-1 uses installed Laya through `integrations/laya/predict.py`. `pnpm bundle:install` downloads the English weights into `.bundle/laya/hf`. The transcript says real or fallback.

@@ -1,0 +1,10 @@
+# Example LiteLLM proxy config. Do not put real keys in this file.
+# The proxy reads LITELLM_MASTER_KEY and OPENAI_API_KEY from the environment.
+model_list:
+  - model_name: gpt-4o-mini
+    litellm_params:
+      model: openai/gpt-4o-mini
+      api_key: os.environ/OPENAI_API_KEY
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY

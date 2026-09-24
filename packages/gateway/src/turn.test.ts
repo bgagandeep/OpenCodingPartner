@@ -89,7 +89,9 @@ test("a general ask offline does not pretend to edit files", async () => {
       sandboxRoot: root,
     });
     assert.equal(turn.coding?.wrote, false);
-    assert.match(turn.transcript, /General edits need XAI_API_KEY/);
+    assert.match(turn.transcript, /General edits need LITELLM_API_KEY/);
+    assert.match(turn.transcript, /XAI_API_KEY/);
+    assert.match(turn.transcript, /Meter: none/);
     await assert.rejects(readFile(path.join(root, "README.md"), "utf8"));
   } finally {
     await rm(root, { recursive: true, force: true });

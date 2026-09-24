@@ -118,20 +118,58 @@ export async function sendOrchestrationTurn(
   }
 }
 
-export function codingRunnerForEnv(
+export const LITELLM_LOCAL_BASE_URL = "http://127.0.0.1:4000/v1";
+
+export type CodingMeterVia = "litellm" | "openai-compatible" | "grok-build";
+
+export interface CodingMeter {
+  runner?: InjectedRunner;
+  via?: CodingMeterVia;
+  label?: "LiteLLM" | "OpenAI-compatible" | "Grok Build";
+  baseUrl?: string;
+  model?: string;
+}
+
+/** LiteLLM vars win. Then the OpenAI pair. Then native Grok. */
+export function resolveCodingMeter(
   bins: StackBins,
   env: NodeJS.ProcessEnv,
-): { runner?: InjectedRunner; via?: "grok-build" | "openai-compatible" } {
+  options?: { fetchImpl?: typeof fetch; exec?: ConnectedDeps["exec"] },
+): CodingMeter {
+  const litellmKey = env.LITELLM_API_KEY || env.LITELLM_MASTER_KEY;
+  if (litellmKey) {
+    const baseUrl = env.LITELLM_BASE_URL || LITELLM_LOCAL_BASE_URL;
+    const model = env.LITELLM_MODEL || env.OPENAI_MODEL || "gpt-4o-mini";
+    return {
+      runner: openAiCompatibleRunner({ apiKey: litellmKey, baseUrl, model, fetchImpl: options?.fetchImpl }),
+      via: "litellm",
+      label: "LiteLLM",
+      baseUrl,
+      model,
+    };
+  }
   if (env.OPENAI_API_KEY && env.OPENAI_BASE_URL) {
     return {
-      runner: openAiCompatibleRunner({ apiKey: env.OPENAI_API_KEY, baseUrl: env.OPENAI_BASE_URL, model: env.OPENAI_MODEL }),
+      runner: openAiCompatibleRunner({
+        apiKey: env.OPENAI_API_KEY,
+        baseUrl: env.OPENAI_BASE_URL,
+        model: env.OPENAI_MODEL,
+        fetchImpl: options?.fetchImpl,
+      }),
       via: "openai-compatible",
+      label: "OpenAI-compatible",
+      baseUrl: env.OPENAI_BASE_URL,
+      model: env.OPENAI_MODEL || "gpt-4o-mini",
     };
   }
   if (bins.grokBin && env.XAI_API_KEY) {
-    return { runner: grokRunnerForBin(bins.grokBin, env), via: "grok-build" };
+    return { runner: grokRunnerForBin(bins.grokBin, env, options?.exec), via: "grok-build", label: "Grok Build" };
   }
   return {};
+}
+
+export function codingRunnerForEnv(bins: StackBins, env: NodeJS.ProcessEnv): CodingMeter {
+  return resolveCodingMeter(bins, env);
 }
 
 export function grokRunnerForBin(bin: string, env: NodeJS.ProcessEnv, exec?: ConnectedDeps["exec"]): InjectedRunner {
@@ -197,20 +235,27 @@ export async function runConnectedPath(deps: ConnectedDeps): Promise<ConnectedRe
     lines.push(`Chat turn: failed. ${orchestration.detail}`);
   }
 
-  if (!deps.bins.grokBin && !deps.grokRunner) {
-    lines.push("Coding/QA on Grok Build: skipped (grok binary not installed). Run: pnpm bundle:install");
-  } else if (!deps.env.XAI_API_KEY && !(deps.env.OPENAI_API_KEY && deps.env.OPENAI_BASE_URL)) {
-    lines.push("Coding/QA on Grok Build: skipped (set XAI_API_KEY, or OPENAI_API_KEY and OPENAI_BASE_URL; this repo does not store a key).");
+  const meter = deps.grokRunner
+    ? { runner: deps.grokRunner, via: "grok-build" as const, label: "Grok Build" as const }
+    : resolveCodingMeter(deps.bins, deps.env, { exec });
+  if (!meter.runner) {
+    lines.push(
+      "Coding/QA: skipped (set XAI_API_KEY with grok, or LITELLM_API_KEY, or OPENAI_API_KEY and OPENAI_BASE_URL; this repo does not store a key).",
+    );
   } else {
-    const runner = deps.grokRunner ?? spawnGrokRunner(deps.bins.grokBin ?? "grok", deps.env, exec);
+    const runner = meter.runner;
     const cwd = deps.cwd ?? process.cwd();
     const coding = await runOnGrokBuild(runner, "Coding agent: say ready.", cwd);
     const qa = await runOnGrokBuild(runner, "QA agent: check the last change.", cwd);
     if (coding.exitCode === 0 && qa.exitCode === 0) {
-      lines.push("Coding/QA on Grok Build: ran (two headless grok calls, streaming-json).");
+      lines.push(
+        meter.via === "grok-build"
+          ? "Coding/QA on Grok Build: ran (two headless grok calls, streaming-json)."
+          : `Coding/QA: ran. Meter: ${meter.label}.`,
+      );
     } else {
       failed = true;
-      lines.push(`Coding/QA on Grok Build: failed (coding exit ${coding.exitCode}, QA exit ${qa.exitCode}).`);
+      lines.push(`Coding/QA: failed (coding exit ${coding.exitCode}, QA exit ${qa.exitCode}). Meter: ${meter.label}.`);
     }
   }
 

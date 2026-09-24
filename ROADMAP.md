@@ -4,7 +4,7 @@ OpenCodingPartner is a chat agent plus an orchestration agent swarm. The swarm s
 
 ## Now
 
-The offline core runs without OpenClaw, Grok Build, or Laya installed. `ocp doctor` tells a new operator which of those pieces are present. `ocp prove coding` runs one scripted coding turn with no API key: mkdir, write, glob, patch, and `node --test`. `ocp prove computer` runs one scripted computer chain with a fake browser driver: open, scroll, and check page text. OpenClaw does not run the browser. The offline demo still does not pretend they are live.
+The offline core runs without OpenClaw, Grok Build, or Laya installed. `ocp doctor` tells a new operator which of those pieces are present. `ocp prove coding` runs one scripted coding turn with no API key: mkdir, write, glob, patch, and `node --test`. `ocp prove computer` runs one scripted computer chain with a fake browser driver: open, scroll, press Enter, hover a selector, double-click a selector, and check page text. That is not a full go-to-market run. OpenClaw does not run the browser. The offline demo still does not pretend they are live.
 
 - Chat agent CLI: `ocp` and `opencodingpartner`.
 - Orchestration agent swarm with an OpenClaw-shaped session (`agent:board:main`).

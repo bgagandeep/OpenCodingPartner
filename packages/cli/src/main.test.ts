@@ -99,7 +99,11 @@ test("ocp prove computer passes with a fake browser and does not print a key", a
     assert.equal(code, 0);
     assert.match(captured, /Passed\./);
     assert.match(captured, /scroll/);
+    assert.match(captured, /press Enter/);
+    assert.match(captured, /hover #buy/);
+    assert.match(captured, /double-click #buy/);
     assert.match(captured, /executed: true/);
+    assert.match(captured, /not a full go-to-market run/);
     assert.match(captured, /OpenClaw did not run the browser/);
     assert.doesNotMatch(captured, /OpenClaw ran the browser/);
     assert.doesNotMatch(captured, /prove-computer-secret/);

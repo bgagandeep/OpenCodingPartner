@@ -47,7 +47,7 @@ Scripted computer proof, with no Playwright and no meter key:
 pnpm exec ocp prove computer
 ```
 
-That command opens `https://example.com` with a fake browser driver, scrolls, and checks the page text. It writes `gtm/last-run.json` with a pass and a screenshot. Exit 0 prints `Passed.` OpenClaw does not run the browser. It does not print keys.
+That command opens `https://example.com` with a fake browser driver, scrolls, presses Enter, hovers `#buy`, double-clicks `#buy`, and checks the page text. It writes `gtm/last-run.json` with a pass and a screenshot for each of those steps. Exit 0 prints `Passed.` Exit 1 prints `Failed.` This is one scripted chain, not a full go-to-market run. OpenClaw does not run the browser. It does not print keys.
 
 Read the transcript. `System-1: real Laya.` or `System-1: fallback.` `Write path: OpenClaw-driven.` only if the gateway accepted the plan and the write landed. Otherwise `Write path: local sandbox.` `Meter: LiteLLM`, `Meter: OpenAI-compatible`, `Meter: Grok Build`, or `Meter: none`. The offline command `pnpm exec ocp demo --sandbox .sandbox` does not pretend those live pieces ran.
 

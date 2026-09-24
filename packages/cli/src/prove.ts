@@ -93,7 +93,7 @@ export async function proveCoding(): Promise<{ code: number; text: string }> {
   }
 }
 
-const PROVE_PAGE = 'sell this page. Open https://example.com then scroll down then expect text "lower"';
+const PROVE_PAGE = 'sell this page. Open https://example.com then scroll down then press Enter then hover #buy then double-click #buy then expect text "lower"';
 
 function fakeBrowser(): BrowserDriver {
   const png = Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10]);
@@ -112,6 +112,15 @@ function fakeBrowser(): BrowserDriver {
           return lower;
         },
         async scrollBy() {
+          return lower;
+        },
+        async press() {
+          return lower;
+        },
+        async hover() {
+          return lower;
+        },
+        async doubleClick() {
           return lower;
         },
         async close() {
@@ -142,18 +151,21 @@ export async function proveComputer(): Promise<{ code: number; text: string }> {
     } catch {
       reasons.push("gtm/last-run.json is missing");
     }
-    const scroll = run.steps?.find((step) => step.kind === "scroll");
-    if (!scroll?.passed || !scroll.screenshot) reasons.push("scroll did not pass with a screenshot");
-    else {
-      try {
-        const bytes = await readFile(path.join(root, scroll.screenshot));
-        if (bytes.length === 0) reasons.push("scroll screenshot is empty");
-      } catch {
-        reasons.push("scroll screenshot file is missing");
+    for (const kind of ["scroll", "press", "hover", "double-click"] as const) {
+      const step = run.steps?.find((item) => item.kind === kind);
+      if (!step?.passed || !step.screenshot) {
+        reasons.push(`${kind} did not pass with a screenshot`);
+        continue;
       }
-    }
-    if (!turn.transcript.includes("- scroll") || !/scroll[^\n]*executed: true/.test(turn.transcript)) {
-      reasons.push("transcript did not show a scroll that ran");
+      try {
+        const bytes = await readFile(path.join(root, step.screenshot));
+        if (bytes.length === 0) reasons.push(`${kind} screenshot is empty`);
+      } catch {
+        reasons.push(`${kind} screenshot file is missing`);
+      }
+      if (!turn.transcript.includes(`- ${kind}`) || !new RegExp(`${kind}[^\\n]*executed: true`).test(turn.transcript)) {
+        reasons.push(`transcript did not show a ${kind} that ran`);
+      }
     }
     if (!turn.transcript.includes("verify lower")) {
       reasons.push("transcript did not show the page check");
@@ -170,7 +182,7 @@ export async function proveComputer(): Promise<{ code: number; text: string }> {
     }
     return {
       code: 0,
-      text: `ocp prove computer\nPassed. A fake browser driver opened https://example.com, scrolled, and the page text matched.\nOpenClaw did not run the browser. Playwright was not required. No API key was used.\n\n${turn.transcript}`,
+      text: `ocp prove computer\nPassed. A fake browser driver opened https://example.com, scrolled, pressed Enter, hovered #buy, double-clicked #buy, and the page text matched.\nThis is one scripted chain, not a full go-to-market run. OpenClaw did not run the browser. Playwright was not required. No API key was used.\n\n${turn.transcript}`,
     };
   } finally {
     await rm(root, { recursive: true, force: true });

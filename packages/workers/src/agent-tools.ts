@@ -1,9 +1,9 @@
-import { readdir, readFile } from "node:fs/promises";
+import { readdir, readFile, stat, unlink } from "node:fs/promises";
 import path from "node:path";
 import { securityGate } from "./security.js";
 
 export interface ToolStep {
-  tool: "list" | "read" | "grep" | "run" | "write" | "patch";
+  tool: "list" | "read" | "grep" | "run" | "write" | "patch" | "delete";
   path?: string;
   query?: string;
   content?: string;
@@ -40,7 +40,7 @@ export function parseCodingReply(stdout: string): CodingReply | null {
     for (const item of parsed.steps) {
       if (!item || typeof item !== "object") return null;
       const record = item as { tool?: unknown; path?: unknown; query?: unknown; content?: unknown; diff?: unknown; argv?: unknown };
-      if (record.tool !== "list" && record.tool !== "read" && record.tool !== "grep" && record.tool !== "run" && record.tool !== "write" && record.tool !== "patch") {
+      if (record.tool !== "list" && record.tool !== "read" && record.tool !== "grep" && record.tool !== "run" && record.tool !== "write" && record.tool !== "patch" && record.tool !== "delete") {
         return null;
       }
       const step: ToolStep = { tool: record.tool };
@@ -199,4 +199,29 @@ export async function grepSandbox(
   };
   await walk(start);
   return { ok: true, detail: hits.length > 0 ? hits.join("\n") : "(no matches)" };
+}
+
+/** Unlink one file inside the sandbox. Directories and gtm/ evidence stay. */
+export async function deleteSandboxFile(sandboxRoot: string, relativePath: string): Promise<{ ok: boolean; detail: string }> {
+  const root = path.resolve(sandboxRoot);
+  const target = path.resolve(root, relativePath);
+  const rootPrefix = root.endsWith(path.sep) ? root : `${root}${path.sep}`;
+  if (!target.startsWith(rootPrefix)) return { ok: false, detail: "path left the sandbox" };
+  const rel = path.relative(root, target);
+  if (rel === "gtm" || rel.startsWith(`gtm${path.sep}`)) return { ok: false, detail: "gtm evidence is kept" };
+  let content = "";
+  try {
+    const info = await stat(target);
+    if (info.isDirectory()) return { ok: false, detail: "directories are not deleted" };
+    content = await readFile(target, "utf8");
+  } catch (error) {
+    const code = (error as { code?: string }).code;
+    if (code === "ENOENT") return { ok: false, detail: "file missing" };
+    return { ok: false, detail: "file could not be read" };
+  }
+  if (content.includes("\0")) return { ok: false, detail: "not a text file" };
+  const gate = securityGate({ relativePath, content, sandboxRoot });
+  if (!gate.allow) return { ok: false, detail: `blocked (${gate.reasons.join(", ")})` };
+  await unlink(target);
+  return { ok: true, detail: "deleted" };
 }

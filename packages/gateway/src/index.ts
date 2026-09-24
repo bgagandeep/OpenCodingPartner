@@ -9,6 +9,7 @@ import { OrchestrationSwarm } from "@opencodingpartner/swarm";
 import {
   applyUnifiedDiff,
   commandDecision,
+  deleteSandboxFile,
   grepSandbox,
   listSandboxDir,
   parseCodingReply,
@@ -679,6 +680,7 @@ async function applyToolReply(
   const blocked: string[] = [];
   let security: GateDecision | null = null;
   let check: { code: number; stdout: string; stderr: string } | null = null;
+  let deletedLocal = false;
   let nextStdout = stdout;
   for (let round = 1; round <= TOOL_ROUND_CAP; round += 1) {
     const reply = parseCodingReply(nextStdout);
@@ -758,6 +760,16 @@ async function applyToolReply(
         const line = `Tool: ${step.tool} ${step.path}`;
         log.push(line);
         observations.push(line);
+      } else if (step.tool === "delete" && step.path) {
+        const removed = await deleteSandboxFile(input.sandboxRoot, step.path);
+        const line = removed.ok ? `Tool: delete ${step.path}` : `Tool: delete ${step.path} (${removed.detail})`;
+        log.push(line);
+        observations.push(line);
+        if (removed.ok) {
+          deletedLocal = true;
+          const index = kept.indexOf(step.path);
+          if (index >= 0) kept.splice(index, 1);
+        }
       }
     }
     if (reply.done || reply.steps.length === 0) break;
@@ -775,10 +787,13 @@ async function applyToolReply(
     qa = { pass: false, summary: `check failed (exit ${check.code}): ${detail}` };
   } else if (check && check.code === 0 && qa && !qa.pass && fileExpectations(input.message).length === 0) {
     qa = { pass: true, summary: "check passed" };
+  } else if (deletedLocal && qa && !qa.pass && fileExpectations(input.message).length === 0 && !(check && check.code !== 0)) {
+    qa = { pass: true, summary: "deleted the named file" };
   }
   const note = [
     ...log,
     openclawDrove ? "Write path: OpenClaw-driven. The gateway invoked the sandbox write bridge." : "Write path: local sandbox.",
+    deletedLocal ? "Delete path: local sandbox. OpenClaw does not delete files." : "",
     blocked.length > 0 ? `Security agent removed ${blocked.join(", ")} after the edit.` : "",
   ].filter((line) => line.length > 0).join("\n");
   return {
@@ -863,7 +878,7 @@ async function codingPrompt(sandboxRoot: string, message: string): Promise<strin
   }
   const filesNote = message.startsWith("Tool observations:") || blocks.length === 0 ? "" : `Sandbox files already on disk:\n${blocks.join("\n")}\n`;
   const history = priorTurns(sandboxRoot);
-  return `${history}${filesNote}User request:\n${message}\nReply with JSON only: {"steps":[{"tool":"list"|"read"|"grep"|"run"|"write"|"patch","query":"text or /regex/","path":"relative","content":"full text for write","diff":"unified diff for patch","argv":["node","--test","relative.test.ts"]}],"done":false}. One reply is one round. After you see Tool observations, send the next round. Set "done" to true when finished. List or read before you edit. Patch a file that already exists. Write only a new file. The only command is node --test plus relative paths.`;
+  return `${history}${filesNote}User request:\n${message}\nReply with JSON only: {"steps":[{"tool":"list"|"read"|"grep"|"run"|"write"|"patch"|"delete","query":"text or /regex/","path":"relative","content":"full text for write","diff":"unified diff for patch","argv":["node","--test","relative.test.ts"]}],"done":false}. One reply is one round. After you see Tool observations, send the next round. Set "done" to true when finished. List or read before you edit. Patch a file that already exists. Write only a new file. The only command is node --test plus relative paths.`;
 }
 
 async function fileMatches(sandboxRoot: string, relativePath: string, content: string): Promise<boolean> {

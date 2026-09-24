@@ -140,7 +140,7 @@ If Playwright or Chromium is missing, the turn says the browser did not finish. 
 
 A page check can chain steps in one message: `expect title "..."`, `expect text "..."`, `type "..." into SELECTOR`, and `expect selector SELECTOR value "..."`. Each step is recorded in `gtm/last-run.json` with pass or fail and a screenshot when it ran. If a step fails, later steps stay `executed: false` and the transcript names the failed step. The QA agent also reads `gtm/assertion.json`. It fails when the claim does not match, when execute is off, or when the browser did not start.
 
-After a coding write, `expect file path to contain "text"` asks the QA agent to check that snippet. A missing file, an empty file, or a file the security agent removed fails the review. The transcript says which file failed.
+After a coding write, `expect file path to contain "text"` asks the QA agent to check that snippet. A missing file, an empty file, or a file the security agent removed fails the review. The transcript says which file failed. On that failure, the coding agent writes again through the same path (OpenClaw write bridge when the gateway drove the turn, otherwise the local sandbox) and QA runs again. A failed page claim is checked again the same way. This repeats until QA passes or two retries are used. The transcript then says `fix loop passed on retry N` or `fix budget exhausted after 2 retries`.
 
 ```bash
 pnpm exec ocp chat --sandbox .sandbox --computer-execute "Open https://example.com and expect title \"Example Domain\""

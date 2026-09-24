@@ -537,6 +537,126 @@ test("QA names a missing file snippet in the transcript", async () => {
   }
 });
 
+test("a failed file expectation is rewritten once and then passes QA", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-fix-pass-"));
+  try {
+    let calls = 0;
+    const turn = await runChatTurn({
+      message: 'add a README and expect file README.md to contain "Install"',
+      sandboxRoot: root,
+      grokRunner: {
+        async run() {
+          calls += 1;
+          await writeSandboxFile(root, "README.md", calls === 1 ? "Hello\n" : "Install\n");
+          return { exitCode: 0, stdout: "" };
+        },
+      },
+    });
+    assert.equal(calls, 2);
+    assert.equal(turn.qa?.pass, true);
+    assert.match(turn.transcript, /fix loop passed on retry 1/);
+    assert.equal(await readFile(path.join(root, "README.md"), "utf8"), "Install\n");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("file QA stops after two failed retries", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-fix-stop-"));
+  try {
+    let calls = 0;
+    const turn = await runChatTurn({
+      message: 'add a README and expect file README.md to contain "Install"',
+      sandboxRoot: root,
+      grokRunner: {
+        async run() {
+          calls += 1;
+          await writeSandboxFile(root, "README.md", "Hello\n");
+          return { exitCode: 0, stdout: "" };
+        },
+      },
+    });
+    assert.equal(calls, 3);
+    assert.equal(turn.qa?.pass, false);
+    assert.match(turn.transcript, /fix budget exhausted after 2 retries/);
+    assert.match(turn.transcript, /missing expected content/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a failed page claim is checked again and stops when the budget is used", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-fix-page-"));
+  try {
+    const png = Uint8Array.from([137, 80, 78, 71]);
+    let starts = 0;
+    const driver = {
+      async start() {
+        starts += 1;
+        const title = starts === 1 ? "Wrong" : "Example Domain";
+        return {
+          async open() {
+            return { title, text: "hello", screenshotPng: png };
+          },
+          async readScreen() {
+            return { title, text: "hello", screenshotPng: png };
+          },
+          async typeInto() {
+            return { title, text: "hello", screenshotPng: png };
+          },
+          async close() {
+            return undefined;
+          },
+        };
+      },
+    };
+    const passed = await runChatTurn({
+      message: 'Stand up a computer agent and a QA agent. Open https://example.com and expect title "Example Domain"',
+      sandboxRoot: root,
+      computerExecute: true,
+      computerAllowHosts: ["example.com"],
+      browserDriver: driver,
+    });
+    assert.equal(starts, 2);
+    assert.equal(passed.qa?.pass, true);
+    assert.match(passed.transcript, /fix loop passed on retry 1/);
+
+    const stuck = await mkdtemp(path.join(tmpdir(), "ocp-fix-page-stuck-"));
+    let stuckStarts = 0;
+    const failed = await runChatTurn({
+      message: 'Stand up a computer agent and a QA agent. Open https://example.com and expect title "Example Domain"',
+      sandboxRoot: stuck,
+      computerExecute: true,
+      computerAllowHosts: ["example.com"],
+      browserDriver: {
+        async start() {
+          stuckStarts += 1;
+          return {
+            async open() {
+              return { title: "Wrong", text: "hello", screenshotPng: png };
+            },
+            async readScreen() {
+              return { title: "Wrong", text: "hello", screenshotPng: png };
+            },
+            async typeInto() {
+              return { title: "Wrong", text: "hello", screenshotPng: png };
+            },
+            async close() {
+              return undefined;
+            },
+          };
+        },
+      },
+    });
+    assert.equal(stuckStarts, 3);
+    assert.equal(failed.qa?.pass, false);
+    assert.match(failed.transcript, /fix budget exhausted after 2 retries/);
+    await rm(stuck, { recursive: true, force: true });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("demo command path writes the product file and blocks the secret", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "ocp-demo-"));
   try {

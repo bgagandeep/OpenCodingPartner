@@ -231,6 +231,17 @@ async function executeTurn(input: ChatTurnInput, session: SwarmSession, key: str
         if (agents.some((agent) => agent.role === "qa")) {
           qa = await swarm.dispatch("qa", () => reviewChangedFiles(input.sandboxRoot, kept, grok.exitCode === 0));
           qa = await addFileExpectations(qa, input.message, input.sandboxRoot, kept, blocked);
+          const retried = await retryFileFix({
+            input,
+            swarm,
+            openclawDrove: true,
+            qa,
+            coding,
+            security,
+          });
+          qa = retried.qa;
+          coding = retried.coding;
+          security = retried.security;
         }
       } finally {
         await rm(stage, { recursive: true, force: true });
@@ -261,8 +272,19 @@ async function executeTurn(input: ChatTurnInput, session: SwarmSession, key: str
       if (agents.some((agent) => agent.role === "qa")) {
         qa = await swarm.dispatch("qa", () => reviewChangedFiles(input.sandboxRoot, kept, grok.exitCode === 0));
         qa = await addFileExpectations(qa, input.message, input.sandboxRoot, kept, blocked);
+        const retried = await retryFileFix({
+          input,
+          swarm,
+          openclawDrove: false,
+          qa,
+          coding,
+          security,
+        });
+        qa = retried.qa;
+        coding = retried.coding;
+        security = retried.security;
       }
-      if (blocked.length > 0) {
+      if (blocked.length > 0 && coding && !coding.note) {
         coding.note = `Security agent removed ${blocked.join(", ")} after the edit.`;
       }
     } else {
@@ -339,7 +361,25 @@ async function executeTurn(input: ChatTurnInput, session: SwarmSession, key: str
     await mkdir(path.dirname(planPath), { recursive: true });
     await writeFile(planPath, `${JSON.stringify(computer, null, 2)}\n`);
     if (pageClaim(input.message) && agents.some((agent) => agent.role === "qa")) {
-      const claimQa = await swarm.dispatch("qa", () => reviewComputerClaim(input.sandboxRoot));
+      let claimQa = await swarm.dispatch("qa", () => reviewComputerClaim(input.sandboxRoot));
+      let retries = 0;
+      while (!claimQa.pass && retries < FIX_RETRY_BUDGET && execute && input.browserDriver) {
+        retries += 1;
+        computer = await swarm.dispatch("computer", () =>
+          executeComputerVisit({
+            productName: "OpenCodingPartner",
+            message: input.message,
+            sandboxRoot: input.sandboxRoot,
+            execute: true,
+            envUrl: input.computerUrl,
+            allowHosts: input.computerAllowHosts,
+            driver: input.browserDriver,
+          }),
+        );
+        await writeFile(planPath, `${JSON.stringify(computer, null, 2)}\n`);
+        claimQa = await swarm.dispatch("qa", () => reviewComputerClaim(input.sandboxRoot));
+      }
+      claimQa = finishFixLoop(claimQa, retries);
       qa = qa ? { pass: qa.pass && claimQa.pass, summary: `${qa.summary}; ${claimQa.summary}` } : claimQa;
     }
   }
@@ -429,6 +469,117 @@ export function formatTranscript(result: ChatTurnResult): string {
     }
   }
   return `${lines.join("\n")}\n`;
+}
+
+const FIX_RETRY_BUDGET = 2;
+
+function finishFixLoop(qa: QaResult, retries: number): QaResult {
+  if (retries === 0) return qa;
+  if (qa.pass) return { ...qa, summary: `${qa.summary}; fix loop passed on retry ${retries}` };
+  return { ...qa, summary: `${qa.summary}; fix budget exhausted after ${retries} retries` };
+}
+
+async function retryFileFix(args: {
+  input: ChatTurnInput;
+  swarm: OrchestrationSwarm;
+  openclawDrove: boolean;
+  qa: QaResult | null;
+  coding: ChatTurnResult["coding"];
+  security: GateDecision | null;
+}): Promise<{ qa: QaResult | null; coding: ChatTurnResult["coding"]; security: GateDecision | null }> {
+  const expected = fileExpectations(args.input.message);
+  if (!args.qa || args.qa.pass || expected.length === 0 || !args.input.grokRunner) return args;
+  let qa = args.qa;
+  let coding = args.coding;
+  let security = args.security;
+  let retries = 0;
+  while (!qa.pass && retries < FIX_RETRY_BUDGET) {
+    retries += 1;
+    const prompt = `QA failed: ${qa.summary}\nApply a fix for the original request.\n${args.input.message}`;
+    const pass = await applyCodingPass(args.input, args.swarm, prompt, args.openclawDrove);
+    coding = pass.coding;
+    security = pass.security ?? security;
+    qa = pass.qa ?? qa;
+  }
+  return { qa: finishFixLoop(qa, retries), coding, security };
+}
+
+async function applyCodingPass(
+  input: ChatTurnInput,
+  swarm: OrchestrationSwarm,
+  prompt: string,
+  openclawDrove: boolean,
+): Promise<{ coding: ChatTurnResult["coding"]; qa: QaResult | null; security: GateDecision | null }> {
+  const runner = input.grokRunner;
+  if (!runner) return { coding: null, qa: null, security: null };
+  if (openclawDrove && input.openclawWrite) {
+    const write = input.openclawWrite;
+    const stage = await mkdtemp(path.join(tmpdir(), "ocp-fix-"));
+    try {
+      const grok = await swarm.dispatch("coding", () => runOnGrokBuild(runner, prompt, stage));
+      const staged = await snapshotSandbox(stage);
+      const kept: string[] = [];
+      const blocked: string[] = [];
+      let security: GateDecision | null = null;
+      for (const [relativePath, content] of staged) {
+        const gate = securityGate({ relativePath, content, sandboxRoot: input.sandboxRoot });
+        if (!gate.allow) {
+          blocked.push(relativePath);
+          security = { allow: false, reasons: gate.reasons };
+          continue;
+        }
+        const landed = await write(relativePath, content);
+        if (landed.ok && (await fileMatches(input.sandboxRoot, relativePath, content))) kept.push(relativePath);
+      }
+      let qa = await swarm.dispatch("qa", () => reviewChangedFiles(input.sandboxRoot, kept, grok.exitCode === 0));
+      qa = (await addFileExpectations(qa, input.message, input.sandboxRoot, kept, blocked)) ?? qa;
+      return {
+        coding: {
+          relativePath: kept.length > 0 ? kept.join(", ") : "no files",
+          wrote: grok.exitCode === 0 && kept.length > 0,
+          via: "openclaw-write",
+          note: "Write path: OpenClaw-driven. The gateway invoked the sandbox write bridge.",
+        },
+        qa,
+        security,
+      };
+    } finally {
+      await rm(stage, { recursive: true, force: true });
+    }
+  }
+  const before = await snapshotSandbox(input.sandboxRoot);
+  const grok = await swarm.dispatch("coding", () => runOnGrokBuild(runner, prompt, input.sandboxRoot));
+  const after = await snapshotSandbox(input.sandboxRoot);
+  const changed = changedSandboxFiles(before, after);
+  const kept: string[] = [];
+  const blocked: string[] = [];
+  let security: GateDecision | null = null;
+  for (const relativePath of changed) {
+    const content = after.get(relativePath) ?? "";
+    const gate = securityGate({ relativePath, content, sandboxRoot: input.sandboxRoot });
+    if (gate.allow) kept.push(relativePath);
+    else {
+      blocked.push(relativePath);
+      await unlink(path.join(input.sandboxRoot, relativePath)).catch(() => undefined);
+      security = { allow: false, reasons: gate.reasons };
+    }
+  }
+  for (const item of fileExpectations(input.message)) {
+    if (kept.includes(item.path) || blocked.includes(item.path)) continue;
+    if (after.has(item.path)) kept.push(item.path);
+  }
+  let qa = await swarm.dispatch("qa", () => reviewChangedFiles(input.sandboxRoot, kept, grok.exitCode === 0));
+  qa = (await addFileExpectations(qa, input.message, input.sandboxRoot, kept, blocked)) ?? qa;
+  return {
+    coding: {
+      relativePath: kept.length > 0 ? kept.join(", ") : "no files",
+      wrote: grok.exitCode === 0 && kept.length > 0,
+      via: codingVia(input),
+      note: blocked.length > 0 ? `Security agent removed ${blocked.join(", ")} after the edit.` : undefined,
+    },
+    qa,
+    security,
+  };
 }
 
 async function addFileExpectations(

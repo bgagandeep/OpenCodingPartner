@@ -9,6 +9,7 @@ import { OrchestrationSwarm } from "@opencodingpartner/swarm";
 import {
   applyUnifiedDiff,
   commandDecision,
+  grepSandbox,
   listSandboxDir,
   parseCodingReply,
   readSandboxText,
@@ -688,6 +689,12 @@ async function applyToolReply(
         const line = `Tool: list ${step.path || "."} (${listed.detail})`;
         log.push(line);
         observations.push(line);
+      } else if (step.tool === "grep") {
+        const found = await grepSandbox(input.sandboxRoot, step.query ?? step.content ?? "", step.path ?? ".");
+        const hits = found.ok && found.detail !== "(no matches)" ? found.detail.split("\n").length : 0;
+        const line = `Tool: grep ${step.query ?? step.content ?? ""} (${found.ok ? `${hits} hits` : found.detail})`;
+        log.push(line);
+        observations.push(found.ok ? `${line}\n${found.detail}` : line);
       } else if (step.tool === "read" && step.path) {
         const read = await readSandboxText(input.sandboxRoot, step.path);
         const line = `Tool: read ${step.path} (${read.ok ? "ok" : read.detail})`;
@@ -819,8 +826,8 @@ async function codingPrompt(sandboxRoot: string, message: string): Promise<strin
     blocks.push(block);
     used += block.length;
   }
-  const filesNote = blocks.length === 0 ? "" : `Sandbox files already on disk:\n${blocks.join("\n")}\n`;
-  return `${filesNote}User request:\n${message}\nReply with JSON only: {"steps":[{"tool":"list"|"read"|"run"|"write"|"patch","path":"relative","content":"full text for write","diff":"unified diff for patch","argv":["node","--test","relative.test.ts"]}],"done":false}. One reply is one round. After you see Tool observations, send the next round. Set "done" to true when finished. List or read before you edit. Patch a file that already exists. Write only a new file. The only command is node --test plus relative paths.`;
+  const filesNote = message.startsWith("Tool observations:") || blocks.length === 0 ? "" : `Sandbox files already on disk:\n${blocks.join("\n")}\n`;
+  return `${filesNote}User request:\n${message}\nReply with JSON only: {"steps":[{"tool":"list"|"read"|"grep"|"run"|"write"|"patch","query":"text or /regex/","path":"relative","content":"full text for write","diff":"unified diff for patch","argv":["node","--test","relative.test.ts"]}],"done":false}. One reply is one round. After you see Tool observations, send the next round. Set "done" to true when finished. List or read before you edit. Patch a file that already exists. Write only a new file. The only command is node --test plus relative paths.`;
 }
 
 async function fileMatches(sandboxRoot: string, relativePath: string, content: string): Promise<boolean> {

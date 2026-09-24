@@ -3,8 +3,9 @@ import path from "node:path";
 import { securityGate } from "./security.js";
 
 export interface ToolStep {
-  tool: "list" | "read" | "run" | "write" | "patch";
+  tool: "list" | "read" | "grep" | "run" | "write" | "patch";
   path?: string;
+  query?: string;
   content?: string;
   diff?: string;
   argv?: string[];
@@ -38,12 +39,13 @@ export function parseCodingReply(stdout: string): CodingReply | null {
     const steps: ToolStep[] = [];
     for (const item of parsed.steps) {
       if (!item || typeof item !== "object") return null;
-      const record = item as { tool?: unknown; path?: unknown; content?: unknown; diff?: unknown; argv?: unknown };
-      if (record.tool !== "list" && record.tool !== "read" && record.tool !== "run" && record.tool !== "write" && record.tool !== "patch") {
+      const record = item as { tool?: unknown; path?: unknown; query?: unknown; content?: unknown; diff?: unknown; argv?: unknown };
+      if (record.tool !== "list" && record.tool !== "read" && record.tool !== "grep" && record.tool !== "run" && record.tool !== "write" && record.tool !== "patch") {
         return null;
       }
       const step: ToolStep = { tool: record.tool };
       if (typeof record.path === "string") step.path = record.path;
+      if (typeof record.query === "string") step.query = record.query;
       if (typeof record.content === "string") step.content = record.content;
       if (typeof record.diff === "string") step.diff = record.diff;
       if (Array.isArray(record.argv) && record.argv.every((part) => typeof part === "string")) step.argv = record.argv;
@@ -125,4 +127,76 @@ export async function readSandboxText(sandboxRoot: string, relativePath: string)
   const gate = securityGate({ relativePath, content, sandboxRoot });
   if (!gate.allow) return { ok: false, detail: `blocked (${gate.reasons.join(", ")})` };
   return { ok: true, detail: content };
+}
+
+const GREP_HIT_CAP = 20;
+const GREP_SNIPPET = 120;
+
+/** Substring search, or a `/pattern/` regex. In-process. Skips secrets, binaries, and gtm/. */
+export async function grepSandbox(
+  sandboxRoot: string,
+  query: string,
+  relativePath = ".",
+): Promise<{ ok: boolean; detail: string }> {
+  const needle = query.trim();
+  if (!needle || needle.length > 80) return { ok: false, detail: "query missing or too long" };
+  const gate = securityGate({ relativePath: relativePath || ".", content: "", sandboxRoot });
+  if (!gate.allow) return { ok: false, detail: `blocked (${gate.reasons.join(", ")})` };
+  let matcher: (line: string) => boolean;
+  if (needle.startsWith("/") && needle.endsWith("/") && needle.length > 2) {
+    const source = needle.slice(1, -1);
+    if (source.length > 40 || /[+*]{2,}|\{/.test(source)) return { ok: false, detail: "regex is not simple" };
+    try {
+      const pattern = new RegExp(source);
+      matcher = (line) => pattern.test(line);
+    } catch {
+      return { ok: false, detail: "regex is not simple" };
+    }
+  } else {
+    matcher = (line) => line.includes(needle);
+  }
+  const root = path.resolve(sandboxRoot);
+  const start = path.resolve(root, relativePath || ".");
+  const rootPrefix = root.endsWith(path.sep) ? root : `${root}${path.sep}`;
+  if (start !== root && !start.startsWith(rootPrefix)) return { ok: false, detail: "path left the sandbox" };
+  const hits: string[] = [];
+  const walk = async (dir: string): Promise<void> => {
+    if (hits.length >= GREP_HIT_CAP) return;
+    let names;
+    try {
+      names = await readdir(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const name of names) {
+      if (hits.length >= GREP_HIT_CAP) return;
+      const abs = path.join(dir, name.name);
+      const rel = path.relative(root, abs);
+      if (rel === "gtm" || rel.startsWith(`gtm${path.sep}`) || rel.split(path.sep).includes("gtm")) continue;
+      if (name.isDirectory()) {
+        await walk(abs);
+        continue;
+      }
+      if (!name.isFile()) continue;
+      let text = "";
+      try {
+        text = await readFile(abs, "utf8");
+      } catch {
+        continue;
+      }
+      if (text.includes("\0") || text.length > 200_000) continue;
+      const fileGate = securityGate({ relativePath: rel, content: text, sandboxRoot });
+      if (!fileGate.allow) continue;
+      const lines = text.split("\n");
+      for (let i = 0; i < lines.length; i += 1) {
+        const line = lines[i] ?? "";
+        if (!matcher(line)) continue;
+        const snippet = line.trim().slice(0, GREP_SNIPPET);
+        hits.push(`${rel}:${i + 1}: ${snippet}`);
+        if (hits.length >= GREP_HIT_CAP) return;
+      }
+    }
+  };
+  await walk(start);
+  return { ok: true, detail: hits.length > 0 ? hits.join("\n") : "(no matches)" };
 }

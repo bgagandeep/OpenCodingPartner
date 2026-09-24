@@ -720,6 +720,51 @@ test("a coding turn reads a file, patches it, and retries a failed check", async
   }
 });
 
+test("a coding turn greps for a symbol and patches only the hit file", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-grep-turn-"));
+  try {
+    await writeSandboxFile(root, "src/math.ts", "export function add(left: number, right: number): number {\n  return left - right;\n}\n");
+    await writeSandboxFile(root, "src/other.ts", "export function sub(left: number, right: number): number {\n  return left - right;\n}\n");
+    await writeSandboxFile(root, "src/secret.ts", "password=hunter2\nfunction add\n");
+    const prompts: string[] = [];
+    const turn = await runChatTurn({
+      message: "fix add",
+      sandboxRoot: root,
+      grokRunner: {
+        async run(argv) {
+          const prompt = argv[argv.indexOf("-p") + 1] ?? "";
+          prompts.push(prompt);
+          if (!prompt.includes("Tool observations:\n")) {
+            return { exitCode: 0, stdout: JSON.stringify({ steps: [{ tool: "grep", query: "function add" }] }) };
+          }
+          assert.match(prompt, /src\/math.ts:1:/);
+          assert.doesNotMatch(prompt, /src\/other.ts/);
+          assert.doesNotMatch(prompt, /hunter2/);
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify({
+              done: true,
+              steps: [
+                {
+                  tool: "patch",
+                  path: "src/math.ts",
+                  diff: "--- a/src/math.ts\n+++ b/src/math.ts\n@@ -1,3 +1,3 @@\n export function add(left: number, right: number): number {\n-  return left - right;\n+  return left + right;\n }\n",
+                },
+              ],
+            }),
+          };
+        },
+      },
+    });
+    assert.equal(prompts.length, 2);
+    assert.match(turn.transcript, /Tool: grep function add/);
+    assert.match(await readFile(path.join(root, "src/math.ts"), "utf8"), /return left \+ right/);
+    assert.match(await readFile(path.join(root, "src/other.ts"), "utf8"), /return left - right/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("a coding turn patches only after it sees the read result", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "ocp-observe-"));
   try {

@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { applyUnifiedDiff, commandDecision, parseCodingReply } from "./agent-tools.js";
+import { applyUnifiedDiff, commandDecision, grepSandbox, parseCodingReply } from "./agent-tools.js";
 import { parseCreateFileInstruction, writeSandboxFile } from "./coding.js";
 import { computerChain, executeComputerVisit, pageClaim, planGtmActions, selectorDecision, urlDecision } from "./computer.js";
 import { grokBuildArgv, runOnGrokBuild } from "./grok.js";
@@ -23,6 +23,27 @@ test("node --test is allowed and a unified diff edits one line", () => {
   );
   assert.match(next ?? "", /return left \+ right/);
   assert.equal(parseCodingReply('{"steps":[{"tool":"read","path":"src/math.ts"}]}')?.steps[0]?.tool, "read");
+  assert.equal(parseCodingReply('{"steps":[{"tool":"grep","query":"function add"}]}')?.steps[0]?.query, "function add");
+});
+
+test("grep finds a symbol and skips secrets and gtm", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-grep-"));
+  try {
+  await mkdir(path.join(root, "src"), { recursive: true });
+  await mkdir(path.join(root, "gtm"), { recursive: true });
+  await writeFile(path.join(root, "src/math.ts"), "export function add(left: number, right: number) {\n  return left + right;\n}\n");
+  await writeFile(path.join(root, "src/other.ts"), "export function sub() { return 1; }\n");
+  await writeFile(path.join(root, "gtm/note.txt"), "function add should not show\n");
+  await writeFile(path.join(root, "src/secret.ts"), "password=hunter2\nfunction add\n");
+  const found = await grepSandbox(root, "function add");
+  assert.match(found.detail, /src\/math.ts:1:/);
+  assert.doesNotMatch(found.detail, /other.ts/);
+  assert.doesNotMatch(found.detail, /gtm/);
+  assert.doesNotMatch(found.detail, /hunter2/);
+  assert.doesNotMatch(found.detail, /secret.ts/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("create-file parse keeps the trailing newline and rejects an unknown tool", () => {

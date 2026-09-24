@@ -1,7 +1,7 @@
 export const MANAGER_IDS = ["coding-manager", "conversation-manager", "none"] as const;
 export type ManagerId = (typeof MANAGER_IDS)[number];
 
-export const WORKER_IDS = ["local-sandbox", "cursor-cloud", "grok-build", "none"] as const;
+export const WORKER_IDS = ["local-sandbox", "grok-build", "none"] as const;
 export type WorkerId = (typeof WORKER_IDS)[number];
 export type CodingWorkerId = Exclude<WorkerId, "none">;
 

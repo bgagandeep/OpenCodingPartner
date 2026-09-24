@@ -81,15 +81,14 @@ test("decline, clarify, escape, and needs_human do not write", async () => {
   assert.equal((await readdir(root)).length, 0);
 });
 
-test("cursor cloud selection fails closed without a transport", async () => {
+test("an unnamed runtime does not dispatch the local worker", async () => {
   const root = await sandbox();
   const mesh = createFoundationMesh({ sandboxRoot: root });
-  const turn = await mesh.handleTurn("Use Cursor Cloud to create NOTES.md with content:\nhello\n", {
-    idempotencyKey: "cursor",
+  const turn = await mesh.handleTurn("Use some other runtime to create NOTES.md with content:\nhello\n", {
+    idempotencyKey: "unknown-runtime",
   });
-  assert.equal(turn.ok, false);
+  assert.equal(turn.disposition, "clarify");
   assert.equal(turn.dispatched, false);
-  assert.match(turn.reply, /api\.cursor\.com/);
   assert.equal((await readdir(root)).length, 0);
 });
 

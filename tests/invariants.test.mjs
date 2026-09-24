@@ -62,12 +62,14 @@ test("readme cites the real upstreams and the license", async () => {
     "https://github.com/openclaw/openclaw",
     "https://github.com/xai-org/grok-build",
     "https://huggingface.co/convaiinnovations/laya",
-    "https://cursor.com/docs/cloud-agent/api/endpoints",
     "Apache-2.0",
   ]) {
     assert.equal(readme.includes(needle), true, needle);
   }
+  assert.equal(readme.includes("Cursor Cloud"), false);
   const architecture = await readFile(path.join(root, "ARCHITECTURE.md"), "utf8");
   assert.equal(architecture.includes("System-1"), true);
   assert.equal(architecture.includes("speculativeSwarm"), true);
+  assert.equal(architecture.includes("Cursor Cloud"), false);
+  assert.equal(/cursor\[/.test(architecture), false);
 });

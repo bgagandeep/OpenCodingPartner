@@ -45,11 +45,11 @@ test("classifyMessage keeps payments, status, and vague text away from workers",
   assert.equal(classifyMessage("add a checkout so users can pay").disposition, "decline");
   assert.equal(classifyMessage("Summarize the mesh status for Board review. Do not edit files.").worker, "none");
   assert.equal(classifyMessage("fix it").disposition, "clarify");
-  assert.equal(
-    classifyMessage("Use Cursor Cloud to create NOTES.md with content:\nhello\n").worker,
-    "cursor-cloud",
-  );
   assert.equal(classifyMessage("Use Grok Build to create NOTES.md with content:\nhello\n").worker, "grok-build");
+  assert.equal(
+    classifyMessage("Use some other runtime to create NOTES.md with content:\nhello\n").disposition,
+    "clarify",
+  );
 });
 
 test("evaluateRoute blocks a confident dispatch that still needs a human", () => {

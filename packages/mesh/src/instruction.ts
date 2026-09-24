@@ -1,4 +1,4 @@
-export type RuntimeHint = "local-sandbox" | "cursor-cloud" | "grok-build";
+export type RuntimeHint = "local-sandbox" | "grok-build";
 
 export interface CreateFileInstruction {
   readonly relativePath: string;
@@ -20,11 +20,9 @@ export function parseCreateFileInstruction(message: string): CreateFileInstructi
     return null;
   }
   const contents = match[3] ?? "";
-  let runtimeHint: RuntimeHint = "local-sandbox";
-  if (hint.includes("cursor cloud")) {
-    runtimeHint = "cursor-cloud";
-  } else if (hint.includes("grok build")) {
-    runtimeHint = "grok-build";
+  if (hint.length > 0 && !hint.includes("grok build")) {
+    return null;
   }
+  const runtimeHint: RuntimeHint = hint.includes("grok build") ? "grok-build" : "local-sandbox";
   return { relativePath, contents, runtimeHint };
 }

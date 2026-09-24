@@ -26,7 +26,6 @@ const worker: ChoiceQuestion = {
   instructions: "Which coding runtime should execute a dispatched plan?",
   criteria: {
     "local-sandbox": "edit a folder on this machine",
-    "cursor-cloud": "Cursor Cloud Agents v1, using the operator's own API key",
     "grok-build": "Grok Build headless mode, using the operator's own install",
     none: "no coding runtime on this turn",
   },

@@ -14,8 +14,7 @@ flowchart TD
   conversation --> stop
   coding --> worker[Exactly one coding worker]
   worker --> sandbox[Local sandbox file]
-  worker --> cursor[Cursor Cloud Agents v1]
-  worker --> grok[Grok Build headless]
+  worker --> grok[Grok Build headless or ACP]
   swarm[Speculative swarm] -.-> worker
 ```
 
@@ -31,7 +30,9 @@ The swarm edge is drawn so the place it would attach is visible. `FOUNDATION_LIM
 | Coding manager | One `write_file` task when the operator named the path and the bytes | Invent a change, call a second worker |
 | Coding worker | Execute that task on one runtime | Choose the lane |
 
-Chat LLMs, when they arrive, are managers. Coding models reached through Grok Build or Cursor Cloud are workers. Laya stays on the route. That split is the multi-weight design: the ~421M decision engine is System-1 only.
+Chat LLMs, when they arrive, are managers. Coding models reached through Grok Build are workers, along with the local sandbox worker used offline. Laya stays on the route. That split is the multi-weight design: the ~421M decision engine is System-1 only.
+
+An internal operating pattern, a Grok bot dispatching Cursor coding agents, informed how these turns are sequenced. That pattern is not a dependency and not a worker.
 
 ## Ingress
 
@@ -55,7 +56,7 @@ Turns on one session key run one at a time. A repeated idempotency key returns t
 6. The gateway calls `CodingWorker.dispatch` once. That call site is `packages/gateway`.
 7. A sandbox result must resolve inside the sandbox root. Then the turn is stored.
 
-Decline and clarify stop before a manager plans a file. An unconfigured Cursor or Grok worker throws before any network call; the turn is a failure and is not stored, so a later retry can proceed after the operator injects a transport.
+Decline and clarify stop before a manager plans a file. An unconfigured Grok Build worker throws before any process spawn; the turn is a failure and is not stored, so a later retry can proceed after the operator injects a runner.
 
 Trace events on the turn: `session.resolved`, `policy.predicted`, `control.blocked` or `manager.planned`, `worker.skipped` or `worker.dispatched` plus `worker.finished`, then `turn.completed`.
 
@@ -112,20 +113,6 @@ A production manager is a chat model the operator configures. It must emit this 
 
 `LocalSandboxWorker` creates the sandbox directory, writes a sibling temporary file, and renames it into place. The gateway checks the returned absolute path is still inside the sandbox root.
 
-### Cursor Cloud Agents
-
-The live API is versioned around a durable agent and per-prompt runs: `POST https://api.cursor.com/v1/agents`, then `POST /v1/agents/{id}/runs` for a follow-up. Documented at [Cloud Agents API](https://cursor.com/docs/cloud-agent/api/endpoints). Agent `status` stays `ACTIVE` or `ARCHIVED`; run status is the execution state.
-
-`buildCursorCreateAgentRequest` builds the create body:
-
-- `prompt.text` is the single file task
-- `repos[0].url` and `repos[0].startingRef` come from the operator
-- `mode` is `agent`
-- `autoCreatePR` is false
-- `workOnCurrentBranch` is false
-
-`CursorCloudCodingWorker.dispatch` runs only when the caller injects an API key, a repository, and a `CursorCloudTransport`. There is no default `fetch` to `api.cursor.com`. The operator's key is the meter.
-
 ### Grok Build
 
 Grok Build is the Apache-2.0 coding-agent harness at [xai-org/grok-build](https://github.com/xai-org/grok-build). Headless mode is `grok -p "<prompt>" --output-format streaming-json` ([overview](https://docs.x.ai/build/overview), [headless guide](https://github.com/xai-org/grok-build/blob/main/crates/codegen/xai-grok-pager/docs/user-guide/14-headless-mode.md)). ACP (`grok agent stdio`) is the later bidirectional edge; the foundation records the headless argv first.
@@ -145,4 +132,4 @@ maxWorkersPerTurn: 1
 
 ## Independence
 
-OpenCodingPartner does not ship OpenClaw, Grok Build, Cursor, or Laya. It does not use their names as a certification. Operators who want those runtimes install them, accept their licenses, and supply their own credentials.
+OpenCodingPartner does not ship OpenClaw, Grok Build, or Laya. It does not use their names as a certification. Operators who want those runtimes install them, accept their licenses, and supply their own credentials.

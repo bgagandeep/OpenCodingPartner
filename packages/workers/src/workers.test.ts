@@ -398,6 +398,98 @@ function fakeBrowser(onType?: (selector: string, text: string) => void) {
   };
 }
 
+test("click then expect text, and navigate stays on the opened host", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-click-"));
+  try {
+    const chain = computerChain('Open https://example.com then click #more then expect text "Details" then navigate https://example.com/next');
+    assert.deepEqual(chain.map((step) => step.kind), ["click", "expect-text", "navigate"]);
+    const png = Uint8Array.from([137, 80, 78, 71]);
+    let text = "body";
+    let clicks = 0;
+    const plan = await executeComputerVisit({
+      productName: "OpenCodingPartner",
+      message: 'Open https://example.com then click #more then expect text "Details"',
+      sandboxRoot: root,
+      execute: true,
+      driver: {
+        async start() {
+          return {
+            async open() {
+              return { title: "Example", text, screenshotPng: png };
+            },
+            async readScreen() {
+              return { title: "Example", text, screenshotPng: png };
+            },
+            async typeInto() {
+              return { title: "Example", text, screenshotPng: png };
+            },
+            async click() {
+              clicks += 1;
+              text = "Details are here";
+              return { title: "Example", text, screenshotPng: png };
+            },
+            async navigate() {
+              return { title: "Example", text, screenshotPng: png };
+            },
+            async close() {
+              return undefined;
+            },
+          };
+        },
+      },
+    });
+    assert.equal(clicks, 1);
+    const click = plan.actions.find((action) => action.kind === "click");
+    const expectText = plan.actions.find((action) => action.purpose === "Check the page text");
+    assert.equal(click?.passed, true);
+    assert.equal(expectText?.passed, true);
+    const saved = JSON.parse(await readFile(path.join(root, "gtm/last-run.json"), "utf8")) as {
+      steps: { kind: string; passed?: boolean; screenshot?: string }[];
+    };
+    assert.ok(saved.steps.some((step) => step.kind === "click" && step.passed === true && step.screenshot));
+
+    const blocked = await mkdtemp(path.join(tmpdir(), "ocp-nav-"));
+    let went = "";
+    const refused = await executeComputerVisit({
+      productName: "OpenCodingPartner",
+      message: "Open https://example.com then navigate https://evil.example/phish",
+      sandboxRoot: blocked,
+      execute: true,
+      driver: {
+        async start() {
+          return {
+            async open() {
+              return { title: "Example", text: "body", screenshotPng: png };
+            },
+            async readScreen() {
+              return { title: "Example", text: "body", screenshotPng: png };
+            },
+            async typeInto() {
+              return { title: "Example", text: "body", screenshotPng: png };
+            },
+            async click() {
+              return { title: "Example", text: "body", screenshotPng: png };
+            },
+            async navigate(url: string) {
+              went = url;
+              return { title: "Example", text: "body", screenshotPng: png };
+            },
+            async close() {
+              return undefined;
+            },
+          };
+        },
+      },
+    });
+    assert.equal(went, "");
+    assert.equal(refused.actions.find((action) => action.kind === "navigate")?.passed, false);
+    assert.match(refused.actions.find((action) => action.kind === "navigate")?.reason ?? "", /opened host/);
+    await rm(blocked, { recursive: true, force: true });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("computer agent records a GTM plan that did not run", () => {
   const plan = planGtmActions("OpenCodingPartner");
   assert.match(plan.note, /No live browser ran/);

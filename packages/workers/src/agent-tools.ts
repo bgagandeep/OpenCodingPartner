@@ -1,9 +1,9 @@
-import { copyFile, mkdir, readdir, readFile, rename, rmdir, stat, unlink, writeFile } from "node:fs/promises";
+import { appendFile, copyFile, mkdir, readdir, readFile, rename, rmdir, stat, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { securityGate } from "./security.js";
 
 export interface ToolStep {
-  tool: "list" | "read" | "grep" | "glob" | "run" | "write" | "patch" | "delete" | "rename" | "copy" | "mkdir" | "rmdir" | "todo";
+  tool: "list" | "read" | "grep" | "glob" | "run" | "write" | "patch" | "delete" | "rename" | "copy" | "append" | "mkdir" | "rmdir" | "todo";
   path?: string;
   to?: string;
   query?: string;
@@ -71,7 +71,7 @@ export function parseCodingReply(stdout: string): CodingReply | null {
     for (const item of parsed.steps) {
       if (!item || typeof item !== "object") return null;
       const record = item as { tool?: unknown; path?: unknown; to?: unknown; query?: unknown; content?: unknown; diff?: unknown; argv?: unknown; action?: unknown };
-      if (record.tool !== "list" && record.tool !== "read" && record.tool !== "grep" && record.tool !== "glob" && record.tool !== "run" && record.tool !== "write" && record.tool !== "patch" && record.tool !== "delete" && record.tool !== "rename" && record.tool !== "copy" && record.tool !== "mkdir" && record.tool !== "rmdir" && record.tool !== "todo") {
+      if (record.tool !== "list" && record.tool !== "read" && record.tool !== "grep" && record.tool !== "glob" && record.tool !== "run" && record.tool !== "write" && record.tool !== "patch" && record.tool !== "delete" && record.tool !== "rename" && record.tool !== "copy" && record.tool !== "append" && record.tool !== "mkdir" && record.tool !== "rmdir" && record.tool !== "todo") {
         return null;
       }
       const step: ToolStep = { tool: record.tool };
@@ -506,6 +506,31 @@ export async function copySandboxFile(
   await mkdir(path.dirname(dest.target), { recursive: true });
   await copyFile(from.target, dest.target);
   return { ok: true, detail: "copied" };
+}
+
+/** Add text to one existing file. Does not create a file, and does not append to a directory. */
+export async function appendSandboxFile(
+  sandboxRoot: string,
+  relativePath: string,
+  content: string,
+): Promise<{ ok: boolean; detail: string }> {
+  const file = await sandboxFile(sandboxRoot, relativePath);
+  if (!file.ok) return file;
+  let existing = "";
+  try {
+    const info = await stat(file.target);
+    if (info.isDirectory()) return { ok: false, detail: "directories are not appended" };
+    existing = await readFile(file.target, "utf8");
+  } catch (error) {
+    const code = (error as { code?: string }).code;
+    if (code === "ENOENT") return { ok: false, detail: "file missing" };
+    return { ok: false, detail: "file could not be read" };
+  }
+  if (existing.includes("\0") || content.includes("\0")) return { ok: false, detail: "not a text file" };
+  const gate = securityGate({ relativePath, content: `${existing}${content}`, sandboxRoot });
+  if (!gate.allow) return { ok: false, detail: `blocked (${gate.reasons.join(", ")})` };
+  await appendFile(file.target, content);
+  return { ok: true, detail: "appended" };
 }
 
 async function sandboxFile(

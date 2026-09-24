@@ -5,7 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { applyUnifiedDiff, commandDecision, deleteSandboxFile, globSandbox, grepSandbox, mkdirSandboxDir, parseCodingReply, renameSandboxFile } from "./agent-tools.js";
 import { parseCreateFileInstruction, writeSandboxFile } from "./coding.js";
-import { COMPUTER_WAIT_CAP_MS, computerChain, executeComputerVisit, pageClaim, planGtmActions, selectorDecision, urlDecision } from "./computer.js";
+import { COMPUTER_SCROLL_CAP_PX, COMPUTER_WAIT_CAP_MS, computerChain, executeComputerVisit, pageClaim, planGtmActions, selectorDecision, urlDecision } from "./computer.js";
 import { grokBuildArgv, runOnGrokBuild } from "./grok.js";
 import { openAiCompatibleRunner, parseFileEdits } from "./openai.js";
 import { fileExpectations, qaCheckFile, reviewComputerClaim, reviewFileExpectations } from "./qa.js";
@@ -709,6 +709,89 @@ test("wait for a selector after click, and a long sleep is refused", async () =>
     assert.match(timed.actions.find((action) => action.kind === "wait")?.reason ?? "", /timed out/);
     assert.equal(timed.actions.find((action) => action.purpose === "Check the page text")?.executed, false);
     await rm(missed, { recursive: true, force: true });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("scroll down then expect text, and a large delta is refused", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-scroll-"));
+  const png = Uint8Array.from([137, 80, 78, 71]);
+  try {
+    const deltas: number[] = [];
+    const plan = await executeComputerVisit({
+      productName: "OpenCodingPartner",
+      message: 'Open https://example.com then scroll down then expect text "lower"',
+      sandboxRoot: root,
+      execute: true,
+      driver: {
+        async start() {
+          return {
+            async open() {
+              return { title: "Example", text: "top", screenshotPng: png };
+            },
+            async readScreen() {
+              return { title: "Example", text: "lower", screenshotPng: png };
+            },
+            async typeInto() {
+              return { title: "Example", text: "lower", screenshotPng: png };
+            },
+            async scrollBy(deltaY: number) {
+              deltas.push(deltaY);
+              return { title: "Example", text: "lower", screenshotPng: png };
+            },
+            async close() {
+              return undefined;
+            },
+          };
+        },
+      },
+    });
+    assert.deepEqual(deltas, [800]);
+    assert.equal(plan.actions.find((action) => action.kind === "scroll")?.passed, true);
+    assert.equal(plan.actions.find((action) => action.purpose === "Check the page text")?.passed, true);
+    const saved = JSON.parse(await readFile(path.join(root, "gtm/last-run.json"), "utf8")) as {
+      steps: { kind: string; passed?: boolean; screenshot?: string }[];
+    };
+    assert.ok(saved.steps.some((step) => step.kind === "scroll" && step.passed === true && step.screenshot));
+
+    const capped = await mkdtemp(path.join(tmpdir(), "ocp-scroll-cap-"));
+    let called = false;
+    const refused = await executeComputerVisit({
+      productName: "OpenCodingPartner",
+      message: 'Open https://example.com then scroll 5000 then expect text "nope"',
+      sandboxRoot: capped,
+      execute: true,
+      driver: {
+        async start() {
+          return {
+            async open() {
+              return { title: "Example", text: "top", screenshotPng: png };
+            },
+            async readScreen() {
+              return { title: "Example", text: "top", screenshotPng: png };
+            },
+            async typeInto() {
+              return { title: "Example", text: "top", screenshotPng: png };
+            },
+            async scrollBy() {
+              called = true;
+              return { title: "Example", text: "top", screenshotPng: png };
+            },
+            async close() {
+              return undefined;
+            },
+          };
+        },
+      },
+    });
+    assert.equal(called, false);
+    assert.equal(COMPUTER_SCROLL_CAP_PX, 2000);
+    const scroll = refused.actions.find((action) => action.kind === "scroll");
+    assert.equal(scroll?.passed, false);
+    assert.match(scroll?.reason ?? "", /2000/);
+    assert.equal(refused.actions.find((action) => action.purpose === "Check the page text")?.skipped, true);
+    await rm(capped, { recursive: true, force: true });
   } finally {
     await rm(root, { recursive: true, force: true });
   }

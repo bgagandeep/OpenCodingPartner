@@ -4,7 +4,7 @@ import path from "node:path";
 
 export interface ComputerAction {
   id: string;
-  kind: "open-url" | "type" | "read-screen" | "verify" | "click" | "navigate" | "wait";
+  kind: "open-url" | "type" | "read-screen" | "verify" | "click" | "navigate" | "wait" | "scroll";
   target: string;
   purpose: string;
   executed: boolean;
@@ -27,6 +27,8 @@ export interface BrowserSession {
   click?(target: string, by: "selector" | "text"): Promise<ScreenShot>;
   navigate?(url: string): Promise<ScreenShot>;
   waitFor?(selector: string, timeoutMs: number): Promise<ScreenShot>;
+  scrollBy?(deltaY: number): Promise<ScreenShot>;
+  scrollIntoView?(selector: string): Promise<ScreenShot>;
   selectorState?(selector: string): Promise<{ visible: boolean; value: string }>;
   close(): Promise<void>;
 }
@@ -131,17 +133,20 @@ export function pageClaim(message: string): { title?: string; text?: string } | 
 }
 
 export interface ChainStep {
-  kind: "type" | "expect-title" | "expect-text" | "expect-selector" | "click" | "navigate" | "wait";
+  kind: "type" | "expect-title" | "expect-text" | "expect-selector" | "click" | "navigate" | "wait" | "scroll";
   target: string;
   text?: string;
 }
 
 /** Longest `wait N` or `wait Nms` sleep. Longer values fail the step. */
 export const COMPUTER_WAIT_CAP_MS = 30_000;
+/** Largest `scroll N` pixel delta. `scroll down` and `scroll up` use the step size. */
+export const COMPUTER_SCROLL_CAP_PX = 2_000;
+export const COMPUTER_SCROLL_STEP_PX = 800;
 
 /** Steps in the order they appear. A short chain can include more than one type. */
 export function computerChain(message: string): ChainStep[] {
-  const pattern = /expect title "([^"]*)"|expect text "([^"]*)"|type "([^"]*)" into (\S+)|expect selector (\S+) value "([^"]*)"|click "([^"]*)"|click '([^']*)'|click (\S+)|navigate (https?:\/\/[^\s)]+)|expect title '([^']*)'|expect text '([^']*)'|type '([^']*)' into (\S+)|expect selector (\S+) value '([^']*)'|wait (\d+)ms|wait (\d+)|wait (\S+)/gi;
+  const pattern = /expect title "([^"]*)"|expect text "([^"]*)"|type "([^"]*)" into (\S+)|expect selector (\S+) value "([^"]*)"|click "([^"]*)"|click '([^']*)'|click (\S+)|navigate (https?:\/\/[^\s)]+)|expect title '([^']*)'|expect text '([^']*)'|type '([^']*)' into (\S+)|expect selector (\S+) value '([^']*)'|wait (\d+)ms|wait (\d+)|wait (\S+)|scroll down|scroll up|scroll (-?\d+)px|scroll (-?\d+)|scroll (\S+)/gi;
   const steps: ChainStep[] = [];
   for (const match of message.matchAll(pattern)) {
     if (match[1] !== undefined) steps.push({ kind: "expect-title", target: match[1] });
@@ -159,6 +164,11 @@ export function computerChain(message: string): ChainStep[] {
     else if (match[17]) steps.push({ kind: "wait", target: match[17], text: "sleep" });
     else if (match[18]) steps.push({ kind: "wait", target: match[18], text: "sleep" });
     else if (match[19]) steps.push({ kind: "wait", target: match[19].replace(/[.,]$/, "") });
+    else if (match[0].toLowerCase().startsWith("scroll down")) steps.push({ kind: "scroll", target: String(COMPUTER_SCROLL_STEP_PX), text: "delta" });
+    else if (match[0].toLowerCase().startsWith("scroll up")) steps.push({ kind: "scroll", target: String(-COMPUTER_SCROLL_STEP_PX), text: "delta" });
+    else if (match[20]) steps.push({ kind: "scroll", target: match[20], text: "delta" });
+    else if (match[21]) steps.push({ kind: "scroll", target: match[21], text: "delta" });
+    else if (match[22]) steps.push({ kind: "scroll", target: match[22].replace(/[.,]$/, ""), text: "into-view" });
   }
   return steps;
 }
@@ -240,7 +250,7 @@ export async function executeComputerVisit(input: ComputerVisitInput): Promise<G
   for (const [index, item] of chain.entries()) {
     steps.push({
       id: `gtm-${index + 3}`,
-      kind: item.kind === "type" ? "type" : item.kind === "click" ? "click" : item.kind === "navigate" ? "navigate" : item.kind === "wait" ? "wait" : "verify",
+      kind: item.kind === "type" ? "type" : item.kind === "click" ? "click" : item.kind === "navigate" ? "navigate" : item.kind === "wait" ? "wait" : item.kind === "scroll" ? "scroll" : "verify",
       target: item.target,
       purpose: chainPurpose(item),
       executed: false,
@@ -312,6 +322,7 @@ function chainPurpose(item: ChainStep): string {
   if (item.kind === "click") return item.text === "text" ? "Click the named text" : "Click the named selector";
   if (item.kind === "navigate") return "Open a URL on the same host";
   if (item.kind === "wait") return item.text === "sleep" ? "Wait a short time" : "Wait until the selector is visible";
+  if (item.kind === "scroll") return item.text === "into-view" ? "Scroll the selector into view" : "Scroll the page";
   if (item.kind === "expect-selector") return "Check the selector value";
   if (item.kind === "expect-text") return "Check the page text";
   return "Check the page title";
@@ -408,6 +419,22 @@ async function runChainStep(
       return { passed: false, reason: redact(message), screen };
     }
   }
+  if (item.kind === "scroll") {
+    if (item.text === "into-view") {
+      const gate = selectorDecision(item.target);
+      if (!gate.allow) return { passed: false, reason: gate.reason, screen };
+      if (!session.scrollIntoView) return { passed: false, reason: "browser cannot scroll", screen };
+      const next = await session.scrollIntoView(item.target);
+      return { passed: true, reason: "", screen: next };
+    }
+    const delta = Number(item.target);
+    if (!Number.isInteger(delta) || delta === 0 || Math.abs(delta) > COMPUTER_SCROLL_CAP_PX) {
+      return { passed: false, reason: `scroll is capped at ${COMPUTER_SCROLL_CAP_PX} px`, screen };
+    }
+    if (!session.scrollBy) return { passed: false, reason: "browser cannot scroll", screen };
+    const next = await session.scrollBy(delta);
+    return { passed: true, reason: "", screen: next };
+  }
   if (!session.selectorState) return { passed: false, reason: "browser cannot read selector state", screen };
   const state = await session.selectorState(item.target);
   const passed = state.visible && state.value === (item.text ?? "");
@@ -503,6 +530,14 @@ export function playwrightBrowserDriver(): BrowserDriver {
         },
         async waitFor(selector, timeoutMs) {
           await page.locator(selector).waitFor({ state: "visible", timeout: timeoutMs });
+          return shot();
+        },
+        async scrollBy(deltaY) {
+          await page.mouse.wheel(0, deltaY);
+          return shot();
+        },
+        async scrollIntoView(selector) {
+          await page.locator(selector).scrollIntoViewIfNeeded({ timeout: 5000 });
           return shot();
         },
         async selectorState(selector) {

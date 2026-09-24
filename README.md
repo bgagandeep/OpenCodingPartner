@@ -69,15 +69,15 @@ hello
 
 The security agent blocks a path that escapes the sandbox, and it blocks secrets. The QA agent checks the file that was written. The computer agent writes `gtm/action-plan.json`. Without `--computer-execute`, every computer action stays `executed: false` and no browser runs.
 
-With `--computer-execute` (or `OCP_COMPUTER_EXECUTE=1`), the computer agent opens the http or https URL you name, using headless Chromium through Playwright. It writes `gtm/last-run.json` (URL and title) and `gtm/last-screenshot.png` inside the sandbox, and that open action is `executed: true`. Local hosts, private addresses, metadata hosts, and URLs with a username or password are refused. Set `OCP_COMPUTER_ALLOW_HOSTS` to a comma-separated host list when you want a tighter allow list. Evidence stays under the sandbox `gtm/` directory.
+With `--computer-execute` (or `OCP_COMPUTER_EXECUTE=1`), the computer agent runs a short sequence in this process with headless Chromium through Playwright: open the http or https URL you name, read the title and page text, and, if you ask, type into one CSS selector. Example: `Open https://example.com and type "hello" into #hero`. Each step is `executed: true` only after it runs. `gtm/last-run.json` lists the steps. Each finished step also saves `gtm/step-1.png`, `gtm/step-2.png`, and `gtm/step-3.png` when that step ran. Local hosts, private addresses, metadata hosts, and URLs with a username or password are refused. A selector that looks like a script is refused and is not typed. Set `OCP_COMPUTER_ALLOW_HOSTS` to a comma-separated host list when you want a tighter allow list. Evidence stays under the sandbox `gtm/` directory. Notes redact secrets.
 
 ```bash
 pnpm add playwright
 pnpm exec playwright install chromium
-pnpm exec ocp chat --sandbox .sandbox --computer-execute "Open https://example.com"
+pnpm exec ocp chat --sandbox .sandbox --computer-execute "Open https://example.com and type \"hello\" into #hero"
 ```
 
-If Playwright or Chromium is missing, the turn says the browser did not finish and leaves the actions `executed: false`.
+If Playwright or Chromium is missing, the turn says the browser did not finish. Steps that did not run stay `executed: false`.
 
 You can also send one message and return:
 

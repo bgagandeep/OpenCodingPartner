@@ -11,6 +11,32 @@ export interface ComputerAction {
   liveBrowser: boolean;
 }
 
+export interface ScreenShot {
+  title: string;
+  text: string;
+  screenshotPng: Uint8Array;
+}
+
+export interface BrowserSession {
+  open(url: string): Promise<ScreenShot>;
+  readScreen(): Promise<ScreenShot>;
+  typeInto(selector: string, text: string): Promise<ScreenShot>;
+  close(): Promise<void>;
+}
+
+export interface BrowserDriver {
+  start(): Promise<BrowserSession>;
+}
+
+export interface ComputerStepEvidence {
+  kind: ComputerAction["kind"];
+  executed: boolean;
+  title?: string;
+  text?: string;
+  selector?: string;
+  screenshot?: string;
+}
+
 export interface GtmPlan {
   title: string;
   note: string;
@@ -19,11 +45,8 @@ export interface GtmPlan {
     url: string;
     title: string;
     screenshot: string;
+    steps: ComputerStepEvidence[];
   };
-}
-
-export interface BrowserDriver {
-  open(url: string): Promise<{ title: string; screenshotPng: Uint8Array }>;
 }
 
 export interface ComputerVisitInput {
@@ -68,6 +91,25 @@ export function planGtmActions(productName: string): GtmPlan {
       },
     ],
   };
+}
+
+/** `type "text" into #selector`. Quotes are required. The selector is not code. */
+export function typeInstruction(message: string): { text: string; selector: string } | undefined {
+  const match = message.match(/type\s+"([^"]*)"\s+into\s+(\S+)/i) ?? message.match(/type\s+'([^']*)'\s+into\s+(\S+)/i);
+  const text = match?.[1];
+  const selector = match?.[2]?.replace(/[.,]$/, "");
+  if (text === undefined || !selector) return undefined;
+  return { text, selector };
+}
+
+export function selectorDecision(selector: string): { allow: boolean; reason: string } {
+  const text = selector.trim();
+  if (text.length === 0 || text.length > 200) return { allow: false, reason: "selector is empty or too long" };
+  if (/[\n\r]/.test(text)) return { allow: false, reason: "selector must be one line" };
+  if (/[<>]|javascript:|eval\s*\(|document\.|window\.|=>|function\s*\(|\bscript\b/i.test(text)) {
+    return { allow: false, reason: "selector looks like a script" };
+  }
+  return { allow: true, reason: "" };
 }
 
 /** First http(s) URL in the message. An env URL wins when the operator set one. */
@@ -122,43 +164,124 @@ export async function executeComputerVisit(input: ComputerVisitInput): Promise<G
     plan.note = "Computer execute was requested. No browser driver is configured. No live browser ran.";
     return plan;
   }
-  let opened: { title: string; screenshotPng: Uint8Array };
+  const typing = typeInstruction(input.message);
+  const steps: ComputerAction[] = [
+    { id: "gtm-1", kind: "open-url", target: url, purpose: "Open the named URL", executed: false, liveBrowser: false },
+    { id: "gtm-2", kind: "read-screen", target: url, purpose: "Read the page title and text", executed: false, liveBrowser: false },
+  ];
+  if (typing) {
+    steps.push({
+      id: "gtm-3",
+      kind: "type",
+      target: typing.selector,
+      purpose: "Type into the named selector",
+      executed: false,
+      liveBrowser: false,
+    });
+  }
+  plan.actions = steps;
+  const selectorGate = typing ? selectorDecision(typing.selector) : { allow: true, reason: "" };
+  let session: BrowserSession | undefined;
+  const recorded: ComputerStepEvidence[] = [];
   try {
-    opened = await input.driver.open(url);
+    session = await input.driver.start();
+    const opened = await session.open(url);
+    const openShot = `gtm/step-1.png`;
+    await writeEvidence(input.sandboxRoot, openShot, opened.screenshotPng);
+    mark(steps[0], true);
+    recorded.push({ kind: "open-url", executed: true, title: redact(opened.title), screenshot: openShot });
+    const read = await session.readScreen();
+    const readShot = `gtm/step-2.png`;
+    await writeEvidence(input.sandboxRoot, readShot, read.screenshotPng);
+    mark(steps[1], true);
+    recorded.push({
+      kind: "read-screen",
+      executed: true,
+      title: redact(read.title),
+      text: redact(read.text).slice(0, 500),
+      screenshot: readShot,
+    });
+    if (typing && selectorGate.allow && steps[2]) {
+      const typed = await session.typeInto(typing.selector, typing.text);
+      const typeShot = `gtm/step-3.png`;
+      await writeEvidence(input.sandboxRoot, typeShot, typed.screenshotPng);
+      mark(steps[2], true);
+      recorded.push({
+        kind: "type",
+        executed: true,
+        selector: typing.selector,
+        title: redact(typed.title),
+        text: redact(typing.text),
+        screenshot: typeShot,
+      });
+    } else if (typing && steps[2]) {
+      recorded.push({ kind: "type", executed: false, selector: typing.selector });
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : "browser failed";
-    plan.note = `Computer execute was requested. The browser did not finish (${redact(message)}). No page was kept.`;
+    plan.note = `Computer execute was requested. The browser did not finish (${redact(message)}). Finished steps stay marked.`;
+    await session?.close().catch(() => undefined);
+    await persistRun(input.sandboxRoot, url, recorded, plan);
     return plan;
   }
-  const title = redact(opened.title);
-  const screenshotRelative = "gtm/last-screenshot.png";
-  const evidenceRelative = "gtm/last-run.json";
-  await writeEvidence(input.sandboxRoot, screenshotRelative, opened.screenshotPng);
-  const evidence = { url, title, screenshot: screenshotRelative, executed: true };
-  await writeEvidence(input.sandboxRoot, evidenceRelative, `${JSON.stringify(evidence, null, 2)}\n`);
-  if (open) {
-    open.executed = true;
-    open.liveBrowser = true;
-    open.purpose = "Opened the named URL and saved the title and a screenshot";
-  }
-  plan.evidence = { url, title, screenshot: screenshotRelative };
-  plan.note = `Live browser opened ${url}. Title: ${title}. Evidence: ${evidenceRelative}.`;
+  await session.close();
+  const title = recorded.find((step) => step.kind === "read-screen")?.title ?? "";
+  const refused = typing && !selectorGate.allow ? ` Refused the type step: ${selectorGate.reason}.` : "";
+  plan.note = `Live browser opened ${url}. Title: ${title}.${refused} Evidence: gtm/last-run.json.`;
+  await persistRun(input.sandboxRoot, url, recorded, plan);
   return plan;
 }
 
-/** Headless Chromium via Playwright. The operator installs Playwright and Chromium. */
-export async function openWithPlaywright(url: string): Promise<{ title: string; screenshotPng: Uint8Array }> {
-  const loaded = (await import("playwright")) as typeof import("playwright");
-  const browser = await loaded.chromium.launch({ headless: true });
-  try {
-    const page = await browser.newPage();
-    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 20000 });
-    const title = await page.title();
-    const screenshotPng = await page.screenshot({ type: "png" });
-    return { title, screenshotPng };
-  } finally {
-    await browser.close();
+function mark(action: ComputerAction | undefined, ran: boolean): void {
+  if (!action) return;
+  action.executed = ran;
+  action.liveBrowser = ran;
+}
+
+async function persistRun(
+  sandboxRoot: string,
+  url: string,
+  steps: ComputerStepEvidence[],
+  plan: GtmPlan,
+): Promise<void> {
+  const last = [...steps].reverse().find((step) => step.screenshot);
+  const screenshot = last?.screenshot ?? "";
+  if (screenshot) {
+    plan.evidence = { url, title: last?.title ?? "", screenshot, steps };
   }
+  const body = { url, title: last?.title ?? "", screenshot, steps };
+  await writeEvidence(sandboxRoot, "gtm/last-run.json", `${JSON.stringify(body, null, 2)}\n`);
+}
+
+/** Headless Chromium via Playwright. The operator installs Playwright and Chromium. */
+export function playwrightBrowserDriver(): BrowserDriver {
+  return {
+    async start() {
+      const loaded = (await import("playwright")) as typeof import("playwright");
+      const browser = await loaded.chromium.launch({ headless: true });
+      const page = await browser.newPage();
+      const shot = async (): Promise<ScreenShot> => {
+        const title = await page.title();
+        const text = await page.locator("body").innerText({ timeout: 5000 }).catch(() => "");
+        const screenshotPng = await page.screenshot({ type: "png" });
+        return { title, text, screenshotPng };
+      };
+      return {
+        async open(url) {
+          await page.goto(url, { waitUntil: "domcontentloaded", timeout: 20000 });
+          return shot();
+        },
+        readScreen: shot,
+        async typeInto(selector, text) {
+          await page.locator(selector).fill(text, { timeout: 5000 });
+          return shot();
+        },
+        async close() {
+          await browser.close();
+        },
+      };
+    },
+  };
 }
 
 function redact(text: string): string {

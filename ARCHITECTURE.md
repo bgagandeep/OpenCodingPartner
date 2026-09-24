@@ -16,7 +16,7 @@ Each turn does this:
 4. The swarm stands up only the roles in that plan.
 5. The security agent checks the path and the contents before a write.
 6. The coding agent edits the sandbox. A general request is the prompt, with the sandbox as the working directory. Native Grok uses `XAI_API_KEY` and the `grok` binary (`grok -p ... --cwd ... --output-format streaming-json`). An OpenAI-compatible meter uses `OPENAI_API_KEY` and `OPENAI_BASE_URL` (LiteLLM or OpenRouter) and writes the files the model returns. The QA agent reviews the files that changed. The security agent checks the request before the edit and the written files after it. Without a key, a simple create-file message still uses the local sandbox worker. Any other request is refused with a clear note that general edits need `XAI_API_KEY` or `OPENAI_API_KEY` and `OPENAI_BASE_URL`. The offline path is not a stand-in for Grok Build.
-7. The computer agent writes a go-to-market plan. Actions stay `executed: false` unless you pass `--computer-execute` or set `OCP_COMPUTER_EXECUTE=1` and name an http or https URL. Then this process opens that URL with Playwright (headless Chromium), saves `gtm/last-run.json` and `gtm/last-screenshot.png` in the sandbox, and marks that action `executed: true`. OpenClaw does not run the browser and does not write those files.
+7. The computer agent writes a go-to-market plan. Actions stay `executed: false` unless you pass `--computer-execute` or set `OCP_COMPUTER_EXECUTE=1` and name an http or https URL. Then this process opens that URL, reads the title and page text, and types into a CSS selector when the message says `type "text" into SELECTOR`. Playwright (headless Chromium) does that work here. `gtm/last-run.json` lists each step, and each finished step saves a screenshot under `gtm/`. A step is `executed: true` only if it ran. OpenClaw does not run the browser and does not write those files.
 
 The transcript is one block: session, route, which System-1 path ran, the manager plan, which agents stood up, the security decision, the file write, the QA result, and the computer plan.
 
@@ -29,7 +29,7 @@ The transcript is one block: session, route, which System-1 path ran, the manage
 5. The security agent checks the path and the file contents before any write. It blocks path escape and secrets.
 6. The coding agent writes files. Offline, a local sandbox worker does the write. The Grok Build seam builds `grok -p "<prompt>" --cwd <dir> --output-format streaming-json` and calls an injected runner. The demo does not spawn `grok`.
 7. The QA agent checks the file that was written.
-8. The computer agent records a go-to-market action plan. With live execution off, no browser runs and each action is `executed: false`. With live execution on, Playwright opens the named URL from this process.
+8. The computer agent records a go-to-market action plan. With live execution off, no browser runs and each action is `executed: false`. With live execution on, Playwright opens the named URL, reads the screen, and types into one selector when you ask.
 
 Turns on the same session run one after another. The same message on the same sandbox replays the stored result.
 
@@ -40,7 +40,7 @@ Turns on the same session run one after another. The same message on the same sa
 | Chat agent / chat bot | OpenCodingPartner CLI + orchestration |
 | Orchestration agent swarm | OpenClaw-class gateway ([openclaw/openclaw](https://github.com/openclaw/openclaw), MIT). Docs: [docs.openclaw.ai](https://docs.openclaw.ai/). We do not vendor this code. |
 | Coding agents + QA agents | Grok Build ([xai-org/grok-build](https://github.com/xai-org/grok-build), Apache-2.0). Headless use: [scripting](https://docs.x.ai/build/cli/headless-scripting). We do not vendor this code. |
-| Computer agents (GTM) | Computer-use worker seam. Offline, it only records the plan. With `--computer-execute`, Playwright opens the named URL from this process. |
+| Computer agents (GTM) | Computer-use worker seam. Offline, it only records the plan. With `--computer-execute`, Playwright opens the named URL, reads the screen, and can type into one selector from this process. |
 | Security agents | Policy/security worker seam. It runs in the coding path, before the write. |
 
 Laya is System-1: it only picks the route. Package: [laya on PyPI](https://pypi.org/project/laya/) (Apache-2.0, pinned at 0.3.13). Weights: [convaiinnovations/laya](https://huggingface.co/convaiinnovations/laya), English checkpoint only. `pnpm bundle:install` downloads about 800 MB into `.bundle/laya/hf`. That directory is not committed. The call shape is `router.predict(state, questions, model="english")`. Question types are choice, score, and noul.

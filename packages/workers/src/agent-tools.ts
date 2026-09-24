@@ -17,7 +17,7 @@ export interface CodingReply {
   done: boolean;
 }
 
-/** `node --test`, `pnpm test`, or `tsc --noEmit`. Argv only. No shell. */
+/** `node --test`, `pnpm test`, `tsc --noEmit`, `git status`, or `git diff`. Argv only. No shell. */
 export function commandDecision(argv: readonly string[]): { allow: boolean; reason: string } {
   if (argv.length < 2 || argv.length > 8) return { allow: false, reason: "command is not on the allow list" };
   const unsafe = (arg: string) => !arg || arg.startsWith("/") || arg.includes("..") || /[\n\r\0;&|`$><\\]/.test(arg);
@@ -27,7 +27,19 @@ export function commandDecision(argv: readonly string[]): { allow: boolean; reas
   if (bin === "node" && sub === "--test" && rest.every(relative)) return { allow: true, reason: "" };
   if (bin === "pnpm" && sub === "test" && rest.length === 0) return { allow: true, reason: "" };
   if (bin === "tsc" && sub === "--noEmit" && rest.every(relative)) return { allow: true, reason: "" };
-  return { allow: false, reason: "only node --test, pnpm test, and tsc --noEmit are allowed" };
+  if (bin === "git" && gitReadOnly(sub, rest)) return { allow: true, reason: "" };
+  return { allow: false, reason: "only node --test, pnpm test, tsc --noEmit, git status, and git diff are allowed" };
+}
+
+/** `git status`, `git status -sb`, `git status --short --branch`, or `git diff` plus relative paths. */
+function gitReadOnly(sub: string | undefined, rest: readonly string[]): boolean {
+  if (sub === "status") {
+    if (rest.length === 0) return true;
+    if (rest.length === 1 && rest[0] === "-sb") return true;
+    return rest.length === 2 && rest[0] === "--short" && rest[1] === "--branch";
+  }
+  if (sub === "diff") return rest.every((arg) => !arg.startsWith("-"));
+  return false;
 }
 
 export function parseCodingReply(stdout: string): CodingReply | null {

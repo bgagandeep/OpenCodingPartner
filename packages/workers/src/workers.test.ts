@@ -24,6 +24,17 @@ test("node --test is allowed and a unified diff edits one line", () => {
   assert.equal(commandDecision(["curl", "https://example.com"]).allow, false);
   assert.equal(commandDecision(["rm", "-rf", "."]).allow, false);
   assert.equal(commandDecision(["node", "--test", "a", "b", "c", "d", "e", "f", "g"]).allow, false);
+  assert.equal(commandDecision(["git", "status"]).allow, true);
+  assert.equal(commandDecision(["git", "status", "-sb"]).allow, true);
+  assert.equal(commandDecision(["git", "status", "--short", "--branch"]).allow, true);
+  assert.equal(commandDecision(["git", "diff"]).allow, true);
+  assert.equal(commandDecision(["git", "diff", "src/math.ts"]).allow, true);
+  assert.equal(commandDecision(["git", "commit", "-m", "x"]).allow, false);
+  assert.equal(commandDecision(["git", "push"]).allow, false);
+  assert.equal(commandDecision(["git", "checkout", "main"]).allow, false);
+  assert.equal(commandDecision(["git", "diff", "../secret"]).allow, false);
+  assert.equal(commandDecision(["git", "diff", "/etc/passwd"]).allow, false);
+  assert.equal(commandDecision(["git", "status", "--porcelain"]).allow, false);
   const next = applyUnifiedDiff(
     "export function add(left: number, right: number): number {\n  return left - right;\n}\n",
     "--- a/src/math.ts\n+++ b/src/math.ts\n@@ -1,3 +1,3 @@\n export function add(left: number, right: number): number {\n-  return left - right;\n+  return left + right;\n }\n",

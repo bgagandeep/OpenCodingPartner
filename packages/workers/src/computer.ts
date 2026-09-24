@@ -4,7 +4,7 @@ import path from "node:path";
 
 export interface ComputerAction {
   id: string;
-  kind: "open-url" | "type" | "read-screen";
+  kind: "open-url" | "type" | "read-screen" | "verify";
   target: string;
   purpose: string;
   executed: boolean;
@@ -112,6 +112,19 @@ export function selectorDecision(selector: string): { allow: boolean; reason: st
   return { allow: true, reason: "" };
 }
 
+/** `expect title "..."` and `expect text "..."`. Both are optional. Quotes are required. */
+export function pageClaim(message: string): { title?: string; text?: string } | undefined {
+  const title = quotedClaim(message, "title");
+  const text = quotedClaim(message, "text");
+  if (title === undefined && text === undefined) return undefined;
+  return { ...(title !== undefined ? { title } : {}), ...(text !== undefined ? { text } : {}) };
+}
+
+function quotedClaim(message: string, name: "title" | "text"): string | undefined {
+  const match = message.match(new RegExp(`expect ${name} "([^"]*)"`, "i")) ?? message.match(new RegExp(`expect ${name} '([^']*)'`, "i"));
+  return match?.[1];
+}
+
 /** First http(s) URL in the message. An env URL wins when the operator set one. */
 export function namedUrl(message: string, envUrl?: string): string | undefined {
   const fromEnv = envUrl?.trim();
@@ -146,11 +159,21 @@ export function urlDecision(raw: string, allowHosts?: readonly string[]): { allo
 }
 
 export async function executeComputerVisit(input: ComputerVisitInput): Promise<GtmPlan> {
-  if (!input.execute) return planGtmActions(input.productName);
+  if (!input.execute) {
+    const plan = planGtmActions(input.productName);
+    const claim = pageClaim(input.message);
+    if (claim) {
+      plan.note = "Computer execute is off. No live browser ran. The page claim was not checked.";
+      await writeClaim(input.sandboxRoot, namedUrl(input.message, input.envUrl) ?? "", claim, "", "", "", false);
+    }
+    return plan;
+  }
   const url = namedUrl(input.message, input.envUrl);
   const plan = planGtmActions(input.productName);
+  const claim = pageClaim(input.message);
   if (!url) {
     plan.note = "Computer execute was requested. Name an http or https URL. No live browser ran.";
+    if (claim) await writeClaim(input.sandboxRoot, "", claim, "", "", "", false);
     return plan;
   }
   const decision = urlDecision(url, input.allowHosts);
@@ -158,10 +181,12 @@ export async function executeComputerVisit(input: ComputerVisitInput): Promise<G
   if (open) open.target = url;
   if (!decision.allow) {
     plan.note = `Computer execute was requested. Refused ${url}: ${decision.reason}. No live browser ran.`;
+    if (claim) await writeClaim(input.sandboxRoot, url, claim, "", "", "", false);
     return plan;
   }
   if (!input.driver) {
-    plan.note = "Computer execute was requested. No browser driver is configured. No live browser ran.";
+    plan.note = "Computer execute was requested. Playwright is missing or no browser driver is configured. No live browser ran.";
+    if (claim) await writeClaim(input.sandboxRoot, url, claim, "", "", "", false);
     return plan;
   }
   const typing = typeInstruction(input.message);
@@ -169,6 +194,16 @@ export async function executeComputerVisit(input: ComputerVisitInput): Promise<G
     { id: "gtm-1", kind: "open-url", target: url, purpose: "Open the named URL", executed: false, liveBrowser: false },
     { id: "gtm-2", kind: "read-screen", target: url, purpose: "Read the page title and text", executed: false, liveBrowser: false },
   ];
+  if (claim) {
+    steps.push({
+      id: "gtm-verify",
+      kind: "verify",
+      target: claim.title ?? claim.text ?? url,
+      purpose: "Check the page against the claim",
+      executed: false,
+      liveBrowser: false,
+    });
+  }
   if (typing) {
     steps.push({
       id: "gtm-3",
@@ -219,17 +254,69 @@ export async function executeComputerVisit(input: ComputerVisitInput): Promise<G
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : "browser failed";
-    plan.note = `Computer execute was requested. The browser did not finish (${redact(message)}). Finished steps stay marked.`;
+    plan.note = `Computer execute was requested. The browser did not finish (${redact(message)}). Playwright or Chromium may be missing. Finished steps stay marked.`;
     await session?.close().catch(() => undefined);
     await persistRun(input.sandboxRoot, url, recorded, plan);
+    if (claim) await writeClaim(input.sandboxRoot, url, claim, "", "", "", false);
     return plan;
   }
   await session.close();
   const title = recorded.find((step) => step.kind === "read-screen")?.title ?? "";
   const refused = typing && !selectorGate.allow ? ` Refused the type step: ${selectorGate.reason}.` : "";
-  plan.note = `Live browser opened ${url}. Title: ${title}.${refused} Evidence: gtm/last-run.json.`;
+  const readStep = recorded.find((step) => step.kind === "read-screen");
+  const actualTitle = readStep?.title ?? "";
+  const actualText = readStep?.text ?? "";
+  const screenshot = readStep?.screenshot ?? "";
+  if (claim) {
+    const held = claimHolds(claim, actualTitle, actualText);
+    const verify = steps.find((action) => action.kind === "verify");
+    mark(verify, true);
+    recorded.push({ kind: "verify", executed: true, title: actualTitle, text: actualText, screenshot });
+    await writeClaim(input.sandboxRoot, url, claim, actualTitle, actualText, screenshot, true, held);
+    plan.note = held
+      ? `Live browser opened ${url}. Title: ${title}. The page claim held. Evidence: gtm/last-run.json and gtm/assertion.json.`
+      : `Live browser opened ${url}. Title: ${title}. The page claim did not hold. Evidence: gtm/last-run.json and gtm/assertion.json.`;
+  } else {
+    plan.note = `Live browser opened ${url}. Title: ${title}.${refused} Evidence: gtm/last-run.json.`;
+  }
   await persistRun(input.sandboxRoot, url, recorded, plan);
   return plan;
+}
+
+function claimHolds(claim: { title?: string; text?: string }, actualTitle: string, actualText: string): boolean {
+  if (claim.title !== undefined && actualTitle !== claim.title) return false;
+  if (claim.text !== undefined && !actualText.includes(claim.text)) return false;
+  return true;
+}
+
+async function writeClaim(
+  sandboxRoot: string,
+  url: string,
+  claim: { title?: string; text?: string },
+  actualTitle: string,
+  actualText: string,
+  screenshot: string,
+  executed: boolean,
+  claimHeld = false,
+): Promise<void> {
+  const body = {
+    url,
+    expectedTitle: claim.title ?? "",
+    actualTitle,
+    expectedText: claim.text ?? "",
+    actualText,
+    screenshot,
+    executed,
+    claimHeld: executed && claimHeld,
+  };
+  await writeEvidence(sandboxRoot, "gtm/assertion.json", `${JSON.stringify(body, null, 2)}\n`);
+  if (!executed) {
+    await writeEvidence(
+      sandboxRoot,
+      "gtm/last-run.json",
+      `${JSON.stringify({ url, title: actualTitle, screenshot, executed: false, steps: [{ kind: "verify", executed: false }] }, null, 2)}\n`,
+    );
+  }
 }
 
 function mark(action: ComputerAction | undefined, ran: boolean): void {

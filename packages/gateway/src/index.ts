@@ -11,8 +11,10 @@ import {
   planGtmActions,
   type BrowserDriver,
   changedSandboxFiles,
+  pageClaim,
   qaCheckFile,
   reviewChangedFiles,
+  reviewComputerClaim,
   runOnGrokBuild,
   securityGate,
   snapshotSandbox,
@@ -317,12 +319,12 @@ async function executeTurn(input: ChatTurnInput, session: SwarmSession, key: str
   if (agents.some((agent) => agent.role === "computer")) {
     const execute = input.computerExecute === true;
     computer = await swarm.dispatch("computer", () =>
-      execute
+      execute || pageClaim(input.message)
         ? executeComputerVisit({
             productName: "OpenCodingPartner",
             message: input.message,
             sandboxRoot: input.sandboxRoot,
-            execute: true,
+            execute,
             envUrl: input.computerUrl,
             allowHosts: input.computerAllowHosts,
             driver: input.browserDriver,
@@ -332,6 +334,10 @@ async function executeTurn(input: ChatTurnInput, session: SwarmSession, key: str
     const planPath = path.join(input.sandboxRoot, "gtm", "action-plan.json");
     await mkdir(path.dirname(planPath), { recursive: true });
     await writeFile(planPath, `${JSON.stringify(computer, null, 2)}\n`);
+    if (pageClaim(input.message) && agents.some((agent) => agent.role === "qa")) {
+      const claimQa = await swarm.dispatch("qa", () => reviewComputerClaim(input.sandboxRoot));
+      qa = qa ? { pass: qa.pass && claimQa.pass, summary: `${qa.summary}; ${claimQa.summary}` } : claimQa;
+    }
   }
 
   const result: ChatTurnResult = {

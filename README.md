@@ -111,6 +111,12 @@ pnpm exec ocp chat --sandbox .sandbox --computer-execute "Open https://example.c
 
 If Playwright or Chromium is missing, the turn says the browser did not finish. Steps that did not run stay `executed: false`.
 
+A page check adds `expect title "..."` or `expect text "..."`. The computer agent opens the URL, saves a screenshot, and writes `gtm/assertion.json` next to `gtm/last-run.json`. The QA agent reads both. It fails when the title or text does not match, when execute is off, or when the browser did not start. It does not pass a claim it could not see.
+
+```bash
+pnpm exec ocp chat --sandbox .sandbox --computer-execute "Open https://example.com and expect title \"Example Domain\""
+```
+
 You can also send one message and return:
 
 ```bash

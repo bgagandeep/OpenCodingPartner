@@ -24,7 +24,7 @@ Ads are off. Payments are off in the core.
 - The OpenClaw gateway can drive sandbox writes. After it accepts the session plan, it invokes the local write bridge (`ocp_sandbox_write`). The transcript says OpenClaw-driven. When the gateway is down, the same create-file is a local sandbox write. `fs_write` and `sessions_spawn` stay blocked.
 - Start the OpenClaw gateway with `docker compose up -d openclaw-gateway` and send session traffic through it. Load `integrations/openclaw-sandbox-write` so the gateway can call the bridge.
 - Send a real coding prompt through Grok Build when the operator has a key.
-- The computer agent can open a URL, read the screen, and type into one selector. Longer browser sessions can come later.
+- The computer agent can open a URL, read the screen, and type into one selector. A page claim (`expect title` or `expect text`) writes `gtm/assertion.json` and a screenshot. The QA agent fails the claim when the page does not match, when execute is off, or when Playwright is missing. Longer browser sessions can come later.
 - Keep Laya on route and policy only. Weights stay on the operator machine.
 
 ## Later

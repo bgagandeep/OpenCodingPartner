@@ -475,6 +475,48 @@ test("computer execute with a fake browser saves evidence and marks the action e
   }
 });
 
+test("QA fails a broken page claim and records the screenshot", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-qa-claim-"));
+  try {
+    const png = Uint8Array.from([137, 80, 78, 71]);
+    const turn = await runChatTurn({
+      message: 'Stand up a computer agent and a QA agent. Open https://example.com and expect title "Not the page"',
+      sandboxRoot: root,
+      computerExecute: true,
+      computerAllowHosts: ["example.com"],
+      browserDriver: {
+        async start() {
+          return {
+            async open() {
+              return { title: "Example Domain", text: "hello", screenshotPng: png };
+            },
+            async readScreen() {
+              return { title: "Example Domain", text: "hello", screenshotPng: png };
+            },
+            async typeInto() {
+              return { title: "Example Domain", text: "hello", screenshotPng: png };
+            },
+            async close() {
+              return undefined;
+            },
+          };
+        },
+      },
+    });
+    assert.equal(turn.qa?.pass, false);
+    assert.match(turn.qa?.summary ?? "", /did not hold/);
+    assert.match(turn.transcript, /QA agent: fail/);
+    const assertion = JSON.parse(await readFile(path.join(root, "gtm/assertion.json"), "utf8")) as { claimHeld: boolean };
+    assert.equal(assertion.claimHeld, false);
+    const run = JSON.parse(await readFile(path.join(root, "gtm/last-run.json"), "utf8")) as { steps: { executed: boolean }[] };
+    assert.ok(run.steps.length >= 2);
+    const shot = await readFile(path.join(root, "gtm/step-2.png"));
+    assert.ok(shot.length > 0);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("demo command path writes the product file and blocks the secret", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "ocp-demo-"));
   try {

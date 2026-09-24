@@ -4,10 +4,10 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { parseCreateFileInstruction, writeSandboxFile } from "./coding.js";
-import { executeComputerVisit, planGtmActions, selectorDecision, urlDecision } from "./computer.js";
+import { executeComputerVisit, pageClaim, planGtmActions, selectorDecision, urlDecision } from "./computer.js";
 import { grokBuildArgv, runOnGrokBuild } from "./grok.js";
 import { openAiCompatibleRunner, parseFileEdits } from "./openai.js";
-import { qaCheckFile } from "./qa.js";
+import { qaCheckFile, reviewComputerClaim } from "./qa.js";
 import { securityGate } from "./security.js";
 
 test("create-file parse keeps the trailing newline and rejects an unknown tool", () => {
@@ -202,6 +202,80 @@ test("a live sequence opens, reads, and types, and a script selector does not ru
     assert.equal(blocked.actions[1]?.executed, true);
     assert.equal(blocked.actions[2]?.executed, false);
     assert.match(blocked.note, /Refused the type step/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("QA passes a page claim and fails a broken title", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-claim-ok-"));
+  try {
+    const held = await executeComputerVisit({
+      productName: "OpenCodingPartner",
+      message: 'Stand up a QA agent. Open https://example.com and expect title "Example Domain"',
+      sandboxRoot: root,
+      execute: true,
+      driver: fakeBrowser(),
+    });
+    assert.equal(held.actions.some((action) => action.kind === "verify" && action.executed), true);
+    const assertion = JSON.parse(await readFile(path.join(root, "gtm/assertion.json"), "utf8")) as { claimHeld: boolean; screenshot: string };
+    assert.equal(assertion.claimHeld, true);
+    assert.equal(assertion.screenshot, "gtm/step-2.png");
+    const png = await readFile(path.join(root, assertion.screenshot));
+    assert.ok(png.length > 0);
+    const pass = await reviewComputerClaim(root);
+    assert.equal(pass.pass, true);
+    const run = JSON.parse(await readFile(path.join(root, "gtm/last-run.json"), "utf8")) as { steps: { kind: string }[] };
+    assert.ok(run.steps.some((step) => step.kind === "verify"));
+
+    const brokenRoot = await mkdtemp(path.join(tmpdir(), "ocp-claim-bad-"));
+    await executeComputerVisit({
+      productName: "OpenCodingPartner",
+      message: 'Open https://example.com and expect title "Not the page"',
+      sandboxRoot: brokenRoot,
+      execute: true,
+      driver: fakeBrowser(),
+    });
+    const broken = await reviewComputerClaim(brokenRoot);
+    assert.equal(broken.pass, false);
+    assert.match(broken.summary, /did not hold/);
+    assert.match(broken.summary, /Not the page/);
+    await rm(brokenRoot, { recursive: true, force: true });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("execute off and a missing browser fail the page claim", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-claim-off-"));
+  try {
+    assert.deepEqual(pageClaim('expect title "Example Domain"'), { title: "Example Domain" });
+    await executeComputerVisit({
+      productName: "OpenCodingPartner",
+      message: 'Open https://example.com and expect title "Example Domain"',
+      sandboxRoot: root,
+      execute: false,
+    });
+    const off = await reviewComputerClaim(root);
+    assert.equal(off.pass, false);
+    assert.match(off.summary, /did not run/);
+    const saved = JSON.parse(await readFile(path.join(root, "gtm/last-run.json"), "utf8")) as { executed: boolean };
+    assert.equal(saved.executed, false);
+
+    await executeComputerVisit({
+      productName: "OpenCodingPartner",
+      message: 'Open https://example.com and expect title "Example Domain"',
+      sandboxRoot: root,
+      execute: true,
+      driver: {
+        async start() {
+          throw new Error("Playwright is not installed");
+        },
+      },
+    });
+    const missing = await reviewComputerClaim(root);
+    assert.equal(missing.pass, false);
+    assert.match(missing.summary, /did not run/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

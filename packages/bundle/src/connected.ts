@@ -29,32 +29,49 @@ const CHAT_MESSAGE = "Stand up a coding agent and a QA agent. Reply with ready."
 export interface OrchestrationNotice {
   state: "ran" | "skipped" | "failed";
   detail: string;
+  driver: "openclaw" | "local-swarm";
 }
 
-/** Send one user message to the OpenClaw gateway. Skip when it is down. */
+function sessionPlan(message: string): string {
+  return [
+    `Session plan for ${BOARD_SESSION_KEY}.`,
+    "Stand up a coding agent, a QA agent, a security agent, and a computer agent.",
+    "Coding and QA edit the sandbox with Grok Build.",
+    "Security gates path escape and secrets.",
+    "The computer agent records a GTM plan and does not run a browser.",
+    "User request:",
+    message,
+  ].join("\n");
+}
+
+/** Ask the OpenClaw gateway to own the session plan. The local swarm runs only when the gateway is down. */
 export async function sendOrchestrationTurn(message: string, deps: ConnectedDeps): Promise<OrchestrationNotice> {
   const fetchImpl = deps.fetchImpl ?? fetch;
   const exec = deps.exec ?? defaultExec;
   const gatewayHttp = (deps.gatewayHttp ?? deps.env.OPENCLAW_GATEWAY_URL ?? "http://127.0.0.1:18789").replace(/\/$/, "");
   const up = await gatewayIsUp(gatewayHttp, fetchImpl);
-  if (!up) return { state: "skipped", detail: `OpenClaw gateway skipped (${gatewayHttp}/healthz did not answer).` };
+  if (!up) {
+    return { state: "skipped", driver: "local-swarm", detail: `OpenClaw gateway skipped (${gatewayHttp}/healthz did not answer).` };
+  }
+  const plan = sessionPlan(message);
   if (deps.bins.openclawBin) {
-    const args = [
-      "gateway",
-      "call",
-      "sessions.send",
-      "--params",
-      JSON.stringify({ key: BOARD_SESSION_KEY, message }),
-      "--timeout",
-      "15000",
-      "--port",
-      new URL(gatewayHttp).port || "18789",
-    ];
-    if (deps.env.OPENCLAW_GATEWAY_TOKEN) args.push("--token", deps.env.OPENCLAW_GATEWAY_TOKEN);
-    const sent = await exec(deps.bins.openclawBin, args, deps.env);
-    return sent.code === 0
-      ? { state: "ran", detail: `OpenClaw session ${BOARD_SESSION_KEY} accepted the turn.` }
-      : { state: "failed", detail: "OpenClaw gateway was up, but sessions.send did not succeed." };
+    const port = new URL(gatewayHttp).port || "18789";
+    const tokenArgs = deps.env.OPENCLAW_GATEWAY_TOKEN ? ["--token", deps.env.OPENCLAW_GATEWAY_TOKEN] : [];
+    const sent = await exec(
+      deps.bins.openclawBin,
+      ["gateway", "call", "sessions.send", "--params", JSON.stringify({ key: BOARD_SESSION_KEY, message: plan }), "--timeout", "15000", "--port", port, ...tokenArgs],
+      deps.env,
+    );
+    if (sent.code !== 0) {
+      return { state: "failed", driver: "openclaw", detail: "sessions.send did not accept the session plan." };
+    }
+    const skills = await exec(
+      deps.bins.openclawBin,
+      ["gateway", "call", "tools.invoke", "--params", JSON.stringify({ name: "skills.status", sessionKey: BOARD_SESSION_KEY, args: { agentId: "board" } }), "--timeout", "15000", "--port", port, ...tokenArgs],
+      deps.env,
+    );
+    const skillsNote = skills.code === 0 ? "skills.status ran on the session." : "skills.status did not succeed. The session plan still drove the turn.";
+    return { state: "ran", driver: "openclaw", detail: `Session ${BOARD_SESSION_KEY} accepted the plan. ${skillsNote}` };
   }
   const headers: Record<string, string> = { "content-type": "application/json", "x-openclaw-session-key": BOARD_SESSION_KEY };
   if (deps.env.OPENCLAW_GATEWAY_TOKEN) headers.authorization = `Bearer ${deps.env.OPENCLAW_GATEWAY_TOKEN}`;
@@ -62,14 +79,20 @@ export async function sendOrchestrationTurn(message: string, deps: ConnectedDeps
     const response = await fetchImpl(`${gatewayHttp}/v1/chat/completions`, {
       method: "POST",
       headers,
-      body: JSON.stringify({ model: "openclaw/default", user: "conv:board", messages: [{ role: "user", content: message }] }),
+      body: JSON.stringify({ model: "openclaw/default", user: "conv:board", messages: [{ role: "user", content: plan }] }),
       signal: AbortSignal.timeout(15000),
     });
-    return response.ok
-      ? { state: "ran", detail: `OpenClaw chat completions accepted session ${BOARD_SESSION_KEY}.` }
-      : { state: "failed", detail: `OpenClaw chat completions returned HTTP ${response.status}.` };
+    if (!response.ok) return { state: "failed", driver: "openclaw", detail: `Chat completions returned HTTP ${response.status}.` };
+    const tools = await fetchImpl(`${gatewayHttp}/tools/invoke`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ tool: "skills.status", sessionKey: BOARD_SESSION_KEY, args: { agentId: "board" } }),
+      signal: AbortSignal.timeout(15000),
+    });
+    const skillsNote = tools.ok ? "skills.status ran on the session." : "skills.status did not succeed. The session plan still drove the turn.";
+    return { state: "ran", driver: "openclaw", detail: `OpenClaw chat completions accepted session ${BOARD_SESSION_KEY}. ${skillsNote}` };
   } catch {
-    return { state: "failed", detail: "OpenClaw gateway was up, but the chat request did not finish." };
+    return { state: "failed", driver: "openclaw", detail: "OpenClaw gateway was up, but the session plan did not finish." };
   }
 }
 

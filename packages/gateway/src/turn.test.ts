@@ -143,6 +143,71 @@ test("security removes a secret file after a general edit", async () => {
   }
 });
 
+test("OpenClaw drives a general edit and QA checks the kept files", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-driven-"));
+  try {
+    const turn = await runChatTurn({
+      message: "add a README section explaining install",
+      sandboxRoot: root,
+      orchestration: async () => ({
+        state: "ran",
+        driver: "openclaw",
+        detail: "Session agent:board:main accepted the plan. skills.status ran on the session.",
+      }),
+      grokRunner: {
+        async run() {
+          await writeSandboxFile(root, "README.md", "# Install\n");
+          return { exitCode: 0, stdout: "" };
+        },
+      },
+    });
+    assert.match(turn.transcript, /OpenClaw drove this turn/);
+    assert.equal(turn.qa?.pass, true);
+    assert.match(turn.qa?.summary ?? "", /README.md is non-empty/);
+    assert.equal(await readFile(path.join(root, "README.md"), "utf8"), "# Install\n");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a gateway that rejects the plan does not fall back to the local swarm", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-reject-"));
+  try {
+    const turn = await runChatTurn({
+      message: "Use Grok Build to create hello.txt with content:\nhello\n",
+      sandboxRoot: root,
+      orchestration: async () => ({ state: "failed", driver: "openclaw", detail: "sessions.send did not accept the session plan." }),
+      grokRunner: {
+        async run() {
+          await writeSandboxFile(root, "hello.txt", "should-not\n");
+          return { exitCode: 0, stdout: "" };
+        },
+      },
+    });
+    assert.match(turn.transcript, /did not take over/);
+    assert.equal(turn.coding, null);
+    await assert.rejects(readFile(path.join(root, "hello.txt"), "utf8"));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("QA fails when Grok Build reports success and keeps no files", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-empty-"));
+  try {
+    const turn = await runChatTurn({
+      message: "refactor the notes",
+      sandboxRoot: root,
+      grokRunner: { async run() { return { exitCode: 0, stdout: "" }; } },
+    });
+    assert.equal(turn.coding?.wrote, false);
+    assert.equal(turn.qa?.pass, false);
+    assert.match(turn.qa?.summary ?? "", /kept no files/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("demo command path writes the product file and blocks the secret", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "ocp-demo-"));
   try {

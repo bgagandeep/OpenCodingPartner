@@ -67,7 +67,7 @@ hello
 "
 ```
 
-When the OpenClaw gateway is up, the same chat turn is also sent to session `agent:board:main`. The local swarm still coordinates the roles. When `XAI_API_KEY` is set and the bundled `grok` binary is installed, the coding agent passes your message to Grok Build and lets it edit the sandbox. If the gateway is down, that notify step is skipped. If the key is missing, only a simple create-file message is written locally. Do not commit `XAI_API_KEY` or `OPENCLAW_GATEWAY_TOKEN`.
+When the OpenClaw gateway is up, it drives the turn. The chat agent sends a session plan to `agent:board:main` and checks `skills.status` on that session. The local swarm does not run a second plan. If the gateway rejects the plan, the turn stops. The local swarm is the fallback only when the gateway is down. OpenClaw does not edit the sandbox itself. The gateway blocks remote file writes and remote agent spawn. Grok Build still does the file edit after the session accepts the plan. If the key is missing, only a simple create-file message is written locally. Do not commit `XAI_API_KEY` or `OPENCLAW_GATEWAY_TOKEN`.
 
 ```bash
 pnpm bundle:install

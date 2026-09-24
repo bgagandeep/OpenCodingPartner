@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { applySandboxTodo, applyUnifiedDiff, commandDecision, copySandboxFile, deleteSandboxFile, formatTodoBlock, globSandbox, grepSandbox, listSandboxDir, mkdirSandboxDir, parseCodingReply, renameSandboxFile, rmdirSandboxDir } from "./agent-tools.js";
+import { appendSandboxFile, applySandboxTodo, applyUnifiedDiff, commandDecision, copySandboxFile, deleteSandboxFile, formatTodoBlock, globSandbox, grepSandbox, listSandboxDir, mkdirSandboxDir, parseCodingReply, renameSandboxFile, rmdirSandboxDir } from "./agent-tools.js";
 import { parseCreateFileInstruction, writeSandboxFile } from "./coding.js";
 import { COMPUTER_SCROLL_CAP_PX, COMPUTER_WAIT_CAP_MS, computerChain, executeComputerVisit, pageClaim, planGtmActions, selectorDecision, urlDecision } from "./computer.js";
 import { grokBuildArgv, runOnGrokBuild } from "./grok.js";
@@ -169,6 +169,34 @@ test("copy duplicates one file and refuses overwrite, escape, secrets, and gtm",
     assert.equal((await copySandboxFile(root, "gtm/last-run.json", "src/run.json")).ok, false);
     assert.equal((await copySandboxFile(root, "src", "src/dir-copy")).detail, "directories are not copied");
     assert.equal((await copySandboxFile(root, "/tmp/outside.ts", "src/out.ts")).ok, false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("append adds text to an existing file and refuses a missing file, a directory, escape, secrets, and gtm", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-append-"));
+  try {
+    await mkdir(path.join(root, "src"), { recursive: true });
+    await mkdir(path.join(root, "gtm"), { recursive: true });
+    await mkdir(path.join(root, ".ocp"), { recursive: true });
+    await writeFile(path.join(root, "src/note.ts"), "one\n");
+    await writeFile(path.join(root, "src/secret.ts"), "password=hunter2\n");
+    await writeFile(path.join(root, "gtm/last-run.json"), "{}\n");
+    await writeFile(path.join(root, ".ocp/todos.json"), "{}\n");
+    assert.equal((await appendSandboxFile(root, "src/note.ts", "two\n")).ok, true);
+    assert.equal(await readFile(path.join(root, "src/note.ts"), "utf8"), "one\ntwo\n");
+    assert.equal((await appendSandboxFile(root, "src/missing.ts", "x\n")).detail, "file missing");
+    await assert.rejects(readFile(path.join(root, "src/missing.ts"), "utf8"));
+    assert.equal((await appendSandboxFile(root, "src", "x\n")).detail, "directories are not appended");
+    assert.equal((await appendSandboxFile(root, "../secret.txt", "x\n")).ok, false);
+    assert.equal((await appendSandboxFile(root, "src/secret.ts", "more\n")).ok, false);
+    assert.equal(await readFile(path.join(root, "src/secret.ts"), "utf8"), "password=hunter2\n");
+    assert.equal((await appendSandboxFile(root, "src/note.ts", "password=hunter2\n")).ok, false);
+    assert.equal(await readFile(path.join(root, "src/note.ts"), "utf8"), "one\ntwo\n");
+    assert.equal((await appendSandboxFile(root, "gtm/last-run.json", "x\n")).ok, false);
+    assert.equal((await appendSandboxFile(root, ".ocp/todos.json", "x\n")).ok, false);
+    assert.equal((await appendSandboxFile(root, "/tmp/outside.ts", "x\n")).ok, false);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

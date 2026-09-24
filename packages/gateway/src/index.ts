@@ -14,6 +14,7 @@ import {
   formatTodoBlock,
   mkdirSandboxDir,
   rmdirSandboxDir,
+  appendSandboxFile,
   copySandboxFile,
   renameSandboxFile,
   globSandbox,
@@ -704,6 +705,7 @@ async function applyToolReply(
   let renamedLocal = false;
   let renamedRemote = false;
   let copiedLocal = false;
+  let appendedLocal = false;
   let copiedRemote = false;
   let madeDirLocal = false;
   let madeDirRemote = false;
@@ -853,6 +855,21 @@ async function applyToolReply(
           else copiedLocal = true;
           kept.push(step.to);
         }
+      } else if (step.tool === "append" && step.path) {
+        if (step.content === undefined) {
+          const line = `Tool: append ${step.path} (content missing)`;
+          log.push(line);
+          observations.push(line);
+        } else {
+          const added = await appendSandboxFile(input.sandboxRoot, step.path, step.content);
+          const line = added.ok ? `Tool: append ${step.path}` : `Tool: append ${step.path} (${added.detail})`;
+          log.push(line);
+          observations.push(line);
+          if (added.ok) {
+            appendedLocal = true;
+            if (!kept.includes(step.path)) kept.push(step.path);
+          }
+        }
       }
     }
     if (reply.done || reply.steps.length === 0) break;
@@ -882,6 +899,7 @@ async function applyToolReply(
     renamedLocal ? "Rename path: local sandbox." : "",
     copiedRemote ? "Copy path: OpenClaw-driven." : "",
     copiedLocal ? "Copy path: local sandbox." : "",
+    appendedLocal ? "Append path: local sandbox." : "",
     madeDirRemote ? "Mkdir path: OpenClaw-driven." : "",
     madeDirLocal ? "Mkdir path: local sandbox." : "",
     removedDirRemote ? "Rmdir path: OpenClaw-driven." : "",
@@ -1015,7 +1033,7 @@ async function codingPrompt(sandboxRoot: string, message: string): Promise<strin
   }
   const filesNote = message.startsWith("Tool observations:") || blocks.length === 0 ? "" : `Sandbox files already on disk:\n${blocks.join("\n")}\n`;
   const history = await priorTurns(sandboxRoot);
-  return `${history}${filesNote}User request:\n${message}\nReply with JSON only: {"steps":[{"tool":"list"|"read"|"grep"|"glob"|"run"|"write"|"patch"|"delete"|"rename"|"copy"|"mkdir"|"rmdir"|"todo","action":"add or complete","to":"relative destination","query":"text or /regex/","path":"relative","content":"full text for write, or todo text, or a 1-based todo index","diff":"unified diff for patch","argv":["node","--test","relative.test.ts"]}],"done":false}. One reply is one round. After you see Tool observations, send the next round. Set "done" to true when finished. List or read before you edit. Patch a file that already exists. Write only a new file. Copy copies one existing file to a new relative path and leaves the source. A todo step uses action add with the task text, or action complete with a 1-based index or id. At most 12 todos. Allowed commands are node --test plus relative paths, pnpm test with no extra arguments, tsc --noEmit plus relative paths, git status, git status -sb, git status --short --branch, git diff plus relative paths, and git log --oneline -n N with N from 1 to 20, and git show HEAD: plus one relative path.`;
+  return `${history}${filesNote}User request:\n${message}\nReply with JSON only: {"steps":[{"tool":"list"|"read"|"grep"|"glob"|"run"|"write"|"patch"|"delete"|"rename"|"copy"|"append"|"mkdir"|"rmdir"|"todo","action":"add or complete","to":"relative destination","query":"text or /regex/","path":"relative","content":"full text for write, or todo text, or a 1-based todo index","diff":"unified diff for patch","argv":["node","--test","relative.test.ts"]}],"done":false}. One reply is one round. After you see Tool observations, send the next round. Set "done" to true when finished. List or read before you edit. Patch a file that already exists. Write only a new file. Append adds text to one existing file and does not create a file. Copy copies one existing file to a new relative path and leaves the source. OpenClaw does not append. A todo step uses action add with the task text, or action complete with a 1-based index or id. At most 12 todos. Allowed commands are node --test plus relative paths, pnpm test with no extra arguments, tsc --noEmit plus relative paths, git status, git status -sb, git status --short --branch, git diff plus relative paths, and git log --oneline -n N with N from 1 to 20, and git show HEAD: plus one relative path.`;
 }
 
 async function mkdirThroughTurn(

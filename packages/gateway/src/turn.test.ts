@@ -995,6 +995,46 @@ test("a coding turn writes a file and then renames it", async () => {
   }
 });
 
+test("a coding turn appends to an existing file and does not create one", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-append-turn-"));
+  try {
+    const turn = await runChatTurn({
+      message: "add a line to the helper",
+      sandboxRoot: root,
+      grokRunner: {
+        async run(argv) {
+          const prompt = argv[argv.indexOf("-p") + 1] ?? "";
+          if (!prompt.includes("Tool observations:\n")) {
+            return {
+              exitCode: 0,
+              stdout: JSON.stringify({ steps: [{ tool: "write", path: "src/note.ts", content: "one\n" }] }),
+            };
+          }
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify({
+              done: true,
+              steps: [
+                { tool: "append", path: "src/note.ts", content: "two\n" },
+                { tool: "append", path: "src/missing.ts", content: "no\n" },
+                { tool: "append", path: "../outside.ts", content: "no\n" },
+              ],
+            }),
+          };
+        },
+      },
+    });
+    assert.match(turn.transcript, /Tool: append src\/note.ts/);
+    assert.match(turn.transcript, /Tool: append src\/missing.ts \(file missing\)/);
+    assert.match(turn.transcript, /Append path: local sandbox/);
+    assert.doesNotMatch(turn.transcript, /Append path: OpenClaw/);
+    assert.equal(await readFile(path.join(root, "src/note.ts"), "utf8"), "one\ntwo\n");
+    await assert.rejects(readFile(path.join(root, "src/missing.ts"), "utf8"));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("a coding turn copies a file and leaves the source", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "ocp-copy-turn-"));
   try {

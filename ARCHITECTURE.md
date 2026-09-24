@@ -6,7 +6,7 @@ There is a temporary early-test cap of 8 agents in the code. That cap is for ear
 
 ## Product path
 
-`ocp chat` is the product. With no message, it is a chat loop. With a message, it runs one turn and exits.
+`ocp chat` is the product. With no message, it is a chat loop. With a message, it runs one turn and exits. `ocp doctor` prints green, yellow, or red for Laya weights, the meter, OpenClaw `/healthz`, the write-bridge plugin, and Playwright. It does not print keys. Yellow means that piece will be an honest skip in the transcript.
 
 Each turn does this:
 

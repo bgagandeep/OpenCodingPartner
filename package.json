@@ -1,0 +1,20 @@
+{
+  "name": "opencodingpartner",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.33.3",
+  "engines": {
+    "node": ">=22.14"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "test": "tsc -b && pnpm install --offline && node --test --test-reporter spec $(find packages tests \\( -name '*.test.js' -o -name '*.test.mjs' \\))",
+    "demo": "tsc -b && node packages/cli/dist/main.js demo --sandbox .sandbox"
+  },
+  "dependencies": {
+    "@opencodingpartner/cli": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2"
+  }
+}

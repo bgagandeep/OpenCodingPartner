@@ -1130,6 +1130,86 @@ test("double-click hits a selector, and a missing selector stops the chain", asy
   }
 });
 
+test("right-click hits a selector, and a missing selector stops the chain", async () => {
+  assert.deepEqual(computerChain('right-click "Buy now"'), [{ kind: "right-click", target: "Buy now", text: "text" }]);
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-rightclick-"));
+  const png = Uint8Array.from([137, 80, 78, 71]);
+  try {
+    const clicked: { target: string; by: string }[] = [];
+    const plan = await executeComputerVisit({
+      productName: "OpenCodingPartner",
+      message: "Open https://example.com then right-click #buy then expect text \"menu\"",
+      sandboxRoot: root,
+      execute: true,
+      driver: {
+        async start() {
+          return {
+            async open() {
+              return { title: "Example", text: "page", screenshotPng: png };
+            },
+            async readScreen() {
+              return { title: "Example", text: "menu", screenshotPng: png };
+            },
+            async typeInto() {
+              return { title: "Example", text: "menu", screenshotPng: png };
+            },
+            async rightClick(target: string, by: "selector" | "text") {
+              clicked.push({ target, by });
+              return { title: "Example", text: "menu", screenshotPng: png };
+            },
+            async close() {
+              return undefined;
+            },
+          };
+        },
+      },
+    });
+    assert.deepEqual(clicked, [{ target: "#buy", by: "selector" }]);
+    assert.equal(plan.actions.find((action) => action.kind === "right-click")?.passed, true);
+    assert.equal(plan.actions.find((action) => action.kind === "click"), undefined);
+    const saved = JSON.parse(await readFile(path.join(root, "gtm/last-run.json"), "utf8")) as {
+      steps: { kind: string; passed?: boolean; screenshot?: string }[];
+    };
+    assert.ok(saved.steps.some((step) => step.kind === "right-click" && step.passed === true && step.screenshot));
+
+    const blocked = await mkdtemp(path.join(tmpdir(), "ocp-rightclick-miss-"));
+    const refused = await executeComputerVisit({
+      productName: "OpenCodingPartner",
+      message: "Open https://example.com then right-click #missing then expect text \"menu\"",
+      sandboxRoot: blocked,
+      execute: true,
+      driver: {
+        async start() {
+          return {
+            async open() {
+              return { title: "Example", text: "page", screenshotPng: png };
+            },
+            async readScreen() {
+              return { title: "Example", text: "page", screenshotPng: png };
+            },
+            async typeInto() {
+              return { title: "Example", text: "page", screenshotPng: png };
+            },
+            async rightClick() {
+              throw new Error("selector missing");
+            },
+            async close() {
+              return undefined;
+            },
+          };
+        },
+      },
+    });
+    const step = refused.actions.find((action) => action.kind === "right-click");
+    assert.equal(step?.passed, false);
+    assert.match(step?.reason ?? "", /selector missing/);
+    assert.equal(refused.actions.find((action) => action.purpose === "Check the page text")?.executed, false);
+    await rm(blocked, { recursive: true, force: true });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("computer agent records a GTM plan that did not run", () => {
   const plan = planGtmActions("OpenCodingPartner");
   assert.match(plan.note, /No live browser ran/);

@@ -212,7 +212,7 @@ async function executeTurn(input: ChatTurnInput, session: SwarmSession, key: str
       try {
         const aware = await codingPrompt(input.sandboxRoot, input.message);
         const grok = await swarm.dispatch("coding", () => runOnGrokBuild(runner, aware, stage));
-        const toolReply = await applyToolReply(input, grok.stdout, true, "openclaw-write");
+        const toolReply = await applyToolReply(input, swarm, grok.stdout, true, "openclaw-write");
         if (toolReply) {
           coding = toolReply.coding;
           security = toolReply.security ?? security;
@@ -280,7 +280,7 @@ async function executeTurn(input: ChatTurnInput, session: SwarmSession, key: str
       const before = await snapshotSandbox(input.sandboxRoot);
       const aware = await codingPrompt(input.sandboxRoot, input.message);
       const grok = await swarm.dispatch("coding", () => runOnGrokBuild(runner, aware, input.sandboxRoot));
-      const toolReply = await applyToolReply(input, grok.stdout, false, via);
+      const toolReply = await applyToolReply(input, swarm, grok.stdout, false, via);
       if (toolReply) {
         coding = toolReply.coding;
         security = toolReply.security ?? security;
@@ -565,7 +565,7 @@ async function applyCodingPass(
     try {
       const aware = await codingPrompt(input.sandboxRoot, prompt);
       const grok = await swarm.dispatch("coding", () => runOnGrokBuild(runner, aware, stage));
-      const toolReply = await applyToolReply(input, grok.stdout, true, "openclaw-write");
+      const toolReply = await applyToolReply(input, swarm, grok.stdout, true, "openclaw-write");
       if (toolReply) return toolReply;
       const staged = await snapshotSandbox(stage);
       const kept: string[] = [];
@@ -600,7 +600,7 @@ async function applyCodingPass(
   const before = await snapshotSandbox(input.sandboxRoot);
   const aware = await codingPrompt(input.sandboxRoot, prompt);
   const grok = await swarm.dispatch("coding", () => runOnGrokBuild(runner, aware, input.sandboxRoot));
-  const toolReply = await applyToolReply(input, grok.stdout, openclawDrove, openclawDrove ? "openclaw-write" : codingVia(input));
+  const toolReply = await applyToolReply(input, swarm, grok.stdout, openclawDrove, openclawDrove ? "openclaw-write" : codingVia(input));
   if (toolReply) return toolReply;
   const after = await snapshotSandbox(input.sandboxRoot);
   const changed = changedSandboxFiles(before, after);
@@ -656,73 +656,113 @@ function meterLine(via: CodingVia): string {
   return "Meter: none";
 }
 
+const TOOL_ROUND_CAP = 5;
+
 async function applyToolReply(
   input: ChatTurnInput,
+  swarm: OrchestrationSwarm,
   stdout: string,
   openclawDrove: boolean,
   via: CodingVia,
 ): Promise<{ coding: ChatTurnResult["coding"]; qa: QaResult | null; security: GateDecision | null } | null> {
-  const reply = parseCodingReply(stdout);
-  if (!reply) return null;
+  const runner = input.grokRunner;
+  if (!runner) return null;
   const log: string[] = [];
+  const observations: string[] = [];
   const kept: string[] = [];
   const blocked: string[] = [];
   let security: GateDecision | null = null;
   let check: { code: number; stdout: string; stderr: string } | null = null;
-  for (const step of reply.steps) {
-    if (step.tool === "list") {
-      const listed = await listSandboxDir(input.sandboxRoot, step.path ?? ".");
-      log.push(`Tool: list ${step.path || "."} (${listed.detail})`);
-    } else if (step.tool === "read" && step.path) {
-      const read = await readSandboxText(input.sandboxRoot, step.path);
-      log.push(`Tool: read ${step.path} (${read.ok ? "ok" : read.detail})`);
-    } else if (step.tool === "run") {
-      const decision = commandDecision(step.argv ?? []);
-      if (!decision.allow) {
-        log.push(`Tool: run refused (${decision.reason})`);
-        check = { code: 1, stdout: "", stderr: decision.reason };
-        continue;
-      }
-      const result = await (input.checkExec ?? defaultCheckExec)(step.argv ?? [], input.sandboxRoot);
-      check = result;
-      log.push(`Tool: run ${(step.argv ?? []).join(" ")} (exit ${result.code})`);
-    } else if ((step.tool === "write" || step.tool === "patch") && step.path) {
-      let content = step.content ?? "";
-      if (step.tool === "patch") {
-        const current = await readSandboxText(input.sandboxRoot, step.path);
-        const next = current.ok ? applyUnifiedDiff(current.detail, step.diff ?? "") : null;
-        if (!current.ok || next === null) {
-          log.push(`Tool: patch ${step.path} (did not apply)`);
-          continue;
-        }
-        content = next;
-      }
-      const gate = securityGate({ relativePath: step.path, content, sandboxRoot: input.sandboxRoot });
-      if (!gate.allow) {
-        blocked.push(step.path);
-        security = { allow: false, reasons: gate.reasons };
-        log.push(`Tool: ${step.tool} ${step.path} (blocked)`);
-        continue;
-      }
-      if (openclawDrove && input.openclawWrite) {
-        const landed = await input.openclawWrite(step.path, content);
-        const onDisk = landed.ok && (await fileMatches(input.sandboxRoot, step.path, content));
-        if (!onDisk) {
-          log.push(`Tool: ${step.tool} ${step.path} (OpenClaw write did not land)`);
-          continue;
-        }
-      } else {
-        await writeSandboxFile(input.sandboxRoot, step.path, content);
-      }
-      kept.push(step.path);
-      log.push(`Tool: ${step.tool} ${step.path}`);
+  let nextStdout = stdout;
+  for (let round = 1; round <= TOOL_ROUND_CAP; round += 1) {
+    const reply = parseCodingReply(nextStdout);
+    if (!reply) {
+      if (round === 1) return null;
+      log.push(`Round ${round}: no more steps`);
+      break;
     }
+    log.push(`Round ${round}`);
+    for (const step of reply.steps) {
+      if (step.tool === "list") {
+        const listed = await listSandboxDir(input.sandboxRoot, step.path ?? ".");
+        const line = `Tool: list ${step.path || "."} (${listed.detail})`;
+        log.push(line);
+        observations.push(line);
+      } else if (step.tool === "read" && step.path) {
+        const read = await readSandboxText(input.sandboxRoot, step.path);
+        const line = `Tool: read ${step.path} (${read.ok ? "ok" : read.detail})`;
+        log.push(line);
+        observations.push(read.ok ? `${line}\n${read.detail.slice(0, 4000)}` : line);
+      } else if (step.tool === "run") {
+        const decision = commandDecision(step.argv ?? []);
+        if (!decision.allow) {
+          const line = `Tool: run refused (${decision.reason})`;
+          log.push(line);
+          observations.push(line);
+          check = { code: 1, stdout: "", stderr: decision.reason };
+          continue;
+        }
+        const result = await (input.checkExec ?? defaultCheckExec)(step.argv ?? [], input.sandboxRoot);
+        check = result;
+        const line = `Tool: run ${(step.argv ?? []).join(" ")} (exit ${result.code})`;
+        log.push(line);
+        const detail = (result.stderr || result.stdout || "no output").slice(0, 500);
+        observations.push(`${line}\n${detail}`);
+      } else if ((step.tool === "write" || step.tool === "patch") && step.path) {
+        let content = step.content ?? "";
+        if (step.tool === "patch") {
+          const current = await readSandboxText(input.sandboxRoot, step.path);
+          const next = current.ok ? applyUnifiedDiff(current.detail, step.diff ?? "") : null;
+          if (!current.ok || next === null) {
+            const line = `Tool: patch ${step.path} (did not apply)`;
+            log.push(line);
+            observations.push(line);
+            continue;
+          }
+          content = next;
+        }
+        const gate = securityGate({ relativePath: step.path, content, sandboxRoot: input.sandboxRoot });
+        if (!gate.allow) {
+          blocked.push(step.path);
+          security = { allow: false, reasons: gate.reasons };
+          const line = `Tool: ${step.tool} ${step.path} (blocked)`;
+          log.push(line);
+          observations.push(line);
+          continue;
+        }
+        if (openclawDrove && input.openclawWrite) {
+          const landed = await input.openclawWrite(step.path, content);
+          const onDisk = landed.ok && (await fileMatches(input.sandboxRoot, step.path, content));
+          if (!onDisk) {
+            const line = `Tool: ${step.tool} ${step.path} (OpenClaw write did not land)`;
+            log.push(line);
+            observations.push(line);
+            continue;
+          }
+        } else {
+          await writeSandboxFile(input.sandboxRoot, step.path, content);
+        }
+        kept.push(step.path);
+        const line = `Tool: ${step.tool} ${step.path}`;
+        log.push(line);
+        observations.push(line);
+      }
+    }
+    if (reply.done || reply.steps.length === 0) break;
+    if (check && check.code === 0) break;
+    if (round === TOOL_ROUND_CAP) break;
+    const follow = `Tool observations:\n${observations.join("\n")}\nContinue the same request. Reply with JSON steps, or {"done":true} when finished.\n${input.message}`;
+    const aware = await codingPrompt(input.sandboxRoot, follow);
+    const next = await swarm.dispatch("coding", () => runOnGrokBuild(runner, aware, input.sandboxRoot));
+    nextStdout = next.stdout;
   }
   let qa = await reviewChangedFiles(input.sandboxRoot, kept, kept.length > 0 || check?.code === 0);
   qa = (await addFileExpectations(qa, input.message, input.sandboxRoot, kept, blocked)) ?? qa;
   if (check && check.code !== 0) {
     const detail = (check.stderr || check.stdout || "no output").slice(0, 500);
     qa = { pass: false, summary: `check failed (exit ${check.code}): ${detail}` };
+  } else if (check && check.code === 0 && qa && !qa.pass && fileExpectations(input.message).length === 0) {
+    qa = { pass: true, summary: "check passed" };
   }
   const note = [
     ...log,
@@ -780,7 +820,7 @@ async function codingPrompt(sandboxRoot: string, message: string): Promise<strin
     used += block.length;
   }
   const filesNote = blocks.length === 0 ? "" : `Sandbox files already on disk:\n${blocks.join("\n")}\n`;
-  return `${filesNote}User request:\n${message}\nReply with JSON only: {"steps":[{"tool":"list"|"read"|"run"|"write"|"patch","path":"relative","content":"full text for write","diff":"unified diff for patch","argv":["node","--test","relative.test.ts"]}]}. List or read before you edit. Patch a file that already exists. Write only a new file. The only command is node --test plus relative paths.`;
+  return `${filesNote}User request:\n${message}\nReply with JSON only: {"steps":[{"tool":"list"|"read"|"run"|"write"|"patch","path":"relative","content":"full text for write","diff":"unified diff for patch","argv":["node","--test","relative.test.ts"]}],"done":false}. One reply is one round. After you see Tool observations, send the next round. Set "done" to true when finished. List or read before you edit. Patch a file that already exists. Write only a new file. The only command is node --test plus relative paths.`;
 }
 
 async function fileMatches(sandboxRoot: string, relativePath: string, content: string): Promise<boolean> {

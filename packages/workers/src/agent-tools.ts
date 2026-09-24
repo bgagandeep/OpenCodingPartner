@@ -12,6 +12,7 @@ export interface ToolStep {
 
 export interface CodingReply {
   steps: ToolStep[];
+  done: boolean;
 }
 
 /** Only `node --test` plus relative paths. No shell. */
@@ -31,8 +32,9 @@ export function parseCodingReply(stdout: string): CodingReply | null {
   const end = stdout.lastIndexOf("}");
   if (start < 0 || end <= start) return null;
   try {
-    const parsed = JSON.parse(stdout.slice(start, end + 1)) as { steps?: unknown };
-    if (!Array.isArray(parsed.steps) || parsed.steps.length === 0) return null;
+    const parsed = JSON.parse(stdout.slice(start, end + 1)) as { steps?: unknown; done?: unknown };
+    const done = parsed.done === true;
+    if (!Array.isArray(parsed.steps) || (parsed.steps.length === 0 && !done)) return null;
     const steps: ToolStep[] = [];
     for (const item of parsed.steps) {
       if (!item || typeof item !== "object") return null;
@@ -47,7 +49,7 @@ export function parseCodingReply(stdout: string): CodingReply | null {
       if (Array.isArray(record.argv) && record.argv.every((part) => typeof part === "string")) step.argv = record.argv;
       steps.push(step);
     }
-    return { steps };
+    return { steps, done };
   } catch {
     return null;
   }

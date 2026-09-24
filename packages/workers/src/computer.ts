@@ -4,7 +4,7 @@ import path from "node:path";
 
 export interface ComputerAction {
   id: string;
-  kind: "open-url" | "type" | "read-screen" | "verify" | "click" | "navigate" | "wait" | "scroll" | "press" | "hover" | "double-click" | "right-click";
+  kind: "open-url" | "type" | "read-screen" | "verify" | "click" | "navigate" | "wait" | "scroll" | "press" | "hover" | "double-click" | "right-click" | "fill";
   target: string;
   purpose: string;
   executed: boolean;
@@ -33,6 +33,8 @@ export interface BrowserSession {
   hover?(target: string, by: "selector" | "text"): Promise<ScreenShot>;
   doubleClick?(target: string, by: "selector" | "text"): Promise<ScreenShot>;
   rightClick?(target: string, by: "selector" | "text"): Promise<ScreenShot>;
+  /** Clear the field, then set the quoted text. Selector or exact text. */
+  fill?(target: string, value: string, by: "selector" | "text"): Promise<ScreenShot>;
   selectorState?(selector: string): Promise<{ visible: boolean; value: string }>;
   close(): Promise<void>;
 }
@@ -137,9 +139,11 @@ export function pageClaim(message: string): { title?: string; text?: string } | 
 }
 
 export interface ChainStep {
-  kind: "type" | "expect-title" | "expect-text" | "expect-selector" | "click" | "navigate" | "wait" | "scroll" | "press" | "hover" | "double-click" | "right-click";
+  kind: "type" | "expect-title" | "expect-text" | "expect-selector" | "click" | "navigate" | "wait" | "scroll" | "press" | "hover" | "double-click" | "right-click" | "fill";
   target: string;
   text?: string;
+  /** Text placed in the field by `fill`. */
+  value?: string;
 }
 
 /** Longest `wait N` or `wait Nms` sleep. Longer values fail the step. */
@@ -152,7 +156,7 @@ export const COMPUTER_PRESS_KEYS = ["Enter", "Escape", "Tab", "Backspace", "Arro
 
 /** Steps in the order they appear. A short chain can include more than one type. */
 export function computerChain(message: string): ChainStep[] {
-  const pattern = /expect title "([^"]*)"|expect text "([^"]*)"|type "([^"]*)" into (\S+)|expect selector (\S+) value "([^"]*)"|click "([^"]*)"|click '([^']*)'|click (\S+)|navigate (https?:\/\/[^\s)]+)|expect title '([^']*)'|expect text '([^']*)'|type '([^']*)' into (\S+)|expect selector (\S+) value '([^']*)'|wait (\d+)ms|wait (\d+)|wait (\S+)|scroll down|scroll up|scroll (-?\d+)px|scroll (-?\d+)|scroll (\S+)|press (\S+)|hover "([^"]*)"|hover '([^']*)'|hover (\S+)|double-click "([^"]*)"|double-click '([^']*)'|double-click (\S+)|right-click "([^"]*)"|right-click '([^']*)'|right-click (\S+)/gi;
+  const pattern = /expect title "([^"]*)"|expect text "([^"]*)"|type "([^"]*)" into (\S+)|expect selector (\S+) value "([^"]*)"|click "([^"]*)"|click '([^']*)'|click (\S+)|navigate (https?:\/\/[^\s)]+)|expect title '([^']*)'|expect text '([^']*)'|type '([^']*)' into (\S+)|expect selector (\S+) value '([^']*)'|wait (\d+)ms|wait (\d+)|wait (\S+)|scroll down|scroll up|scroll (-?\d+)px|scroll (-?\d+)|scroll (\S+)|press (\S+)|hover "([^"]*)"|hover '([^']*)'|hover (\S+)|double-click "([^"]*)"|double-click '([^']*)'|double-click (\S+)|right-click "([^"]*)"|right-click '([^']*)'|right-click (\S+)|fill "([^"]*)" with "([^"]*)"|fill '([^']*)' with '([^']*)'|fill (\S+) with "([^"]*)"|fill (\S+) with '([^']*)'/gi;
   const steps: ChainStep[] = [];
   for (const match of message.matchAll(pattern)) {
     if (match[1] !== undefined) steps.push({ kind: "expect-title", target: match[1] });
@@ -185,6 +189,10 @@ export function computerChain(message: string): ChainStep[] {
     else if (match[30] !== undefined) steps.push({ kind: "right-click", target: match[30], text: "text" });
     else if (match[31] !== undefined) steps.push({ kind: "right-click", target: match[31], text: "text" });
     else if (match[32]) steps.push({ kind: "right-click", target: match[32].replace(/[.,]$/, "") });
+    else if (match[33] !== undefined && match[34] !== undefined) steps.push({ kind: "fill", target: match[33], text: "text", value: match[34] });
+    else if (match[35] !== undefined && match[36] !== undefined) steps.push({ kind: "fill", target: match[35], text: "text", value: match[36] });
+    else if (match[37] && match[38] !== undefined) steps.push({ kind: "fill", target: match[37].replace(/[.,]$/, ""), value: match[38] });
+    else if (match[39] && match[40] !== undefined) steps.push({ kind: "fill", target: match[39].replace(/[.,]$/, ""), value: match[40] });
   }
   return steps;
 }
@@ -266,7 +274,7 @@ export async function executeComputerVisit(input: ComputerVisitInput): Promise<G
   for (const [index, item] of chain.entries()) {
     steps.push({
       id: `gtm-${index + 3}`,
-      kind: item.kind === "type" ? "type" : item.kind === "click" ? "click" : item.kind === "navigate" ? "navigate" : item.kind === "wait" ? "wait" : item.kind === "scroll" ? "scroll" : item.kind === "press" ? "press" : item.kind === "hover" ? "hover" : item.kind === "double-click" ? "double-click" : item.kind === "right-click" ? "right-click" : "verify",
+      kind: item.kind === "type" ? "type" : item.kind === "click" ? "click" : item.kind === "navigate" ? "navigate" : item.kind === "wait" ? "wait" : item.kind === "scroll" ? "scroll" : item.kind === "press" ? "press" : item.kind === "hover" ? "hover" : item.kind === "double-click" ? "double-click" : item.kind === "right-click" ? "right-click" : item.kind === "fill" ? "fill" : "verify",
       target: item.target,
       purpose: chainPurpose(item),
       executed: false,
@@ -343,6 +351,7 @@ function chainPurpose(item: ChainStep): string {
   if (item.kind === "hover") return item.text === "text" ? "Hover the named text" : "Hover the named selector";
   if (item.kind === "double-click") return item.text === "text" ? "Double-click the named text" : "Double-click the named selector";
   if (item.kind === "right-click") return item.text === "text" ? "Right-click the named text" : "Right-click the named selector";
+  if (item.kind === "fill") return item.text === "text" ? "Fill the named text" : "Fill the named selector";
   if (item.kind === "expect-selector") return "Check the selector value";
   if (item.kind === "expect-text") return "Check the page text";
   return "Check the page title";
@@ -370,7 +379,7 @@ async function finishStep(
     reason: reason || undefined,
     title: redact(screen.title),
     text: redact(screen.text).slice(0, 500),
-    selector: action.kind === "type" || action.kind === "verify" || action.kind === "click" || action.kind === "navigate" || action.kind === "hover" || action.kind === "double-click" || action.kind === "right-click" ? action.target : undefined,
+    selector: action.kind === "type" || action.kind === "verify" || action.kind === "click" || action.kind === "navigate" || action.kind === "hover" || action.kind === "double-click" || action.kind === "right-click" || action.kind === "fill" ? action.target : undefined,
     screenshot: shot,
   });
 }
@@ -492,6 +501,19 @@ async function runChainStep(
     if (!session.rightClick) return { passed: false, reason: "browser cannot right-click", screen };
     try {
       const next = await session.rightClick(item.target, item.text === "text" ? "text" : "selector");
+      return { passed: true, reason: "", screen: next };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "selector missing";
+      return { passed: false, reason: redact(message), screen };
+    }
+  }
+  if (item.kind === "fill") {
+    const gate = selectorDecision(item.target);
+    if (!gate.allow) return { passed: false, reason: gate.reason, screen };
+    if (item.value === undefined) return { passed: false, reason: "fill text is missing", screen };
+    if (!session.fill) return { passed: false, reason: "browser cannot fill", screen };
+    try {
+      const next = await session.fill(item.target, item.value, item.text === "text" ? "text" : "selector");
       return { passed: true, reason: "", screen: next };
     } catch (error) {
       const message = error instanceof Error ? error.message : "selector missing";
@@ -620,6 +642,11 @@ export function playwrightBrowserDriver(): BrowserDriver {
         async rightClick(target, by) {
           const locator = by === "text" ? page.getByText(target, { exact: true }) : page.locator(target);
           await locator.click({ button: "right", timeout: 5000 });
+          return shot();
+        },
+        async fill(target, value, by) {
+          const locator = by === "text" ? page.getByText(target, { exact: true }) : page.locator(target);
+          await locator.fill(value, { timeout: 5000 });
           return shot();
         },
         async selectorState(selector) {

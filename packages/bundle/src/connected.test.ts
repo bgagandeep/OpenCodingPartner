@@ -8,6 +8,7 @@ import path from "node:path";
 import { routeWithPredict } from "@opencodingpartner/policy";
 import { runOnGrokBuild } from "@opencodingpartner/workers";
 import { LITELLM_LOCAL_BASE_URL, resolveCodingMeter, runConnectedPath, writeViaOpenClaw } from "./connected.js";
+import { startSandboxWriteBridge } from "./write-bridge.js";
 import { predictWithLaya } from "./laya.js";
 
 test("predict.py is selected when the Laya python is present", async () => {
@@ -82,9 +83,10 @@ test("LiteLLM env wins over OpenAI and XAI and does not print the key", async ()
   assert.equal(none.runner, undefined);
 });
 
-test("the gateway write tool lands bytes and fs_write is not sent", async () => {
+test("the gateway invokes the write bridge and fs_write is not sent", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "ocp-write-http-"));
-  const seen: { tool?: string; path?: string; content?: string }[] = [];
+  const bridge = await startSandboxWriteBridge(root);
+  const seen: { tool?: string }[] = [];
   const server = createServer(async (req, res) => {
     if (req.url === "/healthz") {
       res.writeHead(200, { "content-type": "application/json" });
@@ -95,18 +97,22 @@ test("the gateway write tool lands bytes and fs_write is not sent", async () => 
     for await (const chunk of req) chunks.push(chunk as Buffer);
     const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as {
       tool?: string;
-      args?: { path?: string; content?: string };
+      args?: { bridgeUrl?: string; relativePath?: string; content?: string; path?: string };
     };
-    seen.push({ tool: body.tool, path: body.args?.path, content: body.args?.content });
-    if (body.tool === "fs_write") {
+    seen.push({ tool: body.tool });
+    if (body.tool === "fs_write" || body.tool === "sessions_spawn") {
       res.writeHead(404, { "content-type": "application/json" });
       res.end('{"ok":false}');
       return;
     }
-    if (body.tool === "write" && body.args?.path && body.args.content !== undefined) {
-      await writeFile(body.args.path, body.args.content);
-      res.writeHead(200, { "content-type": "application/json" });
-      res.end('{"ok":true}');
+    if (body.tool === "ocp_sandbox_write" && body.args?.bridgeUrl) {
+      const forwarded = await fetch(body.args.bridgeUrl, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ relativePath: body.args.relativePath, content: body.args.content }),
+      });
+      res.writeHead(forwarded.status, { "content-type": "application/json" });
+      res.end(await forwarded.text());
       return;
     }
     res.writeHead(404, { "content-type": "application/json" });
@@ -116,15 +122,23 @@ test("the gateway write tool lands bytes and fs_write is not sent", async () => 
   const port = (server.address() as AddressInfo).port;
   try {
     const landed = await writeViaOpenClaw(
-      { env: {}, bins: {}, gatewayHttp: `http://127.0.0.1:${port}` },
+      { env: { OCP_WRITE_BRIDGE_URL: bridge.url }, bins: {}, gatewayHttp: `http://127.0.0.1:${port}` },
       root,
       "hello.txt",
       "from-gateway\n",
     );
     assert.equal(landed.ok, true);
-    assert.equal(seen[0]?.tool, "write");
+    assert.equal(seen[0]?.tool, "ocp_sandbox_write");
     assert.equal(seen.some((call) => call.tool === "fs_write"), false);
     assert.equal(await readFile(path.join(root, "hello.txt"), "utf8"), "from-gateway\n");
+    const blocked = await writeViaOpenClaw(
+      { env: { OCP_WRITE_BRIDGE_URL: bridge.url }, bins: {}, gatewayHttp: `http://127.0.0.1:${port}` },
+      root,
+      "../secret.txt",
+      "password=hunter2\n",
+    );
+    assert.equal(blocked.ok, false);
+    await assert.rejects(readFile(path.join(root, "secret.txt"), "utf8"));
 
     const refused = await writeViaOpenClaw(
       {
@@ -146,6 +160,7 @@ test("the gateway write tool lands bytes and fs_write is not sent", async () => 
     await assert.rejects(readFile(path.join(root, "missing.txt"), "utf8"));
   } finally {
     await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+    await bridge.close();
     await rm(root, { recursive: true, force: true });
   }
 });

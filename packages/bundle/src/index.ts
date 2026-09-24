@@ -14,3 +14,4 @@ export { predictWithLaya } from "./laya.js";
 export { installBundle, installPlan } from "./install.js";
 export { probeLiveStack, type LiveProbe } from "./live.js";
 export { loadPins, type StackPins } from "./pins.js";
+export { applyBridgeWrite, startSandboxWriteBridge } from "./write-bridge.js";

@@ -213,8 +213,9 @@ export interface OpenClawWriteResult {
 }
 
 /**
- * Ask the OpenClaw gateway `write` tool to put bytes in the operator sandbox.
- * This function does not write the file. `fs_write` stays blocked and is never sent.
+ * Ask the OpenClaw gateway to invoke the sandbox write bridge.
+ * This function does not write the file. `fs_write` is never sent.
+ * If the bridge tool is missing, the built-in `write` tool is the fallback.
  */
 export async function writeViaOpenClaw(
   deps: ConnectedDeps,
@@ -226,7 +227,6 @@ export async function writeViaOpenClaw(
   if (!gate.allow) {
     return { ok: false, detail: `Security gate blocked the write (${gate.reasons.join(", ")}).` };
   }
-  const absolute = path.resolve(sandboxRoot, relativePath);
   const fetchImpl = deps.fetchImpl ?? fetch;
   const exec = deps.exec ?? defaultExec;
   const gatewayHttp = (deps.gatewayHttp ?? deps.env.OPENCLAW_GATEWAY_URL ?? "http://127.0.0.1:18789").replace(/\/$/, "");
@@ -234,7 +234,33 @@ export async function writeViaOpenClaw(
   if (!up) {
     return { ok: false, detail: "OpenClaw gateway is not up. The write tool did not run." };
   }
-  const args = { path: absolute, content };
+  const bridgeUrl = deps.env.OCP_WRITE_BRIDGE_URL;
+  if (bridgeUrl) {
+    const bridged = await invokeGatewayTool(deps, gatewayHttp, exec, fetchImpl, "ocp_sandbox_write", {
+      bridgeUrl,
+      relativePath,
+      content,
+    });
+    if (bridged.ok) return { ok: true, detail: "OpenClaw invoked the sandbox write bridge." };
+    if (!bridged.missing) return { ok: false, detail: bridged.detail };
+  }
+  const absolute = path.resolve(sandboxRoot, relativePath);
+  const direct = await invokeGatewayTool(deps, gatewayHttp, exec, fetchImpl, "write", { path: absolute, content });
+  if (direct.ok) return { ok: true, detail: "OpenClaw write tool accepted the file." };
+  return { ok: false, detail: direct.detail };
+}
+
+async function invokeGatewayTool(
+  deps: ConnectedDeps,
+  gatewayHttp: string,
+  exec: NonNullable<ConnectedDeps["exec"]>,
+  fetchImpl: typeof fetch,
+  tool: "ocp_sandbox_write" | "write",
+  args: Record<string, string>,
+): Promise<{ ok: boolean; missing: boolean; detail: string }> {
+  if (tool !== "ocp_sandbox_write" && tool !== "write") {
+    return { ok: false, missing: true, detail: "Refused tool." };
+  }
   if (deps.bins.openclawBin) {
     const port = new URL(gatewayHttp).port || "18789";
     const tokenArgs = deps.env.OPENCLAW_GATEWAY_TOKEN ? ["--token", deps.env.OPENCLAW_GATEWAY_TOKEN] : [];
@@ -245,7 +271,7 @@ export async function writeViaOpenClaw(
         "call",
         "tools.invoke",
         "--params",
-        JSON.stringify({ name: "write", sessionKey: BOARD_SESSION_KEY, args }),
+        JSON.stringify({ name: tool, sessionKey: BOARD_SESSION_KEY, args }),
         "--timeout",
         "15000",
         "--port",
@@ -255,9 +281,10 @@ export async function writeViaOpenClaw(
       deps.env,
     );
     if (sent.code !== 0) {
-      return { ok: false, detail: "OpenClaw write tool did not accept the call." };
+      const missing = /not available|not_found|404/i.test(`${sent.stdout}\n${sent.stderr}`);
+      return { ok: false, missing, detail: `OpenClaw ${tool} did not accept the call.` };
     }
-    return { ok: true, detail: "OpenClaw write tool accepted the file." };
+    return { ok: true, missing: false, detail: "accepted" };
   }
   const headers: Record<string, string> = { "content-type": "application/json", "x-openclaw-session-key": BOARD_SESSION_KEY };
   if (deps.env.OPENCLAW_GATEWAY_TOKEN) headers.authorization = `Bearer ${deps.env.OPENCLAW_GATEWAY_TOKEN}`;
@@ -265,24 +292,21 @@ export async function writeViaOpenClaw(
     const response = await fetchImpl(`${gatewayHttp}/tools/invoke`, {
       method: "POST",
       headers,
-      body: JSON.stringify({ tool: "write", sessionKey: BOARD_SESSION_KEY, args }),
+      body: JSON.stringify({ tool, sessionKey: BOARD_SESSION_KEY, args }),
       signal: AbortSignal.timeout(15000),
     });
-    if (!response.ok) {
-      return { ok: false, detail: `OpenClaw write tool returned HTTP ${response.status}.` };
-    }
+    if (response.status === 404) return { ok: false, missing: true, detail: `OpenClaw ${tool} is not available.` };
+    if (!response.ok) return { ok: false, missing: false, detail: `OpenClaw ${tool} returned HTTP ${response.status}.` };
     let body: { ok?: boolean } = {};
     try {
       body = (await response.json()) as { ok?: boolean };
     } catch {
       body = {};
     }
-    if (body.ok === false) {
-      return { ok: false, detail: "OpenClaw write tool refused the file." };
-    }
-    return { ok: true, detail: "OpenClaw write tool accepted the file." };
+    if (body.ok === false) return { ok: false, missing: false, detail: `OpenClaw ${tool} refused the file.` };
+    return { ok: true, missing: false, detail: "accepted" };
   } catch {
-    return { ok: false, detail: "OpenClaw write tool did not finish." };
+    return { ok: false, missing: false, detail: `OpenClaw ${tool} did not finish.` };
   }
 }
 

@@ -119,7 +119,20 @@ hello
 "
 ```
 
-When the OpenClaw gateway is up, it owns the session plan on `agent:board:main`. The chat agent sends that plan with `sessions.send` and checks `skills.status` on that session. The local swarm does not run a second plan. If the gateway rejects the plan, the turn stops and no worker writes files. When the gateway is down, the transcript prints a manager plan from the local manager before any worker runs. After the plan is accepted, a create-file message asks the gateway `write` tool to put that file in the sandbox. `fs_write`, `apply_patch`, and `sessions_spawn` stay blocked. If the write tool refuses, or the file is missing, the turn says so and this process does not write that file locally. General model edits still run in this process through LiteLLM, the OpenAI-compatible meter, or Grok Build. If the gateway is down and no key is set, only a simple create-file message is written locally. `pnpm demo:connected` checks the gateway and the meter. It does not itself write a sandbox file. Do not commit `XAI_API_KEY`, `OPENAI_API_KEY`, or `OPENCLAW_GATEWAY_TOKEN`.
+When the OpenClaw gateway is up, it owns the session plan on `agent:board:main`. The chat agent sends that plan with `sessions.send` and checks `skills.status` on that session. The local swarm does not run a second plan. If the gateway rejects the plan, the turn stops and no worker writes files. When the gateway is down, the transcript prints a manager plan from the local manager before any worker runs, and a create-file is a local sandbox write. The transcript says `Write path: local sandbox.`
+
+After the plan is accepted, this process starts a loopback write bridge and asks the gateway to invoke `ocp_sandbox_write`. The gateway calls that bridge. The bridge runs the security gate and writes the file. The transcript says `Write path: OpenClaw-driven.` A general edit is drafted in a temp directory by LiteLLM, the OpenAI-compatible meter, or Grok Build, then each kept file is sent through that same bridge. The meter order is unchanged. `fs_write`, `apply_patch`, and `sessions_spawn` stay blocked. If the bridge tool is missing on the gateway, the turn asks the built-in `write` tool for an absolute path in the sandbox. If that also refuses, the file does not land and this process does not copy it in. `pnpm demo:connected` checks the gateway and the meter. It does not itself write a sandbox file. Do not commit `XAI_API_KEY`, `OPENAI_API_KEY`, or `OPENCLAW_GATEWAY_TOKEN`.
+
+Live check when you have a gateway and a meter key. Tests do not call a live gateway. Load `integrations/openclaw-sandbox-write` in the gateway, then:
+
+```bash
+docker compose up -d openclaw-gateway
+export OPENCLAW_GATEWAY_TOKEN="the gateway token"
+export LITELLM_API_KEY="the operator key"
+pnpm exec ocp chat --sandbox .sandbox "add a README section explaining install"
+```
+
+The sandbox file should exist, and the transcript should say `Write path: OpenClaw-driven.` If the plugin is not loaded, the same command still tries the built-in `write` tool. A missing file means that tool refused the path.
 
 Open the multi-file proof without a key: [examples/proof-multifile/src/math.ts](examples/proof-multifile/src/math.ts) and [examples/proof-multifile/src/math.test.ts](examples/proof-multifile/src/math.test.ts). With a meter key, this writes those files into `.sandbox-proof/`:
 

@@ -356,7 +356,7 @@ test("an accepted plan writes a create-file through the OpenClaw write tool", as
     assert.equal(turn.coding?.wrote, true);
     assert.equal(turn.coding?.via, "openclaw-write");
     assert.equal(await readFile(path.join(root, "hello.txt"), "utf8"), content);
-    assert.match(turn.transcript, /OpenClaw write tool landed the file/);
+    assert.match(turn.transcript, /Write path: OpenClaw-driven/);
     assert.match(turn.transcript, /blocks fs_write/);
     assert.doesNotMatch(turn.transcript, /fs_write landed/);
     assert.equal(turn.qa?.pass, true);
@@ -390,6 +390,42 @@ test("a refused OpenClaw write does not land a local file", async () => {
     assert.match(turn.transcript, /did not write it locally/);
     await assert.rejects(readFile(path.join(root, "hello.txt"), "utf8"));
     assert.equal(turn.qa?.pass, false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a general edit under an accepted plan lands only through the OpenClaw write", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-remote-general-"));
+  try {
+    let stage = "";
+    const turn = await runChatTurn({
+      message: "add a README section explaining install",
+      sandboxRoot: root,
+      orchestration: async () => ({
+        state: "ran",
+        driver: "openclaw",
+        detail: "Session agent:board:main accepted the plan.",
+      }),
+      grokRunner: {
+        async run(argv) {
+          const cwdFlag = argv.indexOf("--cwd");
+          stage = argv[cwdFlag + 1] ?? "";
+          await writeSandboxFile(stage, "README.md", "# Install\n");
+          return { exitCode: 0, stdout: "" };
+        },
+      },
+      openclawWrite: async (relativePath, bytes) => {
+        await writeSandboxFile(root, relativePath, bytes);
+        return { ok: true, detail: "bridge" };
+      },
+    });
+    assert.notEqual(stage, root);
+    assert.equal(turn.coding?.via, "openclaw-write");
+    assert.equal(turn.coding?.wrote, true);
+    assert.equal(await readFile(path.join(root, "README.md"), "utf8"), "# Install\n");
+    assert.match(turn.transcript, /Write path: OpenClaw-driven/);
+    assert.doesNotMatch(turn.transcript, /Write path: local sandbox/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

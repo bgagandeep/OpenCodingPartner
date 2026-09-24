@@ -1,4 +1,5 @@
-import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, unlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import type { StoodUpAgent, SwarmSession } from "@opencodingpartner/mesh";
 import { boardSession } from "@opencodingpartner/mesh";
@@ -192,6 +193,43 @@ async function executeTurn(input: ChatTurnInput, session: SwarmSession, key: str
     security = messageGate;
     if (!messageGate.allow) {
       coding = { relativePath: "the request", wrote: false, via };
+    } else if (input.grokRunner && openclawDrove && input.openclawWrite) {
+      const runner = input.grokRunner;
+      const write = input.openclawWrite;
+      const stage = await mkdtemp(path.join(tmpdir(), "ocp-stage-"));
+      try {
+        const grok = await swarm.dispatch("coding", () => runOnGrokBuild(runner, input.message, stage));
+        const staged = await snapshotSandbox(stage);
+        const kept: string[] = [];
+        const blocked: string[] = [];
+        for (const [relativePath, content] of staged) {
+          const gate = securityGate({ relativePath, content, sandboxRoot: input.sandboxRoot });
+          if (!gate.allow) {
+            blocked.push(relativePath);
+            security = { allow: false, reasons: gate.reasons };
+            continue;
+          }
+          const landed = await write(relativePath, content);
+          if (landed.ok && (await fileMatches(input.sandboxRoot, relativePath, content))) kept.push(relativePath);
+        }
+        coding = {
+          relativePath: kept.length > 0 ? kept.join(", ") : "no files",
+          wrote: grok.exitCode === 0 && kept.length > 0,
+          via: "openclaw-write",
+          note:
+            kept.length > 0
+              ? "Write path: OpenClaw-driven. The gateway invoked the sandbox write bridge."
+              : "Write path: OpenClaw-driven. The write bridge did not land the file. This process did not copy it into the sandbox.",
+        };
+        if (blocked.length > 0) {
+          coding.note = `Security agent blocked ${blocked.join(", ")} before the OpenClaw write.`;
+        }
+        if (agents.some((agent) => agent.role === "qa")) {
+          qa = await swarm.dispatch("qa", () => reviewChangedFiles(input.sandboxRoot, kept, grok.exitCode === 0));
+        }
+      } finally {
+        await rm(stage, { recursive: true, force: true });
+      }
     } else if (input.grokRunner) {
       const runner = input.grokRunner;
       const before = await snapshotSandbox(input.sandboxRoot);
@@ -242,8 +280,8 @@ async function executeTurn(input: ChatTurnInput, session: SwarmSession, key: str
         wrote,
         via: "openclaw-write",
         note: wrote
-          ? "OpenClaw write tool landed the file in the sandbox."
-          : "OpenClaw write tool did not land the file. This process did not write it locally.",
+          ? "Write path: OpenClaw-driven. The gateway invoked the sandbox write bridge."
+          : "Write path: OpenClaw-driven. The write bridge did not land the file. This process did not write it locally.",
       };
       if (agents.some((agent) => agent.role === "qa")) {
         qa = await swarm.dispatch("qa", () => qaCheckFile(input.sandboxRoot, instruction.relativePath, instruction.content));
@@ -260,7 +298,12 @@ async function executeTurn(input: ChatTurnInput, session: SwarmSession, key: str
       await swarm.dispatch("coding", async () => {
         await writeSandboxFile(input.sandboxRoot, instruction.relativePath, instruction.content);
       });
-      coding = { relativePath: instruction.relativePath, wrote: true, via: "local-sandbox" };
+      coding = {
+        relativePath: instruction.relativePath,
+        wrote: true,
+        via: "local-sandbox",
+        note: "Write path: local sandbox. The OpenClaw gateway did not drive this write.",
+      };
       if (agents.some((agent) => agent.role === "qa")) {
         qa = await swarm.dispatch("qa", () =>
           qaCheckFile(input.sandboxRoot, instruction.relativePath, instruction.content),
@@ -353,6 +396,7 @@ export function formatTranscript(result: ChatTurnResult): string {
         ? `Coding agent wrote ${result.coding.relativePath} via ${result.coding.via}`
         : `Coding agent did not write ${result.coding.relativePath}`,
     );
+    lines.push(result.coding.via === "openclaw-write" ? "Write path: OpenClaw-driven." : "Write path: local sandbox.");
     if (result.coding.note) lines.push(result.coding.note);
     lines.push(meterLine(result.coding.via));
   }

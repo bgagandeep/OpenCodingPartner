@@ -808,6 +808,88 @@ test("scroll down then expect text, and a large delta is refused", async () => {
   }
 });
 
+test("press Enter succeeds, and an unknown key stops the chain", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-press-"));
+  const png = Uint8Array.from([137, 80, 78, 71]);
+  try {
+    const keys: string[] = [];
+    const plan = await executeComputerVisit({
+      productName: "OpenCodingPartner",
+      message: 'Open https://example.com then press Enter then expect text "sent"',
+      sandboxRoot: root,
+      execute: true,
+      driver: {
+        async start() {
+          return {
+            async open() {
+              return { title: "Example", text: "form", screenshotPng: png };
+            },
+            async readScreen() {
+              return { title: "Example", text: "sent", screenshotPng: png };
+            },
+            async typeInto() {
+              return { title: "Example", text: "sent", screenshotPng: png };
+            },
+            async press(key: string) {
+              keys.push(key);
+              return { title: "Example", text: "sent", screenshotPng: png };
+            },
+            async close() {
+              return undefined;
+            },
+          };
+        },
+      },
+    });
+    assert.deepEqual(keys, ["Enter"]);
+    assert.equal(plan.actions.find((action) => action.kind === "press")?.passed, true);
+    assert.equal(plan.actions.find((action) => action.purpose === "Check the page text")?.passed, true);
+    const saved = JSON.parse(await readFile(path.join(root, "gtm/last-run.json"), "utf8")) as {
+      steps: { kind: string; passed?: boolean; screenshot?: string }[];
+    };
+    assert.ok(saved.steps.some((step) => step.kind === "press" && step.passed === true && step.screenshot));
+
+    const blocked = await mkdtemp(path.join(tmpdir(), "ocp-press-bad-"));
+    let called = false;
+    const refused = await executeComputerVisit({
+      productName: "OpenCodingPartner",
+      message: 'Open https://example.com then press Control+A then expect text "nope"',
+      sandboxRoot: blocked,
+      execute: true,
+      driver: {
+        async start() {
+          return {
+            async open() {
+              return { title: "Example", text: "form", screenshotPng: png };
+            },
+            async readScreen() {
+              return { title: "Example", text: "form", screenshotPng: png };
+            },
+            async typeInto() {
+              return { title: "Example", text: "form", screenshotPng: png };
+            },
+            async press() {
+              called = true;
+              return { title: "Example", text: "form", screenshotPng: png };
+            },
+            async close() {
+              return undefined;
+            },
+          };
+        },
+      },
+    });
+    assert.equal(called, false);
+    const press = refused.actions.find((action) => action.kind === "press");
+    assert.equal(press?.passed, false);
+    assert.match(press?.reason ?? "", /allow list/);
+    assert.equal(refused.actions.find((action) => action.purpose === "Check the page text")?.executed, false);
+    await rm(blocked, { recursive: true, force: true });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("computer agent records a GTM plan that did not run", () => {
   const plan = planGtmActions("OpenCodingPartner");
   assert.match(plan.note, /No live browser ran/);

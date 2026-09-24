@@ -4,7 +4,7 @@ import path from "node:path";
 
 export interface ComputerAction {
   id: string;
-  kind: "open-url" | "type" | "read-screen" | "verify" | "click" | "navigate" | "wait" | "scroll" | "press" | "hover";
+  kind: "open-url" | "type" | "read-screen" | "verify" | "click" | "navigate" | "wait" | "scroll" | "press" | "hover" | "double-click";
   target: string;
   purpose: string;
   executed: boolean;
@@ -31,6 +31,7 @@ export interface BrowserSession {
   scrollIntoView?(selector: string): Promise<ScreenShot>;
   press?(key: string): Promise<ScreenShot>;
   hover?(target: string, by: "selector" | "text"): Promise<ScreenShot>;
+  doubleClick?(target: string, by: "selector" | "text"): Promise<ScreenShot>;
   selectorState?(selector: string): Promise<{ visible: boolean; value: string }>;
   close(): Promise<void>;
 }
@@ -135,7 +136,7 @@ export function pageClaim(message: string): { title?: string; text?: string } | 
 }
 
 export interface ChainStep {
-  kind: "type" | "expect-title" | "expect-text" | "expect-selector" | "click" | "navigate" | "wait" | "scroll" | "press" | "hover";
+  kind: "type" | "expect-title" | "expect-text" | "expect-selector" | "click" | "navigate" | "wait" | "scroll" | "press" | "hover" | "double-click";
   target: string;
   text?: string;
 }
@@ -150,7 +151,7 @@ export const COMPUTER_PRESS_KEYS = ["Enter", "Escape", "Tab", "Backspace", "Arro
 
 /** Steps in the order they appear. A short chain can include more than one type. */
 export function computerChain(message: string): ChainStep[] {
-  const pattern = /expect title "([^"]*)"|expect text "([^"]*)"|type "([^"]*)" into (\S+)|expect selector (\S+) value "([^"]*)"|click "([^"]*)"|click '([^']*)'|click (\S+)|navigate (https?:\/\/[^\s)]+)|expect title '([^']*)'|expect text '([^']*)'|type '([^']*)' into (\S+)|expect selector (\S+) value '([^']*)'|wait (\d+)ms|wait (\d+)|wait (\S+)|scroll down|scroll up|scroll (-?\d+)px|scroll (-?\d+)|scroll (\S+)|press (\S+)|hover "([^"]*)"|hover '([^']*)'|hover (\S+)/gi;
+  const pattern = /expect title "([^"]*)"|expect text "([^"]*)"|type "([^"]*)" into (\S+)|expect selector (\S+) value "([^"]*)"|click "([^"]*)"|click '([^']*)'|click (\S+)|navigate (https?:\/\/[^\s)]+)|expect title '([^']*)'|expect text '([^']*)'|type '([^']*)' into (\S+)|expect selector (\S+) value '([^']*)'|wait (\d+)ms|wait (\d+)|wait (\S+)|scroll down|scroll up|scroll (-?\d+)px|scroll (-?\d+)|scroll (\S+)|press (\S+)|hover "([^"]*)"|hover '([^']*)'|hover (\S+)|double-click "([^"]*)"|double-click '([^']*)'|double-click (\S+)/gi;
   const steps: ChainStep[] = [];
   for (const match of message.matchAll(pattern)) {
     if (match[1] !== undefined) steps.push({ kind: "expect-title", target: match[1] });
@@ -177,6 +178,9 @@ export function computerChain(message: string): ChainStep[] {
     else if (match[24] !== undefined) steps.push({ kind: "hover", target: match[24], text: "text" });
     else if (match[25] !== undefined) steps.push({ kind: "hover", target: match[25], text: "text" });
     else if (match[26]) steps.push({ kind: "hover", target: match[26].replace(/[.,]$/, "") });
+    else if (match[27] !== undefined) steps.push({ kind: "double-click", target: match[27], text: "text" });
+    else if (match[28] !== undefined) steps.push({ kind: "double-click", target: match[28], text: "text" });
+    else if (match[29]) steps.push({ kind: "double-click", target: match[29].replace(/[.,]$/, "") });
   }
   return steps;
 }
@@ -258,7 +262,7 @@ export async function executeComputerVisit(input: ComputerVisitInput): Promise<G
   for (const [index, item] of chain.entries()) {
     steps.push({
       id: `gtm-${index + 3}`,
-      kind: item.kind === "type" ? "type" : item.kind === "click" ? "click" : item.kind === "navigate" ? "navigate" : item.kind === "wait" ? "wait" : item.kind === "scroll" ? "scroll" : item.kind === "press" ? "press" : item.kind === "hover" ? "hover" : "verify",
+      kind: item.kind === "type" ? "type" : item.kind === "click" ? "click" : item.kind === "navigate" ? "navigate" : item.kind === "wait" ? "wait" : item.kind === "scroll" ? "scroll" : item.kind === "press" ? "press" : item.kind === "hover" ? "hover" : item.kind === "double-click" ? "double-click" : "verify",
       target: item.target,
       purpose: chainPurpose(item),
       executed: false,
@@ -333,6 +337,7 @@ function chainPurpose(item: ChainStep): string {
   if (item.kind === "scroll") return item.text === "into-view" ? "Scroll the selector into view" : "Scroll the page";
   if (item.kind === "press") return "Press a named key";
   if (item.kind === "hover") return item.text === "text" ? "Hover the named text" : "Hover the named selector";
+  if (item.kind === "double-click") return item.text === "text" ? "Double-click the named text" : "Double-click the named selector";
   if (item.kind === "expect-selector") return "Check the selector value";
   if (item.kind === "expect-text") return "Check the page text";
   return "Check the page title";
@@ -360,7 +365,7 @@ async function finishStep(
     reason: reason || undefined,
     title: redact(screen.title),
     text: redact(screen.text).slice(0, 500),
-    selector: action.kind === "type" || action.kind === "verify" || action.kind === "click" || action.kind === "navigate" || action.kind === "hover" ? action.target : undefined,
+    selector: action.kind === "type" || action.kind === "verify" || action.kind === "click" || action.kind === "navigate" || action.kind === "hover" || action.kind === "double-click" ? action.target : undefined,
     screenshot: shot,
   });
 }
@@ -458,6 +463,18 @@ async function runChainStep(
     if (!session.hover) return { passed: false, reason: "browser cannot hover", screen };
     try {
       const next = await session.hover(item.target, item.text === "text" ? "text" : "selector");
+      return { passed: true, reason: "", screen: next };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "selector missing";
+      return { passed: false, reason: redact(message), screen };
+    }
+  }
+  if (item.kind === "double-click") {
+    const gate = selectorDecision(item.target);
+    if (!gate.allow) return { passed: false, reason: gate.reason, screen };
+    if (!session.doubleClick) return { passed: false, reason: "browser cannot double-click", screen };
+    try {
+      const next = await session.doubleClick(item.target, item.text === "text" ? "text" : "selector");
       return { passed: true, reason: "", screen: next };
     } catch (error) {
       const message = error instanceof Error ? error.message : "selector missing";
@@ -576,6 +593,11 @@ export function playwrightBrowserDriver(): BrowserDriver {
         async hover(target, by) {
           const locator = by === "text" ? page.getByText(target, { exact: true }) : page.locator(target);
           await locator.hover({ timeout: 5000 });
+          return shot();
+        },
+        async doubleClick(target, by) {
+          const locator = by === "text" ? page.getByText(target, { exact: true }) : page.locator(target);
+          await locator.dblclick({ timeout: 5000 });
           return shot();
         },
         async selectorState(selector) {

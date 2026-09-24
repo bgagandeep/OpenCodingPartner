@@ -939,6 +939,46 @@ test("a coding turn writes a file and then renames it", async () => {
   }
 });
 
+test("a coding turn copies a file and leaves the source", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-copy-turn-"));
+  try {
+    const turn = await runChatTurn({
+      message: "refactor a copy of the helper into src/lib",
+      sandboxRoot: root,
+      grokRunner: {
+        async run(argv) {
+          const prompt = argv[argv.indexOf("-p") + 1] ?? "";
+          if (!prompt.includes("Tool observations:\n")) {
+            return {
+              exitCode: 0,
+              stdout: JSON.stringify({ steps: [{ tool: "write", path: "src/old.ts", content: "export const old = 1;\n" }] }),
+            };
+          }
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify({
+              done: true,
+              steps: [
+                { tool: "copy", path: "src/old.ts", to: "src/lib/old.ts" },
+                { tool: "copy", path: "src/old.ts", to: "../outside.ts" },
+              ],
+            }),
+          };
+        },
+      },
+    });
+    assert.match(turn.transcript, /Tool: copy src\/old.ts → src\/lib\/old.ts/);
+    assert.match(turn.transcript, /Tool: copy src\/old.ts → \.\.\/outside.ts/);
+    assert.match(turn.transcript, /Copy path: local sandbox/);
+    assert.doesNotMatch(turn.transcript, /Copy path: OpenClaw/);
+    assert.match(await readFile(path.join(root, "src/old.ts"), "utf8"), /export const old/);
+    assert.match(await readFile(path.join(root, "src/lib/old.ts"), "utf8"), /export const old/);
+    await assert.rejects(readFile(path.join(root, "../outside.ts"), "utf8"));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("an OpenClaw-driven turn deletes and renames through the bridge", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "ocp-remote-move-"));
   try {

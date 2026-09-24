@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { applySandboxTodo, applyUnifiedDiff, commandDecision, deleteSandboxFile, formatTodoBlock, globSandbox, grepSandbox, listSandboxDir, mkdirSandboxDir, parseCodingReply, renameSandboxFile, rmdirSandboxDir } from "./agent-tools.js";
+import { applySandboxTodo, applyUnifiedDiff, commandDecision, copySandboxFile, deleteSandboxFile, formatTodoBlock, globSandbox, grepSandbox, listSandboxDir, mkdirSandboxDir, parseCodingReply, renameSandboxFile, rmdirSandboxDir } from "./agent-tools.js";
 import { parseCreateFileInstruction, writeSandboxFile } from "./coding.js";
 import { COMPUTER_SCROLL_CAP_PX, COMPUTER_WAIT_CAP_MS, computerChain, executeComputerVisit, pageClaim, planGtmActions, selectorDecision, urlDecision } from "./computer.js";
 import { grokBuildArgv, runOnGrokBuild } from "./grok.js";
@@ -138,6 +138,30 @@ test("rename moves one file and refuses escape, secrets, gtm, and overwrite", as
     assert.equal((await renameSandboxFile(root, "gtm/last-run.json", "src/run.json")).ok, false);
     assert.equal((await renameSandboxFile(root, "src/lib/old.ts", "src/kept.ts")).detail, "target already exists");
     assert.match(await readFile(path.join(root, "src/kept.ts"), "utf8"), /kept/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("copy duplicates one file and refuses overwrite, escape, secrets, and gtm", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-copy-"));
+  try {
+    await mkdir(path.join(root, "src"), { recursive: true });
+    await mkdir(path.join(root, "gtm"), { recursive: true });
+    await writeFile(path.join(root, "src/old.ts"), "export const old = 1;\n");
+    await writeFile(path.join(root, "src/kept.ts"), "export const kept = 1;\n");
+    await writeFile(path.join(root, "src/secret.ts"), "password=hunter2\n");
+    await writeFile(path.join(root, "gtm/last-run.json"), "{}\n");
+    assert.equal((await copySandboxFile(root, "src/old.ts", "src/lib/old.ts")).ok, true);
+    assert.match(await readFile(path.join(root, "src/old.ts"), "utf8"), /export const old/);
+    assert.match(await readFile(path.join(root, "src/lib/old.ts"), "utf8"), /export const old/);
+    assert.equal((await copySandboxFile(root, "src/lib/old.ts", "src/kept.ts")).detail, "target already exists");
+    assert.match(await readFile(path.join(root, "src/kept.ts"), "utf8"), /kept/);
+    assert.equal((await copySandboxFile(root, "../secret.txt", "src/x.ts")).ok, false);
+    assert.equal((await copySandboxFile(root, "src/secret.ts", "src/copied-secret.ts")).ok, false);
+    assert.equal((await copySandboxFile(root, "gtm/last-run.json", "src/run.json")).ok, false);
+    assert.equal((await copySandboxFile(root, "src", "src/dir-copy")).detail, "directories are not copied");
+    assert.equal((await copySandboxFile(root, "/tmp/outside.ts", "src/out.ts")).ok, false);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

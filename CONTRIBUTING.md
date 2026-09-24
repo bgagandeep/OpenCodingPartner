@@ -6,7 +6,11 @@ OpenCodingPartner is Apache-2.0. See [LICENSE](LICENSE).
 pnpm install
 pnpm test
 pnpm exec ocp demo --sandbox .sandbox
+pnpm bundle:plan
+pnpm demo:connected
 ```
+
+`pnpm bundle:install` downloads OpenClaw, Grok Build, and Laya into `.bundle/`. Do not commit that directory. Do not paste their source into this repo. Keep their names and licenses in `THIRD_PARTY_NOTICES.md`.
 
 You need Node 22.14 or newer.
 

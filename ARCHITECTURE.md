@@ -27,7 +27,20 @@ Turns on the same session run one after another. The same message on the same sa
 | Computer agents (GTM) | Computer-use worker seam. Offline, it only records the plan. |
 | Security agents | Policy/security worker seam. It runs in the coding path, before the write. |
 
-Laya is System-1: it only picks the route. Package: [laya on PyPI](https://pypi.org/project/laya/) (Apache-2.0, 0.3.7). Weights: [convaiinnovations/laya](https://huggingface.co/convaiinnovations/laya). The call shape is `router.predict(state, questions, model=model)`. Question types are choice, score, and noul. We do not ship the weights.
+Laya is System-1: it only picks the route. Package: [laya on PyPI](https://pypi.org/project/laya/) (Apache-2.0, pinned at 0.3.13). Weights: [convaiinnovations/laya](https://huggingface.co/convaiinnovations/laya). The call shape is `router.predict(state, questions, model=model)`. Question types are choice, score, and noul. We do not ship the weights.
+
+## Packaging
+
+```text
+pnpm bundle:install
+        |
+        +-- .bundle/openclaw   npm openclaw@2026.9.6          orchestration agent swarm
+        +-- .bundle/grok       npm @xai-official/grok@1.0.41   coding agents and QA agents
+        +-- .bundle/laya       pip laya==0.3.13               System-1 bridge
+        +-- docker compose     ghcr.io/openclaw/openclaw:2026.9.6
+```
+
+The chat agent reads `.bundle/stack.json` or `OCP_OPENCLAW_BIN`, `OCP_GROK_BIN`, and `OCP_LAYA_PYTHON`. `ocp demo --live` runs `openclaw --version` and `grok --version`. When both answer, the stack is connected. The probe does not send a model prompt. If a binary is missing, the command skips and the offline sandbox demo still runs.
 
 ## Packages
 
@@ -39,7 +52,8 @@ Laya is System-1: it only picks the route. Package: [laya on PyPI](https://pypi.
 | `workers` | Local coding write, QA check, security gate, computer plan, Grok Build argv |
 | `gateway` | One chat turn |
 | `cli` | `ocp` and `opencodingpartner` |
+| `bundle` | Pinned installer and live probe |
 
 ## Independence
 
-The operator installs OpenClaw, Grok Build, and Laya when they want the live tools. This repo does not include their source or their weights. We are not affiliated with those projects.
+`pnpm bundle:install` fetches the pinned packages into `.bundle/`. This repo does not include their source or their weights. We are not affiliated with those projects. Credits are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

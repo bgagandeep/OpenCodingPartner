@@ -2,6 +2,8 @@
 import { realpathSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { discoverStack, probeLiveStack } from "@opencodingpartner/bundle";
+import { readFile } from "node:fs/promises";
 import { runChatTurn, runDemo } from "@opencodingpartner/gateway";
 
 function sameFile(left: string, right: string): boolean {
@@ -30,7 +32,28 @@ function takeFlag(argv: readonly string[], name: string): { value: string | unde
 export async function main(argv: readonly string[]): Promise<number> {
   const [command, ...tail] = argv;
   if (command === "demo") {
-    const { value } = takeFlag(tail, "--sandbox");
+    const live = tail.includes("--live");
+    const { value } = takeFlag(
+      tail.filter((arg) => arg !== "--live"),
+      "--sandbox",
+    );
+    if (live) {
+      const repoRoot = path.resolve(fileURLToPath(new URL("../../../", import.meta.url)));
+      let stack: { openclawBin?: string; grokBin?: string; layaPython?: string } | undefined;
+      try {
+        stack = JSON.parse(await readFile(path.join(repoRoot, ".bundle/stack.json"), "utf8")) as {
+          openclawBin?: string;
+          grokBin?: string;
+          layaPython?: string;
+        };
+      } catch {
+        stack = undefined;
+      }
+      const bins = await discoverStack({ env: process.env, repoRoot, stack });
+      const probe = await probeLiveStack(bins);
+      process.stdout.write(probe.transcript);
+      return probe.skipped || probe.connected ? 0 : 1;
+    }
     const sandbox = value ?? ".sandbox";
     const demo = await runDemo(sandbox);
     process.stdout.write(demo.transcript);
@@ -48,7 +71,7 @@ export async function main(argv: readonly string[]): Promise<number> {
     return 0;
   }
   process.stdout.write(
-    "OpenCodingPartner chat agent\n\n  ocp demo --sandbox .sandbox\n  ocp chat --sandbox .sandbox \"Stand up a coding agent and a QA agent.\"\n",
+    "OpenCodingPartner chat agent\n\n  ocp demo --sandbox .sandbox\n  ocp demo --live\n  ocp chat --sandbox .sandbox \"Stand up a coding agent and a QA agent.\"\n",
   );
   return command === undefined || command === "--help" || command === "-h" ? 0 : 2;
 }

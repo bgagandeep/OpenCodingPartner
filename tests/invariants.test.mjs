@@ -20,7 +20,7 @@ function walk(dir, out = []) {
   return out;
 }
 
-const docs = ["README.md", "ARCHITECTURE.md", "ROADMAP.md", "CONTRIBUTING.md"].map(read).join("\n");
+const docs = ["README.md", "ARCHITECTURE.md", "ROADMAP.md", "CONTRIBUTING.md", "THIRD_PARTY_NOTICES.md", "NOTICE"].map(read).join("\n");
 
 test("product docs name the tools and keep ads and payments off", () => {
   assert.match(docs, /openclaw\/openclaw/);

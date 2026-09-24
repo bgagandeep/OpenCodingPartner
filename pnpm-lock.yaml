@@ -16,8 +16,17 @@ importers:
         specifier: ^5.9.2
         version: 5.9.3
 
+  packages/bundle:
+    devDependencies:
+      '@types/node':
+        specifier: ^22.14.0
+        version: 22.20.4
+
   packages/cli:
     dependencies:
+      '@opencodingpartner/bundle':
+        specifier: workspace:*
+        version: link:../bundle
       '@opencodingpartner/gateway':
         specifier: workspace:*
         version: link:../gateway

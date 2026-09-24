@@ -6,6 +6,7 @@
     { "path": "packages/swarm" },
     { "path": "packages/workers" },
     { "path": "packages/gateway" },
+    { "path": "packages/bundle" },
     { "path": "packages/cli" }
   ]
 }

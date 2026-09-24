@@ -4,7 +4,7 @@ import path from "node:path";
 
 export interface ComputerAction {
   id: string;
-  kind: "open-url" | "type" | "read-screen" | "verify" | "click" | "navigate" | "wait" | "scroll" | "press" | "hover" | "double-click" | "right-click" | "fill" | "select";
+  kind: "open-url" | "type" | "read-screen" | "verify" | "click" | "navigate" | "wait" | "scroll" | "press" | "hover" | "double-click" | "right-click" | "fill" | "select" | "check" | "uncheck";
   target: string;
   purpose: string;
   executed: boolean;
@@ -37,6 +37,10 @@ export interface BrowserSession {
   fill?(target: string, value: string, by: "selector" | "text"): Promise<ScreenShot>;
   /** Choose a select option by its visible label. */
   selectOption?(target: string, label: string, by: "selector" | "text"): Promise<ScreenShot>;
+  /** Check a checkbox or radio. Selector or exact label text. */
+  check?(target: string, by: "selector" | "text"): Promise<ScreenShot>;
+  /** Uncheck a checkbox. Selector or exact label text. */
+  uncheck?(target: string, by: "selector" | "text"): Promise<ScreenShot>;
   selectorState?(selector: string): Promise<{ visible: boolean; value: string }>;
   close(): Promise<void>;
 }
@@ -141,7 +145,7 @@ export function pageClaim(message: string): { title?: string; text?: string } | 
 }
 
 export interface ChainStep {
-  kind: "type" | "expect-title" | "expect-text" | "expect-selector" | "click" | "navigate" | "wait" | "scroll" | "press" | "hover" | "double-click" | "right-click" | "fill" | "select";
+  kind: "type" | "expect-title" | "expect-text" | "expect-selector" | "click" | "navigate" | "wait" | "scroll" | "press" | "hover" | "double-click" | "right-click" | "fill" | "select" | "check" | "uncheck";
   target: string;
   text?: string;
   /** Text placed in the field by `fill`. */
@@ -158,7 +162,7 @@ export const COMPUTER_PRESS_KEYS = ["Enter", "Escape", "Tab", "Backspace", "Arro
 
 /** Steps in the order they appear. A short chain can include more than one type. */
 export function computerChain(message: string): ChainStep[] {
-  const pattern = /expect title "([^"]*)"|expect text "([^"]*)"|type "([^"]*)" into (\S+)|expect selector (\S+) value "([^"]*)"|click "([^"]*)"|click '([^']*)'|click (\S+)|navigate (https?:\/\/[^\s)]+)|expect title '([^']*)'|expect text '([^']*)'|type '([^']*)' into (\S+)|expect selector (\S+) value '([^']*)'|wait (\d+)ms|wait (\d+)|wait (\S+)|scroll down|scroll up|scroll (-?\d+)px|scroll (-?\d+)|scroll (\S+)|press (\S+)|hover "([^"]*)"|hover '([^']*)'|hover (\S+)|double-click "([^"]*)"|double-click '([^']*)'|double-click (\S+)|right-click "([^"]*)"|right-click '([^']*)'|right-click (\S+)|fill "([^"]*)" with "([^"]*)"|fill '([^']*)' with '([^']*)'|fill (\S+) with "([^"]*)"|fill (\S+) with '([^']*)'|select "([^"]*)" option "([^"]*)"|select '([^']*)' option '([^']*)'|select (\S+) option "([^"]*)"|select (\S+) option '([^']*)'/gi;
+  const pattern = /expect title "([^"]*)"|expect text "([^"]*)"|type "([^"]*)" into (\S+)|expect selector (\S+) value "([^"]*)"|click "([^"]*)"|click '([^']*)'|click (\S+)|navigate (https?:\/\/[^\s)]+)|expect title '([^']*)'|expect text '([^']*)'|type '([^']*)' into (\S+)|expect selector (\S+) value '([^']*)'|wait (\d+)ms|wait (\d+)|wait (\S+)|scroll down|scroll up|scroll (-?\d+)px|scroll (-?\d+)|scroll (\S+)|press (\S+)|hover "([^"]*)"|hover '([^']*)'|hover (\S+)|double-click "([^"]*)"|double-click '([^']*)'|double-click (\S+)|right-click "([^"]*)"|right-click '([^']*)'|right-click (\S+)|fill "([^"]*)" with "([^"]*)"|fill '([^']*)' with '([^']*)'|fill (\S+) with "([^"]*)"|fill (\S+) with '([^']*)'|select "([^"]*)" option "([^"]*)"|select '([^']*)' option '([^']*)'|select (\S+) option "([^"]*)"|select (\S+) option '([^']*)'|uncheck "([^"]*)"|uncheck '([^']*)'|uncheck (\S+)|check "([^"]*)"|check '([^']*)'|check (\S+)/gi;
   const steps: ChainStep[] = [];
   for (const match of message.matchAll(pattern)) {
     if (match[1] !== undefined) steps.push({ kind: "expect-title", target: match[1] });
@@ -199,6 +203,12 @@ export function computerChain(message: string): ChainStep[] {
     else if (match[43] !== undefined && match[44] !== undefined) steps.push({ kind: "select", target: match[43], text: "text", value: match[44] });
     else if (match[45] && match[46] !== undefined) steps.push({ kind: "select", target: match[45].replace(/[.,]$/, ""), value: match[46] });
     else if (match[47] && match[48] !== undefined) steps.push({ kind: "select", target: match[47].replace(/[.,]$/, ""), value: match[48] });
+    else if (match[49] !== undefined) steps.push({ kind: "uncheck", target: match[49], text: "text" });
+    else if (match[50] !== undefined) steps.push({ kind: "uncheck", target: match[50], text: "text" });
+    else if (match[51]) steps.push({ kind: "uncheck", target: match[51].replace(/[.,]$/, "") });
+    else if (match[52] !== undefined) steps.push({ kind: "check", target: match[52], text: "text" });
+    else if (match[53] !== undefined) steps.push({ kind: "check", target: match[53], text: "text" });
+    else if (match[54]) steps.push({ kind: "check", target: match[54].replace(/[.,]$/, "") });
   }
   return steps;
 }
@@ -280,7 +290,7 @@ export async function executeComputerVisit(input: ComputerVisitInput): Promise<G
   for (const [index, item] of chain.entries()) {
     steps.push({
       id: `gtm-${index + 3}`,
-      kind: item.kind === "type" ? "type" : item.kind === "click" ? "click" : item.kind === "navigate" ? "navigate" : item.kind === "wait" ? "wait" : item.kind === "scroll" ? "scroll" : item.kind === "press" ? "press" : item.kind === "hover" ? "hover" : item.kind === "double-click" ? "double-click" : item.kind === "right-click" ? "right-click" : item.kind === "fill" ? "fill" : item.kind === "select" ? "select" : "verify",
+      kind: item.kind === "type" ? "type" : item.kind === "click" ? "click" : item.kind === "navigate" ? "navigate" : item.kind === "wait" ? "wait" : item.kind === "scroll" ? "scroll" : item.kind === "press" ? "press" : item.kind === "hover" ? "hover" : item.kind === "double-click" ? "double-click" : item.kind === "right-click" ? "right-click" : item.kind === "fill" ? "fill" : item.kind === "select" ? "select" : item.kind === "check" ? "check" : item.kind === "uncheck" ? "uncheck" : "verify",
       target: item.target,
       purpose: chainPurpose(item),
       executed: false,
@@ -359,6 +369,8 @@ function chainPurpose(item: ChainStep): string {
   if (item.kind === "right-click") return item.text === "text" ? "Right-click the named text" : "Right-click the named selector";
   if (item.kind === "fill") return item.text === "text" ? "Fill the named text" : "Fill the named selector";
   if (item.kind === "select") return item.text === "text" ? "Select the named text option" : "Select the named selector option";
+  if (item.kind === "check") return item.text === "text" ? "Check the named text" : "Check the named selector";
+  if (item.kind === "uncheck") return item.text === "text" ? "Uncheck the named text" : "Uncheck the named selector";
   if (item.kind === "expect-selector") return "Check the selector value";
   if (item.kind === "expect-text") return "Check the page text";
   return "Check the page title";
@@ -386,7 +398,7 @@ async function finishStep(
     reason: reason || undefined,
     title: redact(screen.title),
     text: redact(screen.text).slice(0, 500),
-    selector: action.kind === "type" || action.kind === "verify" || action.kind === "click" || action.kind === "navigate" || action.kind === "hover" || action.kind === "double-click" || action.kind === "right-click" || action.kind === "fill" || action.kind === "select" ? action.target : undefined,
+    selector: action.kind === "type" || action.kind === "verify" || action.kind === "click" || action.kind === "navigate" || action.kind === "hover" || action.kind === "double-click" || action.kind === "right-click" || action.kind === "fill" || action.kind === "select" || action.kind === "check" || action.kind === "uncheck" ? action.target : undefined,
     screenshot: shot,
   });
 }
@@ -540,6 +552,19 @@ async function runChainStep(
       return { passed: false, reason: redact(message), screen };
     }
   }
+  if (item.kind === "check" || item.kind === "uncheck") {
+    const gate = selectorDecision(item.target);
+    if (!gate.allow) return { passed: false, reason: gate.reason, screen };
+    const run = item.kind === "check" ? session.check : session.uncheck;
+    if (!run) return { passed: false, reason: item.kind === "check" ? "browser cannot check" : "browser cannot uncheck", screen };
+    try {
+      const next = await run(item.target, item.text === "text" ? "text" : "selector");
+      return { passed: true, reason: "", screen: next };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "selector missing";
+      return { passed: false, reason: redact(message), screen };
+    }
+  }
   if (!session.selectorState) return { passed: false, reason: "browser cannot read selector state", screen };
   const state = await session.selectorState(item.target);
   const passed = state.visible && state.value === (item.text ?? "");
@@ -672,6 +697,16 @@ export function playwrightBrowserDriver(): BrowserDriver {
         async selectOption(target, label, by) {
           const locator = by === "text" ? page.getByText(target, { exact: true }) : page.locator(target);
           await locator.selectOption({ label }, { timeout: 5000 });
+          return shot();
+        },
+        async check(target, by) {
+          const locator = by === "text" ? page.getByText(target, { exact: true }) : page.locator(target);
+          await locator.check({ timeout: 5000 });
+          return shot();
+        },
+        async uncheck(target, by) {
+          const locator = by === "text" ? page.getByText(target, { exact: true }) : page.locator(target);
+          await locator.uncheck({ timeout: 5000 });
           return shot();
         },
         async selectorState(selector) {

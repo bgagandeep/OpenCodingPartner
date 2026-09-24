@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -162,7 +163,8 @@ test("OpenClaw drives a general edit and QA checks the kept files", async () => 
         },
       },
     });
-    assert.match(turn.transcript, /OpenClaw drove this turn/);
+    assert.match(turn.transcript, /OpenClaw accepted the session plan/);
+    assert.match(turn.transcript, /OpenClaw does not write sandbox files/);
     assert.equal(turn.qa?.pass, true);
     assert.match(turn.qa?.summary ?? "", /README.md is non-empty/);
     assert.equal(await readFile(path.join(root, "README.md"), "utf8"), "# Install\n");
@@ -291,6 +293,35 @@ test("a real Laya status choice is the only plan OpenClaw stands up", async () =
     await assert.rejects(readFile(path.join(root, "README.md"), "utf8"));
   } finally {
     await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("the golden proof tree is what a multi-file coding turn writes", async () => {
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
+  const math = await readFile(path.join(repoRoot, "examples/proof-multifile/src/math.ts"), "utf8");
+  const spec = await readFile(path.join(repoRoot, "examples/proof-multifile/src/math.test.ts"), "utf8");
+  const prompt = (await readFile(path.join(repoRoot, "examples/proof-multifile/PROMPT.txt"), "utf8")).trim();
+  const sandbox = await mkdtemp(path.join(tmpdir(), "ocp-proof-"));
+  try {
+    const turn = await runChatTurn({
+      message: prompt,
+      sandboxRoot: sandbox,
+      grokRunner: {
+        async run(argv) {
+          assert.ok(argv.includes(prompt));
+          await writeSandboxFile(sandbox, "src/math.ts", math);
+          await writeSandboxFile(sandbox, "src/math.test.ts", spec);
+          return { exitCode: 0, stdout: "" };
+        },
+      },
+    });
+    assert.equal(turn.coding?.wrote, true);
+    assert.equal(await readFile(path.join(sandbox, "src/math.ts"), "utf8"), math);
+    assert.equal(await readFile(path.join(sandbox, "src/math.test.ts"), "utf8"), spec);
+    assert.match(math, /export function add/);
+    assert.match(turn.transcript, /OpenClaw does not write sandbox files/);
+  } finally {
+    await rm(sandbox, { recursive: true, force: true });
   }
 });
 

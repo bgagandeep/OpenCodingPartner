@@ -11,7 +11,7 @@ The offline core runs without OpenClaw, Grok Build, or Laya installed.
 - Coding agent and QA agent on a Grok Build seam, with a local sandbox for real file writes and a QA check.
 - Security agent gate before writes.
 - Computer agent seam that records a go-to-market plan and does not claim a live browser ran.
-- System-1 uses installed Laya through `integrations/laya/predict.py`. The transcript says real or fallback.
+- System-1 uses installed Laya through `integrations/laya/predict.py`. `pnpm bundle:install` downloads the English weights into `.bundle/laya/hf`. The transcript says real or fallback.
 
 A temporary early-test cap of 8 agents is in the code. It is temporary. The demo stands up four agents in one turn.
 

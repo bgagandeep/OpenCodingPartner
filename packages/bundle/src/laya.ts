@@ -15,8 +15,9 @@ export async function predictWithLaya(
   state: string,
   questions: readonly unknown[],
   exec?: LayaExec,
+  env?: NodeJS.ProcessEnv,
 ): Promise<unknown> {
-  const run = exec ?? defaultLayaExec;
+  const run = exec ?? ((bin, args, stdin) => defaultLayaExec(bin, args, stdin, env));
   const stdin = JSON.stringify({ state, questions, model: "english" });
   const result = await run(pythonBin, [scriptPath], stdin);
   if (result.code !== 0) {
@@ -25,9 +26,14 @@ export async function predictWithLaya(
   return JSON.parse(result.stdout) as unknown;
 }
 
-function defaultLayaExec(bin: string, args: readonly string[], stdin: string): Promise<LayaExecResult> {
+function defaultLayaExec(
+  bin: string,
+  args: readonly string[],
+  stdin: string,
+  env?: NodeJS.ProcessEnv,
+): Promise<LayaExecResult> {
   return new Promise((resolve) => {
-    const child = spawn(bin, [...args], { stdio: ["pipe", "pipe", "pipe"] });
+    const child = spawn(bin, [...args], { env: { ...process.env, ...env }, stdio: ["pipe", "pipe", "pipe"] });
     let stdout = "";
     let stderr = "";
     child.stdout.setEncoding("utf8");

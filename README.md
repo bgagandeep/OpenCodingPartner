@@ -27,7 +27,15 @@ pnpm install
 pnpm bundle:install
 ```
 
-That one command installs pinned OpenClaw, Grok Build, and Laya under `.bundle/`. It uses npm and pip. It does not copy their source trees into this repo. Upstream license files stay inside those installs.
+That one command installs pinned OpenClaw, Grok Build, and Laya under `.bundle/`. It uses npm and pip. It also downloads the Laya English checkpoint from Hugging Face into `.bundle/laya/hf` (about 800 MB; the first download often takes several minutes). Those weights are not committed. It does not copy upstream source trees into this repo. Upstream license files stay inside those installs.
+
+Laya only, including the same weight download:
+
+```bash
+pnpm bundle:install:laya
+```
+
+System `python3` is not Laya. After either command, the next `ocp chat` turn uses the bundled Python and `HF_HOME=.bundle/laya/hf`. The transcript says `System-1: real Laya.`
 
 Optional OpenClaw gateway:
 
@@ -69,7 +77,13 @@ hello
 "
 ```
 
-When the OpenClaw gateway is up, the session plan on `agent:board:main` is the only list of agents that stand up. The chat agent sends that plan with `sessions.send` and checks `skills.status` on that session. The local swarm does not run a second plan. If the gateway rejects the plan, the turn stops and no worker writes files. When the gateway is down, the transcript prints a manager plan from the local manager before any worker runs. OpenClaw still cannot edit the sandbox itself. The gateway blocks remote `fs_write` and `sessions_spawn`. After the session accepts the plan, Grok Build or the OpenAI-compatible meter does the file edit from this process. If no key is set, only a simple create-file message is written locally. Do not commit `XAI_API_KEY`, `OPENAI_API_KEY`, or `OPENCLAW_GATEWAY_TOKEN`.
+When the OpenClaw gateway is up, it owns the session plan on `agent:board:main`. The chat agent sends that plan with `sessions.send` and checks `skills.status` on that session. The local swarm does not run a second plan. If the gateway rejects the plan, the turn stops and no worker writes files. When the gateway is down, the transcript prints a manager plan from the local manager before any worker runs. OpenClaw does not write sandbox files. The gateway blocks remote `fs_write` and `sessions_spawn`. After the plan is accepted, Grok Build or the OpenAI-compatible meter writes files from this process. If no key is set, only a simple create-file message is written locally. Do not commit `XAI_API_KEY`, `OPENAI_API_KEY`, or `OPENCLAW_GATEWAY_TOKEN`.
+
+Open the multi-file proof without a key: [examples/proof-multifile/src/math.ts](examples/proof-multifile/src/math.ts) and [examples/proof-multifile/src/math.test.ts](examples/proof-multifile/src/math.test.ts). With a meter key, this writes those files into `.sandbox-proof/`:
+
+```bash
+pnpm proof:coding
+```
 
 Native Grok:
 
@@ -138,4 +152,4 @@ Apache-2.0. See [LICENSE](LICENSE).
 
 ## Independence
 
-We package and connect these tools for the operator. We are not affiliated with OpenClaw, xAI, SpaceXAI, or Convai Innovations. The offline demo still uses a local sandbox. System-1 uses the installed Laya package when `pnpm bundle:install` (or `OCP_LAYA_PYTHON`) provides it, and a fallback router when it does not. The computer agent does not run a browser. OpenClaw cannot remote-write the sandbox. Laya weights are not bundled.
+We package and connect these tools for the operator. We are not affiliated with OpenClaw, xAI, SpaceXAI, or Convai Innovations. The offline demo still uses a local sandbox. System-1 uses the Laya install from `pnpm bundle:install` (or `pnpm bundle:install:laya`) and says fallback when that Python is missing. The computer agent does not run a browser. OpenClaw owns the session plan and does not write sandbox files. Laya weights download into `.bundle/laya/hf` and are not committed.

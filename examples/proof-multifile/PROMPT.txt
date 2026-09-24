@@ -1,0 +1,1 @@
+Add an add function in src/math.ts and a test in src/math.test.ts

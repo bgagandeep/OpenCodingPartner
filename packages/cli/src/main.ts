@@ -93,19 +93,20 @@ export async function main(argv: readonly string[]): Promise<number> {
     return 0;
   }
   process.stdout.write(
-    "OpenCodingPartner chat agent\n\n  ocp chat --sandbox .sandbox\n  ocp chat --sandbox .sandbox \"Use Grok Build to create hello.txt with content:\nhello\n\"\n  ocp demo --sandbox .sandbox\n",
+    "OpenCodingPartner chat agent\n\n  ocp chat --sandbox .sandbox\n  ocp chat --sandbox .sandbox \"Use Grok Build to create hello.txt with content:\nhello\n\"\n  ocp demo --sandbox .sandbox\n\nOpenClaw owns the session plan. It does not write sandbox files. Coding workers in this process write files after the plan is accepted.\n",
   );
   return command === undefined || command === "--help" || command === "-h" ? 0 : 2;
 }
 
 async function runProductTurn(message: string, sandbox: string, computerExecute: boolean) {
   const repoRoot = path.resolve(fileURLToPath(new URL("../../../", import.meta.url)));
-  let stack: { openclawBin?: string; grokBin?: string; layaPython?: string } | undefined;
+  let stack: { openclawBin?: string; grokBin?: string; layaPython?: string; layaHfHome?: string } | undefined;
   try {
     stack = JSON.parse(await readFile(path.join(repoRoot, ".bundle/stack.json"), "utf8")) as {
       openclawBin?: string;
       grokBin?: string;
       layaPython?: string;
+      layaHfHome?: string;
     };
   } catch {
     stack = undefined;
@@ -120,8 +121,11 @@ async function runProductTurn(message: string, sandbox: string, computerExecute:
   if (bins.layaPython) {
     const pythonBin = bins.layaPython;
     const script = path.join(repoRoot, "integrations/laya/predict.py");
+    const hfHome = bins.layaHfHome;
     input.layaPredict = (text) =>
-      routeWithPredict(text, (state, questions) => predictWithLaya(pythonBin, script, state, questions));
+      routeWithPredict(text, (state, questions) =>
+        predictWithLaya(pythonBin, script, state, questions, undefined, hfHome ? { HF_HOME: hfHome } : undefined),
+      );
   }
   const meter = codingRunnerForEnv(bins, process.env);
   if (meter.runner && meter.via) {

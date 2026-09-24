@@ -2,6 +2,7 @@ node_modules/
 dist/
 *.tsbuildinfo
 .sandbox/
+.sandbox-proof/
 .bundle/
 __pycache__/
 *.pyc

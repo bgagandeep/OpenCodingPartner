@@ -2,12 +2,12 @@ import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import test from "node:test";
-import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { routeWithPredict } from "@opencodingpartner/policy";
 import { runOnGrokBuild } from "@opencodingpartner/workers";
-import { LITELLM_LOCAL_BASE_URL, resolveCodingMeter, runConnectedPath, writeViaOpenClaw } from "./connected.js";
+import { deleteViaOpenClaw, LITELLM_LOCAL_BASE_URL, renameViaOpenClaw, resolveCodingMeter, runConnectedPath, writeViaOpenClaw } from "./connected.js";
 import { startSandboxWriteBridge } from "./write-bridge.js";
 import { predictWithLaya } from "./laya.js";
 
@@ -158,6 +158,88 @@ test("the gateway invokes the write bridge and fs_write is not sent", async () =
     );
     assert.equal(refused.ok, false);
     await assert.rejects(readFile(path.join(root, "missing.txt"), "utf8"));
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+    await bridge.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("the gateway invokes delete and rename and does not send fs_delete", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-move-http-"));
+  const bridge = await startSandboxWriteBridge(root);
+  await writeFile(path.join(root, "old.txt"), "keep\n");
+  await mkdir(path.join(root, "src"));
+  await writeFile(path.join(root, "src", "secret.ts"), "password=hunter2\n");
+  const seen: { tool?: string }[] = [];
+  const server = createServer(async (req, res) => {
+    if (req.url === "/healthz") {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end('{"ok":true}');
+      return;
+    }
+    const chunks: Buffer[] = [];
+    for await (const chunk of req) chunks.push(chunk as Buffer);
+    const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as {
+      tool?: string;
+      args?: { bridgeUrl?: string; relativePath?: string; from?: string; to?: string };
+    };
+    seen.push({ tool: body.tool });
+    if (body.tool === "fs_delete" || body.tool === "fs_move" || body.tool === "fs_write") {
+      res.writeHead(404, { "content-type": "application/json" });
+      res.end('{"ok":false}');
+      return;
+    }
+    if (body.args?.bridgeUrl && (body.tool === "ocp_sandbox_delete" || body.tool === "ocp_sandbox_rename")) {
+      const payload = body.tool === "ocp_sandbox_delete"
+        ? { relativePath: body.args.relativePath }
+        : { from: body.args.from, to: body.args.to };
+      const forwarded = await fetch(body.args.bridgeUrl, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      res.writeHead(forwarded.status, { "content-type": "application/json" });
+      res.end(await forwarded.text());
+      return;
+    }
+    res.writeHead(404, { "content-type": "application/json" });
+    res.end('{"ok":false}');
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+  const port = (server.address() as AddressInfo).port;
+  const deps = { env: { OCP_WRITE_BRIDGE_URL: bridge.url }, bins: {}, gatewayHttp: `http://127.0.0.1:${port}` };
+  try {
+    const renamed = await renameViaOpenClaw(deps, root, "old.txt", "src/kept.txt");
+    assert.equal(renamed.ok, true);
+    assert.equal(renamed.missing, false);
+    assert.equal(await readFile(path.join(root, "src", "kept.txt"), "utf8"), "keep\n");
+    await assert.rejects(readFile(path.join(root, "old.txt"), "utf8"));
+    const removed = await deleteViaOpenClaw(deps, root, "src/kept.txt");
+    assert.equal(removed.ok, true);
+    await assert.rejects(readFile(path.join(root, "src", "kept.txt"), "utf8"));
+    const escaped = await deleteViaOpenClaw(deps, root, "../secret.txt");
+    assert.equal(escaped.ok, false);
+    assert.equal(escaped.missing, false);
+    const secret = await deleteViaOpenClaw(deps, root, "src/secret.ts");
+    assert.equal(secret.ok, false);
+    assert.equal(await readFile(path.join(root, "src", "secret.ts"), "utf8"), "password=hunter2\n");
+    assert.equal(seen.some((call) => call.tool === "fs_delete" || call.tool === "fs_move"), false);
+    const missing = await deleteViaOpenClaw(
+      {
+        env: { OCP_WRITE_BRIDGE_URL: bridge.url },
+        bins: {},
+        gatewayHttp: `http://127.0.0.1:${port}`,
+        fetchImpl: async (url) => {
+          if (String(url).endsWith("/healthz")) return new Response('{"ok":true}', { status: 200 });
+          return new Response('{"ok":false}', { status: 404 });
+        },
+      },
+      root,
+      "src/secret.ts",
+    );
+    assert.equal(missing.missing, true);
+    assert.equal(await readFile(path.join(root, "src", "secret.ts"), "utf8"), "password=hunter2\n");
   } finally {
     await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
     await bridge.close();

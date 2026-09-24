@@ -720,6 +720,35 @@ test("a coding turn reads a file, patches it, and retries a failed check", async
   }
 });
 
+test("a coding turn can list for six rounds and then write", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-rounds-"));
+  try {
+    let calls = 0;
+    const turn = await runChatTurn({
+      message: "add a note after looking around",
+      sandboxRoot: root,
+      grokRunner: {
+        async run() {
+          calls += 1;
+          if (calls < 6) {
+            return { exitCode: 0, stdout: JSON.stringify({ steps: [{ tool: "list", path: "." }] }) };
+          }
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify({ done: true, steps: [{ tool: "write", path: "note.txt", content: "ok\n" }] }),
+          };
+        },
+      },
+    });
+    assert.equal(calls, 6);
+    assert.match(turn.transcript, /Round 6/);
+    assert.doesNotMatch(turn.transcript, /Round 7/);
+    assert.equal(await readFile(path.join(root, "note.txt"), "utf8"), "ok\n");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("a coding turn writes a file and then deletes it", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "ocp-delete-turn-"));
   try {

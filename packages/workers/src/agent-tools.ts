@@ -19,7 +19,7 @@ export function commandDecision(argv: readonly string[]): { allow: boolean; reas
   if (argv.length < 2 || argv.length > 8) return { allow: false, reason: "command is not on the allow list" };
   if (argv[0] !== "node" || argv[1] !== "--test") return { allow: false, reason: "only node --test is allowed" };
   for (const arg of argv.slice(2)) {
-    if (!arg || arg.startsWith("-") || /[;&|`$><\\\n\r\0]/.test(arg) || arg.includes("..")) {
+    if (!arg || arg.startsWith("-") || arg.startsWith("/") || arg.includes("..") || arg.includes("\n") || arg.includes("\0") || /[;&|`$><\\]/.test(arg)) {
       return { allow: false, reason: "command argument is not a relative test path" };
     }
   }

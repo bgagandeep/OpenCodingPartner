@@ -212,6 +212,25 @@ async function executeTurn(input: ChatTurnInput, session: SwarmSession, key: str
       try {
         const aware = await codingPrompt(input.sandboxRoot, input.message);
         const grok = await swarm.dispatch("coding", () => runOnGrokBuild(runner, aware, stage));
+        const toolReply = await applyToolReply(input, grok.stdout, true, "openclaw-write");
+        if (toolReply) {
+          coding = toolReply.coding;
+          security = toolReply.security ?? security;
+          if (agents.some((agent) => agent.role === "qa")) {
+            qa = toolReply.qa;
+            const retried = await retryFileFix({
+              input,
+              swarm,
+              openclawDrove: true,
+              qa,
+              coding,
+              security,
+            });
+            qa = retried.qa;
+            coding = retried.coding;
+            security = retried.security;
+          }
+        } else {
         const staged = await snapshotSandbox(stage);
         const kept: string[] = [];
         const blocked: string[] = [];
@@ -251,6 +270,7 @@ async function executeTurn(input: ChatTurnInput, session: SwarmSession, key: str
           qa = retried.qa;
           coding = retried.coding;
           security = retried.security;
+        }
         }
       } finally {
         await rm(stage, { recursive: true, force: true });
@@ -545,6 +565,8 @@ async function applyCodingPass(
     try {
       const aware = await codingPrompt(input.sandboxRoot, prompt);
       const grok = await swarm.dispatch("coding", () => runOnGrokBuild(runner, aware, stage));
+      const toolReply = await applyToolReply(input, grok.stdout, true, "openclaw-write");
+      if (toolReply) return toolReply;
       const staged = await snapshotSandbox(stage);
       const kept: string[] = [];
       const blocked: string[] = [];
@@ -757,8 +779,8 @@ async function codingPrompt(sandboxRoot: string, message: string): Promise<strin
     blocks.push(block);
     used += block.length;
   }
-  if (blocks.length === 0) return message;
-  return `Sandbox files already on disk:\n${blocks.join("\n")}\nUser request:\n${message}`;
+  const filesNote = blocks.length === 0 ? "" : `Sandbox files already on disk:\n${blocks.join("\n")}\n`;
+  return `${filesNote}User request:\n${message}\nReply with JSON only: {"steps":[{"tool":"list"|"read"|"run"|"write"|"patch","path":"relative","content":"full text for write","diff":"unified diff for patch","argv":["node","--test","relative.test.ts"]}]}. List or read before you edit. Patch a file that already exists. Write only a new file. The only command is node --test plus relative paths.`;
 }
 
 async function fileMatches(sandboxRoot: string, relativePath: string, content: string): Promise<boolean> {

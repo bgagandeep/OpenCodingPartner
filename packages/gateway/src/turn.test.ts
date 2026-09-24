@@ -119,7 +119,7 @@ test("a general ask on Grok Build edits files and QA reviews them", async () => 
     assert.match(turn.qa?.summary ?? "", /README.md/);
     assert.match(turn.qa?.summary ?? "", /docs\/setup.md/);
     assert.equal(turn.qa?.pass, true);
-    assert.ok(prompts.includes("add a README section explaining install"));
+    assert.ok((prompts[prompts.indexOf("-p") + 1] ?? "").includes("add a README section explaining install"));
     assert.equal(await readFile(path.join(root, "README.md"), "utf8"), "# Install\n\npnpm install\n");
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -241,7 +241,7 @@ test("Grok Build adds a function and a test across two files", async () => {
       },
     });
     assert.equal(argv[0], "grok");
-    assert.ok(argv.includes(message));
+    assert.ok((argv[argv.indexOf("-p") + 1] ?? "").includes(message));
     assert.ok(argv.includes("--cwd"));
     assert.ok(argv.includes(root));
     assert.ok(argv.includes("--output-format"));
@@ -312,7 +312,9 @@ test("the golden proof tree is what a multi-file coding turn writes", async () =
       sandboxRoot: sandbox,
       grokRunner: {
         async run(argv) {
-          assert.ok(argv.includes(prompt));
+          const sent = argv[argv.indexOf("-p") + 1] ?? "";
+          assert.match(sent, /User request:/);
+          assert.ok(sent.includes(prompt));
           await writeSandboxFile(sandbox, "src/math.ts", math);
           await writeSandboxFile(sandbox, "src/math.test.ts", spec);
           return { exitCode: 0, stdout: "" };
@@ -712,6 +714,44 @@ test("a coding turn reads a file, patches it, and retries a failed check", async
     assert.match(turn.transcript, /exit 0/);
     assert.match(turn.transcript, /fix loop passed on retry 1/);
     assert.match(await readFile(path.join(root, "src/math.ts"), "utf8"), /return left \+ right/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("an OpenClaw-driven tool write uses the write bridge", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-tools-bridge-"));
+  try {
+    const writes: string[] = [];
+    const turn = await runChatTurn({
+      message: "add src/note.txt",
+      sandboxRoot: root,
+      orchestration: async () => ({
+        state: "ran",
+        driver: "openclaw",
+        detail: "Session agent:board:main accepted the plan.",
+      }),
+      grokRunner: {
+        async run() {
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify({
+              steps: [{ tool: "write", path: "src/note.txt", content: "from the bridge\n" }],
+            }),
+          };
+        },
+      },
+      openclawWrite: async (relativePath, bytes) => {
+        writes.push(relativePath);
+        await writeSandboxFile(root, relativePath, bytes);
+        return { ok: true, detail: "bridge" };
+      },
+    });
+    assert.deepEqual(writes, ["src/note.txt"]);
+    assert.equal(turn.coding?.via, "openclaw-write");
+    assert.match(turn.transcript, /Tool: write src\/note.txt/);
+    assert.match(turn.transcript, /Write path: OpenClaw-driven/);
+    assert.equal(await readFile(path.join(root, "src/note.txt"), "utf8"), "from the bridge\n");
   } finally {
     await rm(root, { recursive: true, force: true });
   }

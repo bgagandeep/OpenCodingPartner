@@ -1241,6 +1241,91 @@ test("right-click hits a selector, and a missing selector stops the chain", asyn
   }
 });
 
+test("fill clears a selector, and a missing selector stops the chain", async () => {
+  assert.deepEqual(computerChain('fill "Email" with "Ada"'), [{ kind: "fill", target: "Email", text: "text", value: "Ada" }]);
+  assert.deepEqual(computerChain('fill #email with "Ada"'), [{ kind: "fill", target: "#email", value: "Ada" }]);
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-fill-"));
+  const png = Uint8Array.from([137, 80, 78, 71]);
+  try {
+    const filled: { target: string; value: string; by: string }[] = [];
+    const plan = await executeComputerVisit({
+      productName: "OpenCodingPartner",
+      message: "Open https://example.com then fill #email with \"Ada\" then expect text \"saved\"",
+      sandboxRoot: root,
+      execute: true,
+      driver: {
+        async start() {
+          return {
+            async open() {
+              return { title: "Example", text: "page", screenshotPng: png };
+            },
+            async readScreen() {
+              return { title: "Example", text: "saved", screenshotPng: png };
+            },
+            async typeInto() {
+              return { title: "Example", text: "saved", screenshotPng: png };
+            },
+            async fill(target: string, value: string, by: "selector" | "text") {
+              filled.push({ target, value, by });
+              return { title: "Example", text: "saved", screenshotPng: png };
+            },
+            async close() {
+              return undefined;
+            },
+          };
+        },
+      },
+    });
+    assert.deepEqual(filled, [{ target: "#email", value: "Ada", by: "selector" }]);
+    assert.equal(plan.actions.find((action) => action.kind === "fill")?.passed, true);
+    const saved = JSON.parse(await readFile(path.join(root, "gtm/last-run.json"), "utf8")) as {
+      steps: { kind: string; passed?: boolean; screenshot?: string }[];
+    };
+    assert.ok(saved.steps.some((step) => step.kind === "fill" && step.passed === true && step.screenshot));
+
+    const blocked = await mkdtemp(path.join(tmpdir(), "ocp-fill-miss-"));
+    const refused = await executeComputerVisit({
+      productName: "OpenCodingPartner",
+      message: "Open https://example.com then fill #missing with \"Ada\" then expect text \"saved\"",
+      sandboxRoot: blocked,
+      execute: true,
+      driver: {
+        async start() {
+          return {
+            async open() {
+              return { title: "Example", text: "page", screenshotPng: png };
+            },
+            async readScreen() {
+              return { title: "Example", text: "page", screenshotPng: png };
+            },
+            async typeInto() {
+              return { title: "Example", text: "page", screenshotPng: png };
+            },
+            async fill() {
+              throw new Error("selector missing");
+            },
+            async close() {
+              return undefined;
+            },
+          };
+        },
+      },
+    });
+    const step = refused.actions.find((action) => action.kind === "fill");
+    assert.equal(step?.passed, false);
+    assert.match(step?.reason ?? "", /selector missing/);
+    assert.equal(refused.actions.find((action) => action.purpose === "Check the page text")?.executed, false);
+    const missed = JSON.parse(await readFile(path.join(blocked, "gtm/last-run.json"), "utf8")) as {
+      steps: { kind: string; passed?: boolean; screenshot?: string; executed?: boolean }[];
+    };
+    assert.ok(missed.steps.some((item) => item.kind === "fill" && item.passed === false && item.screenshot));
+    assert.equal(missed.steps.find((item) => item.kind === "verify")?.executed, false);
+    await rm(blocked, { recursive: true, force: true });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("computer agent records a GTM plan that did not run", () => {
   const plan = planGtmActions("OpenCodingPartner");
   assert.match(plan.note, /No live browser ran/);

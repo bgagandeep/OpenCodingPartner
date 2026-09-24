@@ -1055,6 +1055,36 @@ test("a coding turn creates a directory and then writes a file in it", async () 
   }
 });
 
+test("a coding turn removes an empty directory it just made", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-rmdir-turn-"));
+  try {
+    const turn = await runChatTurn({
+      message: "fix the empty folder",
+      sandboxRoot: root,
+      grokRunner: {
+        async run(argv) {
+          const prompt = argv[argv.indexOf("-p") + 1] ?? "";
+          if (!prompt.includes("Tool observations:\n")) {
+            return { exitCode: 0, stdout: JSON.stringify({ steps: [{ tool: "mkdir", path: "src/empty" }] }) };
+          }
+          assert.match(prompt, /Tool: mkdir src\/empty/);
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify({ done: true, steps: [{ tool: "rmdir", path: "src/empty" }] }),
+          };
+        },
+      },
+    });
+    assert.match(turn.transcript, /Tool: rmdir src\/empty/);
+    assert.match(turn.transcript, /Rmdir path: local sandbox/);
+    assert.doesNotMatch(turn.transcript, /OpenClaw-driven/);
+    const { stat } = await import("node:fs/promises");
+    await assert.rejects(stat(path.join(root, "src/empty")));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("a coding turn globs a pattern and patches only the hit file", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "ocp-glob-turn-"));
   try {

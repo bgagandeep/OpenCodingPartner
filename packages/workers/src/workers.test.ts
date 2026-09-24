@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { applyUnifiedDiff, commandDecision, deleteSandboxFile, globSandbox, grepSandbox, mkdirSandboxDir, parseCodingReply, renameSandboxFile } from "./agent-tools.js";
+import { applyUnifiedDiff, commandDecision, deleteSandboxFile, globSandbox, grepSandbox, mkdirSandboxDir, parseCodingReply, renameSandboxFile, rmdirSandboxDir } from "./agent-tools.js";
 import { parseCreateFileInstruction, writeSandboxFile } from "./coding.js";
 import { COMPUTER_SCROLL_CAP_PX, COMPUTER_WAIT_CAP_MS, computerChain, executeComputerVisit, pageClaim, planGtmActions, selectorDecision, urlDecision } from "./computer.js";
 import { grokBuildArgv, runOnGrokBuild } from "./grok.js";
@@ -165,6 +165,32 @@ test("mkdir creates a nested directory and refuses escape, files, and gtm", asyn
     assert.equal((await mkdirSandboxDir(root, "src/password=hunter2")).ok, false);
     const { stat } = await import("node:fs/promises");
     assert.equal((await stat(path.join(root, "src/lib"))).isDirectory(), true);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("rmdir removes one empty directory and refuses the rest", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-rmdir-"));
+  try {
+    assert.equal((await mkdirSandboxDir(root, "src/empty")).ok, true);
+    const removed = await rmdirSandboxDir(root, "src/empty");
+    assert.equal(removed.ok, true);
+    assert.equal(removed.detail, "removed");
+    const { stat } = await import("node:fs/promises");
+    await assert.rejects(stat(path.join(root, "src/empty")));
+    assert.equal((await rmdirSandboxDir(root, "src/empty")).detail, "directory missing");
+    await writeFile(path.join(root, "src/note.txt"), "keep\n");
+    assert.equal((await rmdirSandboxDir(root, "src")).detail, "directory is not empty");
+    assert.equal((await rmdirSandboxDir(root, "src/note.txt")).detail, "path is a file");
+    assert.equal((await rmdirSandboxDir(root, "../outside")).ok, false);
+    assert.equal((await rmdirSandboxDir(root, "/tmp/outside")).ok, false);
+    await mkdir(path.join(root, "gtm"), { recursive: true });
+    await mkdir(path.join(root, ".ocp"), { recursive: true });
+    assert.equal((await rmdirSandboxDir(root, "gtm")).ok, false);
+    assert.equal((await rmdirSandboxDir(root, ".ocp")).ok, false);
+    assert.equal((await rmdirSandboxDir(root, "src/password=hunter2")).ok, false);
+    assert.equal((await stat(path.join(root, "src/note.txt"))).isFile(), true);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

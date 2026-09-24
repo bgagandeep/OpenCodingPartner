@@ -903,6 +903,38 @@ test("a missing OpenClaw delete plugin falls back to the local sandbox", async (
   }
 });
 
+test("a coding turn creates a directory and then writes a file in it", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-mkdir-turn-"));
+  try {
+    const turn = await runChatTurn({
+      message: "add a helper under src/lib",
+      sandboxRoot: root,
+      grokRunner: {
+        async run(argv) {
+          const prompt = argv[argv.indexOf("-p") + 1] ?? "";
+          if (!prompt.includes("Tool observations:\n")) {
+            return { exitCode: 0, stdout: JSON.stringify({ steps: [{ tool: "mkdir", path: "src/lib" }] }) };
+          }
+          assert.match(prompt, /Tool: mkdir src\/lib/);
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify({
+              done: true,
+              steps: [{ tool: "write", path: "src/lib/helper.ts", content: "export const helper = 1;\n" }],
+            }),
+          };
+        },
+      },
+    });
+    assert.match(turn.transcript, /Tool: mkdir src\/lib/);
+    assert.match(turn.transcript, /Mkdir path: local sandbox/);
+    assert.doesNotMatch(turn.transcript, /OpenClaw-driven/);
+    assert.match(await readFile(path.join(root, "src/lib/helper.ts"), "utf8"), /export const helper/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("a coding turn globs a pattern and patches only the hit file", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "ocp-glob-turn-"));
   try {

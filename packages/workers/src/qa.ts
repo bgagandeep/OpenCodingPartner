@@ -93,6 +93,52 @@ export function changedSandboxFiles(before: ReadonlyMap<string, string>, after: 
   return [...names].filter((name) => before.get(name) !== after.get(name)).sort();
 }
 
+export interface FileExpectation {
+  path: string;
+  contains: string;
+}
+
+/** `expect file path to contain "text"`. One message can name more than one file. */
+export function fileExpectations(message: string): FileExpectation[] {
+  const found: FileExpectation[] = [];
+  const pattern = /expect file (\S+) to contain "([^"]*)"/gi;
+  for (const match of message.matchAll(pattern)) {
+    const filePath = match[1];
+    const contains = match[2];
+    if (filePath && contains !== undefined) found.push({ path: filePath, contains });
+  }
+  return found;
+}
+
+/** Check expected snippets. A missing file, an empty file, or a security removal fails. */
+export async function reviewFileExpectations(
+  sandboxRoot: string,
+  kept: readonly string[],
+  expected: readonly FileExpectation[],
+  removed: readonly string[] = [],
+): Promise<QaResult> {
+  const bad: string[] = [];
+  for (const item of expected) {
+    if (removed.includes(item.path)) {
+      bad.push(`${item.path} was removed by security before review`);
+      continue;
+    }
+    if (!kept.includes(item.path)) {
+      bad.push(`${item.path} is missing`);
+      continue;
+    }
+    const check = await qaCheckFile(sandboxRoot, item.path);
+    if (!check.pass) {
+      bad.push(`${item.path}: ${check.summary}`);
+      continue;
+    }
+    const text = await readFile(path.join(sandboxRoot, item.path), "utf8");
+    if (!text.includes(item.contains)) bad.push(`${item.path} is missing expected content`);
+  }
+  if (bad.length > 0) return { pass: false, summary: bad.join("; ") };
+  return { pass: true, summary: `checked ${expected.map((item) => item.path).join(", ")}` };
+}
+
 /** QA reads each kept file. An empty list fails when coding reported success. */
 export async function reviewChangedFiles(
   sandboxRoot: string,

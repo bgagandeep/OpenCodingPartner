@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { parseCreateFileInstruction, writeSandboxFile } from "./coding.js";
-import { executeComputerVisit, pageClaim, planGtmActions, selectorDecision, urlDecision } from "./computer.js";
+import { computerChain, executeComputerVisit, pageClaim, planGtmActions, selectorDecision, urlDecision } from "./computer.js";
 import { grokBuildArgv, runOnGrokBuild } from "./grok.js";
 import { openAiCompatibleRunner, parseFileEdits } from "./openai.js";
-import { qaCheckFile, reviewComputerClaim } from "./qa.js";
+import { fileExpectations, qaCheckFile, reviewComputerClaim, reviewFileExpectations } from "./qa.js";
 import { securityGate } from "./security.js";
 
 test("create-file parse keeps the trailing newline and rejects an unknown tool", () => {
@@ -200,8 +200,9 @@ test("a live sequence opens, reads, and types, and a script selector does not ru
     });
     assert.equal(blocked.actions[0]?.executed, true);
     assert.equal(blocked.actions[1]?.executed, true);
-    assert.equal(blocked.actions[2]?.executed, false);
-    assert.match(blocked.note, /Refused the type step/);
+    assert.equal(blocked.actions[2]?.executed, true);
+    assert.equal(blocked.actions[2]?.passed, false);
+    assert.match(blocked.note, /selector looks like a script/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -220,7 +221,7 @@ test("QA passes a page claim and fails a broken title", async () => {
     assert.equal(held.actions.some((action) => action.kind === "verify" && action.executed), true);
     const assertion = JSON.parse(await readFile(path.join(root, "gtm/assertion.json"), "utf8")) as { claimHeld: boolean; screenshot: string };
     assert.equal(assertion.claimHeld, true);
-    assert.equal(assertion.screenshot, "gtm/step-2.png");
+    assert.equal(assertion.screenshot, "gtm/step-3.png");
     const png = await readFile(path.join(root, assertion.screenshot));
     assert.ok(png.length > 0);
     const pass = await reviewComputerClaim(root);
@@ -281,6 +282,59 @@ test("execute off and a missing browser fail the page claim", async () => {
   }
 });
 
+test("a failed step skips the rest of the chain", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-chain-"));
+  try {
+    const chain = computerChain('Open https://example.com then expect title "Example Domain" then type "hi" into #hero then expect selector #hero value "nope" then type "later" into #next');
+    assert.equal(chain.length, 4);
+    let typed = 0;
+    const plan = await executeComputerVisit({
+      productName: "OpenCodingPartner",
+      message: 'Open https://example.com then expect title "Example Domain" then type "hi" into #hero then expect selector #hero value "nope" then type "later" into #next',
+      sandboxRoot: root,
+      execute: true,
+      driver: fakeBrowser(() => {
+        typed += 1;
+      }),
+    });
+    assert.equal(typed, 1);
+    const selector = plan.actions.find((action) => action.purpose === "Check the selector value");
+    assert.equal(selector?.passed, false);
+    assert.match(selector?.reason ?? "", /expected nope/);
+    const later = plan.actions.find((action) => action.target === "#next");
+    assert.equal(later?.executed, false);
+    assert.equal(later?.skipped, true);
+    assert.match(plan.note, /Later steps were skipped/);
+    const saved = JSON.parse(await readFile(path.join(root, "gtm/last-run.json"), "utf8")) as {
+      steps: { passed?: boolean; skipped?: boolean; screenshot?: string }[];
+    };
+    assert.ok(saved.steps.some((step) => step.passed === false));
+    assert.ok(saved.steps.some((step) => step.skipped === true));
+    assert.ok(saved.steps.filter((step) => step.screenshot).length >= 3);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("QA fails a multi-file write that misses content or was stripped", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-qa-files-"));
+  try {
+    await writeFile(path.join(root, "README.md"), "Hello\n");
+    const expected = fileExpectations('expect file README.md to contain "Install" and expect file notes.txt to contain "safe"');
+    assert.equal(expected.length, 2);
+    const review = await reviewFileExpectations(root, ["README.md"], expected, ["notes.txt"]);
+    assert.equal(review.pass, false);
+    assert.match(review.summary, /README.md is missing expected content/);
+    assert.match(review.summary, /notes.txt was removed by security/);
+    await writeFile(path.join(root, "empty.txt"), "");
+    const empty = await reviewFileExpectations(root, ["empty.txt"], [{ path: "empty.txt", contains: "x" }]);
+    assert.equal(empty.pass, false);
+    assert.match(empty.summary, /empty/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 function fakeBrowser(onType?: (selector: string, text: string) => void) {
   const png = Uint8Array.from([137, 80, 78, 71]);
   return {
@@ -296,6 +350,9 @@ function fakeBrowser(onType?: (selector: string, text: string) => void) {
         async typeInto(selector: string, text: string) {
           onType?.(selector, text);
           return { title: "Example Domain", text, screenshotPng: png };
+        },
+        async selectorState(selector: string) {
+          return { visible: true, value: selector === "#hero" ? "hi" : "" };
         },
         async close() {
           return undefined;

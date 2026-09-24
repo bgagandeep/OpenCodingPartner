@@ -2,6 +2,8 @@ declare module "playwright" {
   interface PlaywrightLocator {
     fill(text: string, options?: { timeout?: number }): Promise<void>;
     innerText(options?: { timeout?: number }): Promise<string>;
+    isVisible(options?: { timeout?: number }): Promise<boolean>;
+    inputValue(options?: { timeout?: number }): Promise<string>;
   }
   interface PlaywrightPage {
     goto(url: string, options?: { waitUntil?: "domcontentloaded"; timeout?: number }): Promise<unknown>;

@@ -517,6 +517,26 @@ test("QA fails a broken page claim and records the screenshot", async () => {
   }
 });
 
+test("QA names a missing file snippet in the transcript", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-qa-snippet-"));
+  try {
+    const turn = await runChatTurn({
+      message: 'add a README and expect file README.md to contain "Install"',
+      sandboxRoot: root,
+      grokRunner: {
+        async run() {
+          await writeSandboxFile(root, "README.md", "Hello\n");
+          return { exitCode: 0, stdout: "" };
+        },
+      },
+    });
+    assert.equal(turn.qa?.pass, false);
+    assert.match(turn.transcript, /README.md is missing expected content/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("demo command path writes the product file and blocks the secret", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "ocp-demo-"));
   try {

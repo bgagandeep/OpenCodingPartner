@@ -4,12 +4,14 @@ declare module "playwright" {
     innerText(options?: { timeout?: number }): Promise<string>;
     isVisible(options?: { timeout?: number }): Promise<boolean>;
     inputValue(options?: { timeout?: number }): Promise<string>;
+    click(options?: { timeout?: number }): Promise<void>;
   }
   interface PlaywrightPage {
     goto(url: string, options?: { waitUntil?: "domcontentloaded"; timeout?: number }): Promise<unknown>;
     title(): Promise<string>;
     screenshot(options?: { type?: "png" }): Promise<Buffer>;
     locator(selector: string): PlaywrightLocator;
+    getByText(text: string, options?: { exact?: boolean }): PlaywrightLocator;
   }
   interface PlaywrightBrowser {
     newPage(): Promise<PlaywrightPage>;

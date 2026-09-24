@@ -4,7 +4,7 @@ import path from "node:path";
 
 export interface ComputerAction {
   id: string;
-  kind: "open-url" | "type" | "read-screen" | "verify";
+  kind: "open-url" | "type" | "read-screen" | "verify" | "click" | "navigate";
   target: string;
   purpose: string;
   executed: boolean;
@@ -24,6 +24,8 @@ export interface BrowserSession {
   open(url: string): Promise<ScreenShot>;
   readScreen(): Promise<ScreenShot>;
   typeInto(selector: string, text: string): Promise<ScreenShot>;
+  click?(target: string, by: "selector" | "text"): Promise<ScreenShot>;
+  navigate?(url: string): Promise<ScreenShot>;
   selectorState?(selector: string): Promise<{ visible: boolean; value: string }>;
   close(): Promise<void>;
 }
@@ -128,24 +130,28 @@ export function pageClaim(message: string): { title?: string; text?: string } | 
 }
 
 export interface ChainStep {
-  kind: "type" | "expect-title" | "expect-text" | "expect-selector";
+  kind: "type" | "expect-title" | "expect-text" | "expect-selector" | "click" | "navigate";
   target: string;
   text?: string;
 }
 
 /** Steps in the order they appear. A short chain can include more than one type. */
 export function computerChain(message: string): ChainStep[] {
-  const pattern = /expect title "([^"]*)"|expect text "([^"]*)"|type "([^"]*)" into (\S+)|expect selector (\S+) value "([^"]*)"|expect title '([^']*)'|expect text '([^']*)'|type '([^']*)' into (\S+)|expect selector (\S+) value '([^']*)'/gi;
+  const pattern = /expect title "([^"]*)"|expect text "([^"]*)"|type "([^"]*)" into (\S+)|expect selector (\S+) value "([^"]*)"|click "([^"]*)"|click '([^']*)'|click (\S+)|navigate (https?:\/\/[^\s)]+)|expect title '([^']*)'|expect text '([^']*)'|type '([^']*)' into (\S+)|expect selector (\S+) value '([^']*)'/gi;
   const steps: ChainStep[] = [];
   for (const match of message.matchAll(pattern)) {
     if (match[1] !== undefined) steps.push({ kind: "expect-title", target: match[1] });
     else if (match[2] !== undefined) steps.push({ kind: "expect-text", target: match[2] });
     else if (match[3] !== undefined && match[4]) steps.push({ kind: "type", target: match[4].replace(/[.,]$/, ""), text: match[3] });
     else if (match[5] && match[6] !== undefined) steps.push({ kind: "expect-selector", target: match[5].replace(/[.,]$/, ""), text: match[6] });
-    else if (match[7] !== undefined) steps.push({ kind: "expect-title", target: match[7] });
-    else if (match[8] !== undefined) steps.push({ kind: "expect-text", target: match[8] });
-    else if (match[9] !== undefined && match[10]) steps.push({ kind: "type", target: match[10].replace(/[.,]$/, ""), text: match[9] });
-    else if (match[11] && match[12] !== undefined) steps.push({ kind: "expect-selector", target: match[11].replace(/[.,]$/, ""), text: match[12] });
+    else if (match[7] !== undefined) steps.push({ kind: "click", target: match[7], text: "text" });
+    else if (match[8] !== undefined) steps.push({ kind: "click", target: match[8], text: "text" });
+    else if (match[9]) steps.push({ kind: "click", target: match[9].replace(/[.,]$/, "") });
+    else if (match[10]) steps.push({ kind: "navigate", target: match[10].replace(/[.,]$/, "") });
+    else if (match[11] !== undefined) steps.push({ kind: "expect-title", target: match[11] });
+    else if (match[12] !== undefined) steps.push({ kind: "expect-text", target: match[12] });
+    else if (match[13] !== undefined && match[14]) steps.push({ kind: "type", target: match[14].replace(/[.,]$/, ""), text: match[13] });
+    else if (match[15] && match[16] !== undefined) steps.push({ kind: "expect-selector", target: match[15].replace(/[.,]$/, ""), text: match[16] });
   }
   return steps;
 }
@@ -227,7 +233,7 @@ export async function executeComputerVisit(input: ComputerVisitInput): Promise<G
   for (const [index, item] of chain.entries()) {
     steps.push({
       id: `gtm-${index + 3}`,
-      kind: item.kind === "type" ? "type" : "verify",
+      kind: item.kind === "type" ? "type" : item.kind === "click" ? "click" : item.kind === "navigate" ? "navigate" : "verify",
       target: item.target,
       purpose: chainPurpose(item),
       executed: false,
@@ -259,7 +265,7 @@ export async function executeComputerVisit(input: ComputerVisitInput): Promise<G
         recorded.push({ kind: action.kind, executed: false, skipped: true, passed: false, reason: action.reason, selector: item.target });
         continue;
       }
-      const outcome = await runChainStep(session, item, screen);
+      const outcome = await runChainStep(session, item, screen, url, input.allowHosts);
       screen = outcome.screen ?? screen;
       if (outcome.passed && screen) await finishStep(input.sandboxRoot, action, recorded, screen, true, "");
       else {
@@ -296,6 +302,8 @@ export async function executeComputerVisit(input: ComputerVisitInput): Promise<G
 
 function chainPurpose(item: ChainStep): string {
   if (item.kind === "type") return "Type into the named selector";
+  if (item.kind === "click") return item.text === "text" ? "Click the named text" : "Click the named selector";
+  if (item.kind === "navigate") return "Open a URL on the same host";
   if (item.kind === "expect-selector") return "Check the selector value";
   if (item.kind === "expect-text") return "Check the page text";
   return "Check the page title";
@@ -323,7 +331,7 @@ async function finishStep(
     reason: reason || undefined,
     title: redact(screen.title),
     text: redact(screen.text).slice(0, 500),
-    selector: action.kind === "type" || action.kind === "verify" ? action.target : undefined,
+    selector: action.kind === "type" || action.kind === "verify" || action.kind === "click" || action.kind === "navigate" ? action.target : undefined,
     screenshot: shot,
   });
 }
@@ -332,6 +340,8 @@ async function runChainStep(
   session: BrowserSession,
   item: ChainStep,
   screen: ScreenShot | undefined,
+  openedUrl: string,
+  allowHosts?: readonly string[],
 ): Promise<{ passed: boolean; reason: string; screen?: ScreenShot }> {
   if (item.kind === "expect-title") {
     const seen = await session.readScreen();
@@ -348,6 +358,26 @@ async function runChainStep(
     if (!gate.allow) return { passed: false, reason: gate.reason, screen };
     const typed = await session.typeInto(item.target, item.text ?? "");
     return { passed: true, reason: "", screen: typed };
+  }
+  if (item.kind === "click") {
+    const gate = selectorDecision(item.target);
+    if (!gate.allow) return { passed: false, reason: gate.reason, screen };
+    if (!session.click) return { passed: false, reason: "browser cannot click", screen };
+    const next = await session.click(item.target, item.text === "text" ? "text" : "selector");
+    return { passed: true, reason: "", screen: next };
+  }
+  if (item.kind === "navigate") {
+    const decision = urlDecision(item.target, allowHosts);
+    if (!decision.allow) return { passed: false, reason: decision.reason, screen };
+    const openedHost = new URL(openedUrl).hostname.toLowerCase();
+    const nextHost = new URL(item.target).hostname.toLowerCase();
+    const listed = (allowHosts ?? []).map((host) => host.toLowerCase());
+    if (nextHost !== openedHost && !listed.includes(nextHost)) {
+      return { passed: false, reason: "navigate stays on the opened host", screen };
+    }
+    if (!session.navigate) return { passed: false, reason: "browser cannot navigate", screen };
+    const next = await session.navigate(item.target);
+    return { passed: true, reason: "", screen: next };
   }
   if (!session.selectorState) return { passed: false, reason: "browser cannot read selector state", screen };
   const state = await session.selectorState(item.target);
@@ -431,6 +461,15 @@ export function playwrightBrowserDriver(): BrowserDriver {
         readScreen: shot,
         async typeInto(selector, text) {
           await page.locator(selector).fill(text, { timeout: 5000 });
+          return shot();
+        },
+        async click(target, by) {
+          const locator = by === "text" ? page.getByText(target, { exact: true }) : page.locator(target);
+          await locator.click({ timeout: 5000 });
+          return shot();
+        },
+        async navigate(nextUrl) {
+          await page.goto(nextUrl, { waitUntil: "domcontentloaded", timeout: 20000 });
           return shot();
         },
         async selectorState(selector) {

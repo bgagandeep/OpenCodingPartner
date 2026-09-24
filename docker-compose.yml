@@ -8,3 +8,14 @@ services:
       - "127.0.0.1:18789:18789"
     command: ["node", "dist/index.js", "gateway", "--bind", "lan", "--port", "18789"]
     restart: unless-stopped
+  litellm:
+    image: docker.litellm.ai/berriai/litellm:v1.102.1
+    ports:
+      - "127.0.0.1:4000:4000"
+    command: ["--config", "/app/config.yaml", "--host", "0.0.0.0", "--port", "4000"]
+    environment:
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    volumes:
+      - ./examples/litellm/config.yaml:/app/config.yaml:ro
+    restart: unless-stopped

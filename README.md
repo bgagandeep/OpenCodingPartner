@@ -56,7 +56,39 @@ Type a message, then type `exit`. One turn stands up a coding agent, a QA agent,
 
 A general request, such as "Add an add function in src/math.ts and a test in src/math.test.ts", is sent to the coding agent with the sandbox as the working directory. The QA agent then reviews the files that changed. The security agent checks the request first, and checks the written files after. A file that escapes the sandbox or contains a secret is removed.
 
-That general path needs a meter. Use native Grok with `XAI_API_KEY` and the `grok` binary, or an OpenAI-compatible meter with `OPENAI_API_KEY` and `OPENAI_BASE_URL` (LiteLLM or OpenRouter). Without a key, the chat agent says so. It does not pretend the offline sandbox can do open-ended edits.
+That general path needs a meter. Prefer LiteLLM with `LITELLM_API_KEY` or `LITELLM_MASTER_KEY`. If those are unset, an OpenAI-compatible endpoint with `OPENAI_API_KEY` and `OPENAI_BASE_URL` is next. Native Grok (`XAI_API_KEY` and the `grok` binary) is last. Without a key, the chat agent says so. It does not pretend the offline sandbox can do open-ended edits. The transcript names the meter: `Meter: LiteLLM`, `Meter: OpenAI-compatible`, `Meter: Grok Build`, or `Meter: none`.
+
+## LiteLLM
+
+LiteLLM is an OpenAI-compatible proxy you run or already have. It is the operator's meter. It is not a second orchestration system. OpenClaw still owns the session plan. Coding workers in this process send chat completions to the proxy.
+
+| Variable | Role |
+| --- | --- |
+| `LITELLM_API_KEY` | Key this process sends. Wins over `LITELLM_MASTER_KEY`. |
+| `LITELLM_MASTER_KEY` | Same job when `LITELLM_API_KEY` is unset. This is the proxy's usual master key. |
+| `LITELLM_BASE_URL` | Proxy URL. Defaults to `http://127.0.0.1:4000/v1` when a LiteLLM key is set. |
+| `LITELLM_MODEL` | Model alias. Then `OPENAI_MODEL`. Then `gpt-4o-mini`. |
+| `OPENAI_API_KEY` and `OPENAI_BASE_URL` | Used only when no LiteLLM key is set. OpenRouter fits here. |
+| `XAI_API_KEY` | Native Grok, only when the other meters are unset and `grok` is installed. |
+
+Remote proxy:
+
+```bash
+export LITELLM_API_KEY="the operator key"
+export LITELLM_BASE_URL="https://your-litellm.example/v1"
+export LITELLM_MODEL="your-alias"
+pnpm exec ocp chat --sandbox .sandbox
+```
+
+Local proxy, bound to localhost. The example config is [examples/litellm/config.yaml](examples/litellm/config.yaml). `OPENAI_API_KEY` here is the provider key the proxy reads, not the key this chat agent sends.
+
+```bash
+export LITELLM_MASTER_KEY="the proxy key"
+export OPENAI_API_KEY="the provider key"
+docker compose up -d litellm
+export LITELLM_API_KEY="$LITELLM_MASTER_KEY"
+pnpm exec ocp chat --sandbox .sandbox
+```
 
 When Laya is installed (`pnpm bundle:install`, or `OCP_LAYA_PYTHON`), the chat turn calls `integrations/laya/predict.py` and the transcript says `System-1: real Laya.` A machine that only has system Python is not treated as Laya. The transcript then says `System-1: fallback. Laya is not installed.`
 
@@ -134,14 +166,16 @@ docker compose up -d openclaw-gateway
 pnpm demo:connected
 ```
 
-Or point the coding meter at LiteLLM or OpenRouter:
+Or point the coding meter at LiteLLM:
 
 ```bash
-export OPENAI_API_KEY="the operator key"
-export OPENAI_BASE_URL="https://your-litellm-or-openrouter/v1"
+export LITELLM_API_KEY="the operator key"
+export LITELLM_BASE_URL="https://your-litellm.example/v1"
 ```
 
-If the gateway is down, the chat turn is skipped. If neither `XAI_API_KEY` nor the OpenAI pair is set, the Grok Build call is skipped. The offline demo still works without the bundle.
+`OPENAI_API_KEY` plus `OPENAI_BASE_URL` still works when no LiteLLM key is set. OpenRouter fits that pair.
+
+If the gateway is down, the chat turn is skipped. If no LiteLLM key, OpenAI pair, or `XAI_API_KEY` is set, the coding call is skipped. The offline demo still works without the bundle.
 
 The demo stands up a coding agent, a QA agent, a security agent, and a computer agent. The coding agent writes `PRODUCT.md` in the sandbox. The QA agent checks that file. The security agent blocks a path escape and a secret. The computer agent writes `gtm/action-plan.json`. Every computer action is marked not executed. No live browser ran.
 
@@ -152,6 +186,7 @@ The demo stands up a coding agent, a QA agent, a security agent, and a computer 
 | OpenClaw | MIT | OpenClaw Foundation — https://github.com/openclaw/openclaw |
 | Grok Build | Apache-2.0 | xAI (SpaceXAI) — https://github.com/xai-org/grok-build |
 | Laya | Apache-2.0 | Convai Innovations — https://pypi.org/project/laya/ and https://huggingface.co/convaiinnovations/laya |
+| LiteLLM | MIT | BerriAI — https://github.com/BerriAI/litellm |
 | OpenCodingPartner | Apache-2.0 | OpenCodingPartner contributors |
 
 Full wording is in [NOTICE](NOTICE) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

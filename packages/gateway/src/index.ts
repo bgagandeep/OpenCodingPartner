@@ -44,7 +44,7 @@ export interface ChatTurnInput {
   /** When set, the coding agent edits the sandbox through Grok Build or an OpenAI-compatible meter. */
   grokRunner?: InjectedRunner;
   /** Which meter the runner uses. Defaults to grok-build when a runner is set. */
-  codingVia?: "grok-build" | "openai-compatible";
+  codingVia?: "grok-build" | "openai-compatible" | "litellm";
   /** Real Laya route. When omitted, the turn uses the fallback router and says so. */
   layaPredict?: (message: string) => Promise<RouteDecision>;
   /** Ask the computer agent to open a named URL. Without a driver, actions stay executed: false. */
@@ -62,7 +62,7 @@ export interface ChatTurnResult {
   decision: RouteDecision;
   agents: StoodUpAgent[];
   security: GateDecision | null;
-  coding: { relativePath: string; wrote: boolean; via: "local-sandbox" | "grok-build" | "openai-compatible"; note?: string } | null;
+  coding: { relativePath: string; wrote: boolean; via: "local-sandbox" | "grok-build" | "openai-compatible" | "litellm"; note?: string } | null;
   plan: ManagerPlan;
   qa: QaResult | null;
   computer: GtmPlan | null;
@@ -111,7 +111,7 @@ function stepsFor(decision: RouteDecision): string[] {
   ];
 }
 
-function codingVia(input: ChatTurnInput): "local-sandbox" | "grok-build" | "openai-compatible" {
+function codingVia(input: ChatTurnInput): "local-sandbox" | "grok-build" | "openai-compatible" | "litellm" {
   if (!input.grokRunner) return "local-sandbox";
   return input.codingVia ?? "grok-build";
 }
@@ -220,7 +220,7 @@ async function executeTurn(input: ChatTurnInput, session: SwarmSession, key: str
         relativePath: "general edit",
         wrote: false,
         via: "local-sandbox",
-        note: "Coding agent did not edit files. General edits need XAI_API_KEY and Grok Build, or OPENAI_API_KEY and OPENAI_BASE_URL. A simple create-file message still runs on the local sandbox.",
+        note: "Coding agent did not edit files. General edits need LITELLM_API_KEY, or OPENAI_API_KEY and OPENAI_BASE_URL, or XAI_API_KEY and Grok Build. A simple create-file message still runs on the local sandbox.",
       };
     }
   }
@@ -332,6 +332,7 @@ export function formatTranscript(result: ChatTurnResult): string {
         : `Coding agent did not write ${result.coding.relativePath}`,
     );
     if (result.coding.note) lines.push(result.coding.note);
+    lines.push(meterLine(result.coding.via));
   }
   if (result.qa) {
     lines.push(`QA agent: ${result.qa.pass ? "pass" : "fail"} (${result.qa.summary})`);
@@ -350,6 +351,13 @@ export function formatTranscript(result: ChatTurnResult): string {
     }
   }
   return `${lines.join("\n")}\n`;
+}
+
+function meterLine(via: "local-sandbox" | "grok-build" | "openai-compatible" | "litellm"): string {
+  if (via === "litellm") return "Meter: LiteLLM";
+  if (via === "openai-compatible") return "Meter: OpenAI-compatible";
+  if (via === "grok-build") return "Meter: Grok Build";
+  return "Meter: none";
 }
 
 function labelFor(agent: StoodUpAgent): string {

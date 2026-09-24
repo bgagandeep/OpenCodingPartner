@@ -6,7 +6,8 @@ import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { routeWithPredict } from "@opencodingpartner/policy";
-import { runConnectedPath } from "./connected.js";
+import { runOnGrokBuild } from "@opencodingpartner/workers";
+import { LITELLM_LOCAL_BASE_URL, resolveCodingMeter, runConnectedPath } from "./connected.js";
 import { predictWithLaya } from "./laya.js";
 
 test("predict.py is selected when the Laya python is present", async () => {
@@ -27,6 +28,60 @@ test("predict.py is selected when the Laya python is present", async () => {
   }
 });
 
+test("LiteLLM env wins over OpenAI and XAI and does not print the key", async () => {
+  let seenUrl = "";
+  let seenAuth = "";
+  const meter = resolveCodingMeter(
+    { grokBin: "/tmp/grok" },
+    {
+      LITELLM_API_KEY: "litellm-secret",
+      LITELLM_MASTER_KEY: "master-should-lose",
+      OPENAI_API_KEY: "openai-secret",
+      OPENAI_BASE_URL: "https://api.openai.com/v1",
+      XAI_API_KEY: "xai-secret",
+    },
+    {
+      fetchImpl: async (url, init) => {
+        seenUrl = String(url);
+        seenAuth = String((init?.headers as Record<string, string> | undefined)?.authorization);
+        return new Response(JSON.stringify({ choices: [{ message: { content: '{"files":[{"path":"a.ts","content":"export const a = 1;\\n"}]}' } }] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      },
+    },
+  );
+  assert.equal(meter.via, "litellm");
+  assert.equal(meter.label, "LiteLLM");
+  assert.equal(meter.baseUrl, LITELLM_LOCAL_BASE_URL);
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-litellm-"));
+  try {
+    const result = await runOnGrokBuild(meter.runner!, "add a function", root);
+    assert.equal(result.exitCode, 0);
+    assert.equal(seenUrl, "http://127.0.0.1:4000/v1/chat/completions");
+    assert.equal(seenAuth, "Bearer litellm-secret");
+    assert.doesNotMatch(JSON.stringify(meter), /litellm-secret/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+
+  const master = resolveCodingMeter({}, { LITELLM_MASTER_KEY: "master-key", LITELLM_BASE_URL: "https://proxy.example/v1", LITELLM_MODEL: "ocp" });
+  assert.equal(master.via, "litellm");
+  assert.equal(master.baseUrl, "https://proxy.example/v1");
+  assert.equal(master.model, "ocp");
+
+  const openai = resolveCodingMeter({ grokBin: "/tmp/grok" }, { OPENAI_API_KEY: "sk", OPENAI_BASE_URL: "https://openrouter.ai/api/v1", XAI_API_KEY: "xai" });
+  assert.equal(openai.via, "openai-compatible");
+  assert.equal(openai.label, "OpenAI-compatible");
+
+  const grok = resolveCodingMeter({ grokBin: "/tmp/grok" }, { XAI_API_KEY: "xai" });
+  assert.equal(grok.via, "grok-build");
+  assert.equal(grok.label, "Grok Build");
+
+  const none = resolveCodingMeter({}, {});
+  assert.equal(none.runner, undefined);
+});
+
 test("gateway down and missing grok are both skipped", async () => {
   const report = await runConnectedPath({
     env: {},
@@ -39,7 +94,7 @@ test("gateway down and missing grok are both skipped", async () => {
   assert.equal(report.code, 0);
   assert.match(report.transcript, /OpenClaw gateway: skipped/);
   assert.match(report.transcript, /Chat turn: skipped/);
-  assert.match(report.transcript, /Coding\/QA on Grok Build: skipped \(grok binary not installed\)/);
+  assert.match(report.transcript, /Coding\/QA: skipped \(set XAI_API_KEY/);
 });
 
 test("a live gateway receives the chat turn and grok runs only with a key", async () => {

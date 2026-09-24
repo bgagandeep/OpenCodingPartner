@@ -1,6 +1,6 @@
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { deleteSandboxFile, renameSandboxFile, securityGate, writeSandboxFile } from "@opencodingpartner/workers";
+import { deleteSandboxFile, mkdirSandboxDir, renameSandboxFile, securityGate, writeSandboxFile } from "@opencodingpartner/workers";
 
 export interface BridgeWriteBody {
   relativePath?: unknown;
@@ -45,6 +45,17 @@ export async function applyBridgeDelete(sandboxRoot: string, body: BridgeDeleteB
     : { ok: false, detail: removed.detail };
 }
 
+/** Create one sandbox directory. This is the only place the bridge creates directories. */
+export async function applyBridgeMkdir(sandboxRoot: string, body: BridgeDeleteBody): Promise<BridgeWriteResult> {
+  if (typeof body.relativePath !== "string") {
+    return { ok: false, detail: "Mkdir bridge needs relativePath." };
+  }
+  const made = await mkdirSandboxDir(sandboxRoot, body.relativePath);
+  return made.ok
+    ? { ok: true, detail: "Mkdir bridge created the directory." }
+    : { ok: false, detail: made.detail };
+}
+
 /** Move one sandbox file. This is the only place the bridge renames. */
 export async function applyBridgeRename(sandboxRoot: string, body: BridgeRenameBody): Promise<BridgeWriteResult> {
   if (typeof body.from !== "string" || typeof body.to !== "string") {
@@ -59,7 +70,7 @@ export async function applyBridgeRename(sandboxRoot: string, body: BridgeRenameB
 /** Local tool host. OpenClaw invokes it. The server binds loopback only. */
 export async function startSandboxWriteBridge(sandboxRoot: string): Promise<{ url: string; close: () => Promise<void> }> {
   const server: Server = createServer(async (req, res) => {
-    if (req.method !== "POST" || (req.url !== "/write" && req.url !== "/delete" && req.url !== "/rename")) {
+    if (req.method !== "POST" || (req.url !== "/write" && req.url !== "/delete" && req.url !== "/rename" && req.url !== "/mkdir")) {
       res.writeHead(404, { "content-type": "application/json" });
       res.end('{"ok":false}');
       return;
@@ -77,7 +88,9 @@ export async function startSandboxWriteBridge(sandboxRoot: string): Promise<{ ur
         ? await applyBridgeDelete(sandboxRoot, body)
         : req.url === "/rename"
           ? await applyBridgeRename(sandboxRoot, body)
-          : await applyBridgeWrite(sandboxRoot, body);
+          : req.url === "/mkdir"
+            ? await applyBridgeMkdir(sandboxRoot, body)
+            : await applyBridgeWrite(sandboxRoot, body);
     res.writeHead(result.ok ? 200 : 403, { "content-type": "application/json" });
     res.end(JSON.stringify(result));
   });

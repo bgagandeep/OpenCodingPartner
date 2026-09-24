@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, unlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { StoodUpAgent, SwarmSession } from "@opencodingpartner/mesh";
@@ -80,6 +80,8 @@ export interface ChatTurnInput {
   openclawDelete?: (relativePath: string) => Promise<{ ok: boolean; missing: boolean; detail: string }>;
   /** Gateway rename tool. `missing` means the plugin is absent and a local rename is allowed. */
   openclawRename?: (fromPath: string, toPath: string) => Promise<{ ok: boolean; missing: boolean; detail: string }>;
+  /** Gateway mkdir tool. `missing` means the plugin is absent and a local mkdir is allowed. */
+  openclawMkdir?: (relativePath: string) => Promise<{ ok: boolean; missing: boolean; detail: string }>;
   /** Bounded check runner. Tests inject this. The default does not use a shell. */
   checkExec?: (argv: readonly string[], cwd: string) => Promise<{ code: number; stdout: string; stderr: string }>;
 }
@@ -221,7 +223,7 @@ async function executeTurn(input: ChatTurnInput, session: SwarmSession, key: str
     security = messageGate;
     if (!messageGate.allow) {
       coding = { relativePath: "the request", wrote: false, via };
-    } else if (input.grokRunner && openclawDrove && (input.openclawWrite || input.openclawDelete || input.openclawRename)) {
+    } else if (input.grokRunner && openclawDrove && (input.openclawWrite || input.openclawDelete || input.openclawRename || input.openclawMkdir)) {
       const runner = input.grokRunner;
       const write = input.openclawWrite;
       const stage = await mkdtemp(path.join(tmpdir(), "ocp-stage-"));
@@ -696,7 +698,8 @@ async function applyToolReply(
   let deletedRemote = false;
   let renamedLocal = false;
   let renamedRemote = false;
-  let madeDir = false;
+  let madeDirLocal = false;
+  let madeDirRemote = false;
   let removedDir = false;
   let todoBlock = "";
   let nextStdout = stdout;
@@ -785,11 +788,14 @@ async function applyToolReply(
         log.push(line);
         observations.push(line);
       } else if (step.tool === "mkdir" && step.path) {
-        const made = await mkdirSandboxDir(input.sandboxRoot, step.path);
+        const made = await mkdirThroughTurn(input, openclawDrove, step.path);
         const line = made.ok ? `Tool: mkdir ${step.path}` : `Tool: mkdir ${step.path} (${made.detail})`;
         log.push(line);
         observations.push(line);
-        if (made.ok) madeDir = true;
+        if (made.ok) {
+          if (made.via === "openclaw") madeDirRemote = true;
+          else madeDirLocal = true;
+        }
       } else if (step.tool === "rmdir" && step.path) {
         const removed = await rmdirSandboxDir(input.sandboxRoot, step.path);
         const line = removed.ok ? `Tool: rmdir ${step.path}` : `Tool: rmdir ${step.path} (${removed.detail})`;
@@ -853,7 +859,8 @@ async function applyToolReply(
     deletedLocal ? "Delete path: local sandbox." : "",
     renamedRemote ? "Rename path: OpenClaw-driven." : "",
     renamedLocal ? "Rename path: local sandbox." : "",
-    madeDir ? "Mkdir path: local sandbox." : "",
+    madeDirRemote ? "Mkdir path: OpenClaw-driven." : "",
+    madeDirLocal ? "Mkdir path: local sandbox." : "",
     removedDir ? "Rmdir path: local sandbox." : "",
     todoBlock,
     blocked.length > 0 ? `Security agent removed ${blocked.join(", ")} after the edit.` : "",
@@ -985,6 +992,33 @@ async function codingPrompt(sandboxRoot: string, message: string): Promise<strin
   const filesNote = message.startsWith("Tool observations:") || blocks.length === 0 ? "" : `Sandbox files already on disk:\n${blocks.join("\n")}\n`;
   const history = await priorTurns(sandboxRoot);
   return `${history}${filesNote}User request:\n${message}\nReply with JSON only: {"steps":[{"tool":"list"|"read"|"grep"|"glob"|"run"|"write"|"patch"|"delete"|"rename"|"mkdir"|"rmdir"|"todo","action":"add or complete","to":"relative destination","query":"text or /regex/","path":"relative","content":"full text for write, or todo text, or a 1-based todo index","diff":"unified diff for patch","argv":["node","--test","relative.test.ts"]}],"done":false}. One reply is one round. After you see Tool observations, send the next round. Set "done" to true when finished. List or read before you edit. Patch a file that already exists. Write only a new file. A todo step uses action add with the task text, or action complete with a 1-based index or id. At most 12 todos. Allowed commands are node --test plus relative paths, pnpm test with no extra arguments, tsc --noEmit plus relative paths, git status, git status -sb, git status --short --branch, git diff plus relative paths, and git log --oneline -n N with N from 1 to 20.`;
+}
+
+async function mkdirThroughTurn(
+  input: ChatTurnInput,
+  openclawDrove: boolean,
+  relativePath: string,
+): Promise<{ ok: boolean; via: "openclaw" | "local"; detail: string }> {
+  if (openclawDrove && input.openclawMkdir) {
+    const remote = await input.openclawMkdir(relativePath);
+    if (remote.ok && (await dirExists(input.sandboxRoot, relativePath))) {
+      return { ok: true, via: "openclaw", detail: remote.detail };
+    }
+    if (remote.ok || !remote.missing) {
+      return { ok: false, via: "openclaw", detail: remote.ok ? "OpenClaw mkdir did not create the directory." : remote.detail };
+    }
+  }
+  const local = await mkdirSandboxDir(input.sandboxRoot, relativePath);
+  return { ok: local.ok, via: "local", detail: local.detail };
+}
+
+async function dirExists(sandboxRoot: string, relativePath: string): Promise<boolean> {
+  try {
+    const info = await stat(path.join(sandboxRoot, relativePath));
+    return info.isDirectory();
+  } catch {
+    return false;
+  }
 }
 
 async function deleteThroughTurn(

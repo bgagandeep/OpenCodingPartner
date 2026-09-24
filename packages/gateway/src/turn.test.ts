@@ -1023,6 +1023,97 @@ test("a missing OpenClaw delete plugin falls back to the local sandbox", async (
   }
 });
 
+test("an OpenClaw-driven turn creates a directory through the bridge", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-remote-mkdir-"));
+  try {
+    const calls: string[] = [];
+    const turn = await runChatTurn({
+      message: "add a helper folder",
+      sandboxRoot: root,
+      orchestration: async () => ({
+        state: "ran",
+        driver: "openclaw",
+        detail: "Session agent:board:main accepted the plan.",
+      }),
+      grokRunner: {
+        async run() {
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify({ done: true, steps: [{ tool: "mkdir", path: "src/lib" }] }),
+          };
+        },
+      },
+      openclawMkdir: async (relativePath) => {
+        calls.push(relativePath);
+        const { mkdir } = await import("node:fs/promises");
+        await mkdir(path.join(root, relativePath), { recursive: true });
+        return { ok: true, missing: false, detail: "bridge" };
+      },
+    });
+    assert.deepEqual(calls, ["src/lib"]);
+    assert.match(turn.transcript, /Mkdir path: OpenClaw-driven/);
+    assert.doesNotMatch(turn.transcript, /Mkdir path: local sandbox/);
+    const { stat } = await import("node:fs/promises");
+    assert.equal((await stat(path.join(root, "src/lib"))).isDirectory(), true);
+
+    const blocked = await mkdtemp(path.join(tmpdir(), "ocp-mkdir-refuse-"));
+    const refused = await runChatTurn({
+      message: "add a helper folder",
+      sandboxRoot: blocked,
+      orchestration: async () => ({
+        state: "ran",
+        driver: "openclaw",
+        detail: "Session agent:board:main accepted the plan.",
+      }),
+      grokRunner: {
+        async run() {
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify({ done: true, steps: [{ tool: "mkdir", path: "src/kept" }] }),
+          };
+        },
+      },
+      openclawMkdir: async () => ({ ok: false, missing: false, detail: "blocked (path escape)" }),
+    });
+    assert.doesNotMatch(refused.transcript, /Mkdir path: local sandbox/);
+    assert.doesNotMatch(refused.transcript, /Mkdir path: OpenClaw-driven/);
+    await assert.rejects(stat(path.join(blocked, "src/kept")));
+    await rm(blocked, { recursive: true, force: true });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a missing OpenClaw mkdir plugin falls back to the local sandbox", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-mkdir-fallback-"));
+  try {
+    const turn = await runChatTurn({
+      message: "add a helper folder",
+      sandboxRoot: root,
+      orchestration: async () => ({
+        state: "ran",
+        driver: "openclaw",
+        detail: "Session agent:board:main accepted the plan.",
+      }),
+      grokRunner: {
+        async run() {
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify({ done: true, steps: [{ tool: "mkdir", path: "src/lib" }] }),
+          };
+        },
+      },
+      openclawMkdir: async () => ({ ok: false, missing: true, detail: "plugin missing" }),
+    });
+    assert.match(turn.transcript, /Mkdir path: local sandbox/);
+    assert.doesNotMatch(turn.transcript, /Mkdir path: OpenClaw-driven/);
+    const { stat } = await import("node:fs/promises");
+    assert.equal((await stat(path.join(root, "src/lib"))).isDirectory(), true);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("a coding turn creates a directory and then writes a file in it", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "ocp-mkdir-turn-"));
   try {

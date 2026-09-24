@@ -657,6 +657,66 @@ test("a failed page claim is checked again and stops when the budget is used", a
   }
 });
 
+test("a coding turn reads a file, patches it, and retries a failed check", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-tools-"));
+  try {
+    await writeSandboxFile(root, "src/math.ts", "export function add(left: number, right: number): number {\n  return left - right;\n}\n");
+    let calls = 0;
+    let checks = 0;
+    const turn = await runChatTurn({
+      message: "fix add and run node --test src/math.test.ts",
+      sandboxRoot: root,
+      checkExec: async (argv) => {
+        checks += 1;
+        assert.deepEqual(argv, ["node", "--test", "src/math.test.ts"]);
+        return checks === 1
+          ? { code: 1, stdout: "", stderr: "expected 5" }
+          : { code: 0, stdout: "pass", stderr: "" };
+      },
+      grokRunner: {
+        async run() {
+          calls += 1;
+          if (calls === 1) {
+            return {
+              exitCode: 0,
+              stdout: JSON.stringify({
+                steps: [
+                  { tool: "read", path: "src/math.ts" },
+                  { tool: "run", argv: ["node", "--test", "src/math.test.ts"] },
+                ],
+              }),
+            };
+          }
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify({
+              steps: [
+                {
+                  tool: "patch",
+                  path: "src/math.ts",
+                  diff: "--- a/src/math.ts\n+++ b/src/math.ts\n@@ -1,3 +1,3 @@\n export function add(left: number, right: number): number {\n-  return left - right;\n+  return left + right;\n }\n",
+                },
+                { tool: "run", argv: ["node", "--test", "src/math.test.ts"] },
+              ],
+            }),
+          };
+        },
+      },
+    });
+    assert.equal(calls, 2);
+    assert.equal(checks, 2);
+    assert.equal(turn.qa?.pass, true);
+    assert.match(turn.transcript, /Tool: read src\/math.ts/);
+    assert.match(turn.transcript, /Tool: patch src\/math.ts/);
+    assert.match(turn.transcript, /Tool: run node --test src\/math.test.ts \(exit 1\)/);
+    assert.match(turn.transcript, /exit 0/);
+    assert.match(turn.transcript, /fix loop passed on retry 1/);
+    assert.match(await readFile(path.join(root, "src/math.ts"), "utf8"), /return left \+ right/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("a follow-up turn sees the files from the previous turn", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "ocp-multi-"));
   try {

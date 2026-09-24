@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -6,6 +7,11 @@ import { boardSession } from "@opencodingpartner/mesh";
 import { routeMessage, type ManagerPlan, type RouteDecision } from "@opencodingpartner/policy";
 import { OrchestrationSwarm } from "@opencodingpartner/swarm";
 import {
+  applyUnifiedDiff,
+  commandDecision,
+  listSandboxDir,
+  parseCodingReply,
+  readSandboxText,
   parseCreateFileInstruction,
   executeComputerVisit,
   planGtmActions,
@@ -62,6 +68,8 @@ export interface ChatTurnInput {
   computerAllowHosts?: readonly string[];
   /** Gateway `write` tool. Set when the product talks to OpenClaw. This process does not write the bytes. */
   openclawWrite?: (relativePath: string, content: string) => Promise<{ ok: boolean; detail: string }>;
+  /** Bounded `node --test` runner. Tests inject this. The default does not use a shell. */
+  checkExec?: (argv: readonly string[], cwd: string) => Promise<{ code: number; stdout: string; stderr: string }>;
 }
 
 export interface ChatTurnResult {
@@ -252,7 +260,19 @@ async function executeTurn(input: ChatTurnInput, session: SwarmSession, key: str
       const before = await snapshotSandbox(input.sandboxRoot);
       const aware = await codingPrompt(input.sandboxRoot, input.message);
       const grok = await swarm.dispatch("coding", () => runOnGrokBuild(runner, aware, input.sandboxRoot));
-      const after = await snapshotSandbox(input.sandboxRoot);
+      const toolReply = await applyToolReply(input, grok.stdout, false, via);
+      if (toolReply) {
+        coding = toolReply.coding;
+        security = toolReply.security ?? security;
+        if (agents.some((agent) => agent.role === "qa")) {
+          qa = toolReply.qa;
+          const retried = await retryFileFix({ input, swarm, openclawDrove: false, qa, coding, security });
+          qa = retried.qa;
+          coding = retried.coding;
+          security = retried.security;
+        }
+      }
+      const after = toolReply ? new Map<string, string>() : await snapshotSandbox(input.sandboxRoot);
       const changed = changedSandboxFiles(before, after);
       const kept: string[] = [];
       const blocked: string[] = [];
@@ -266,6 +286,7 @@ async function executeTurn(input: ChatTurnInput, session: SwarmSession, key: str
           security = { allow: false, reasons: gate.reasons };
         }
       }
+      if (!toolReply) {
       coding = {
         relativePath: kept.length > 0 ? kept.join(", ") : "no files",
         wrote: grok.exitCode === 0 && kept.length > 0,
@@ -286,7 +307,8 @@ async function executeTurn(input: ChatTurnInput, session: SwarmSession, key: str
         coding = retried.coding;
         security = retried.security;
       }
-      if (blocked.length > 0 && coding && !coding.note) {
+      }
+      if (!toolReply && blocked.length > 0 && coding && !coding.note) {
         coding.note = `Security agent removed ${blocked.join(", ")} after the edit.`;
       }
     } else {
@@ -490,7 +512,8 @@ async function retryFileFix(args: {
   security: GateDecision | null;
 }): Promise<{ qa: QaResult | null; coding: ChatTurnResult["coding"]; security: GateDecision | null }> {
   const expected = fileExpectations(args.input.message);
-  if (!args.qa || args.qa.pass || expected.length === 0 || !args.input.grokRunner) return args;
+  const checkFailed = args.qa?.summary.startsWith("check failed") === true;
+  if (!args.qa || args.qa.pass || (expected.length === 0 && !checkFailed) || !args.input.grokRunner) return args;
   let qa = args.qa;
   let coding = args.coding;
   let security = args.security;
@@ -499,7 +522,9 @@ async function retryFileFix(args: {
     retries += 1;
     const prompt = `QA failed: ${qa.summary}\nApply a fix for the original request.\n${args.input.message}`;
     const pass = await applyCodingPass(args.input, args.swarm, prompt, args.openclawDrove);
-    coding = pass.coding;
+    coding = pass.coding
+      ? { ...pass.coding, note: [coding?.note, pass.coding.note].filter((line) => line).join("\n") }
+      : pass.coding;
     security = pass.security ?? security;
     qa = pass.qa ?? qa;
   }
@@ -553,6 +578,8 @@ async function applyCodingPass(
   const before = await snapshotSandbox(input.sandboxRoot);
   const aware = await codingPrompt(input.sandboxRoot, prompt);
   const grok = await swarm.dispatch("coding", () => runOnGrokBuild(runner, aware, input.sandboxRoot));
+  const toolReply = await applyToolReply(input, grok.stdout, openclawDrove, openclawDrove ? "openclaw-write" : codingVia(input));
+  if (toolReply) return toolReply;
   const after = await snapshotSandbox(input.sandboxRoot);
   const changed = changedSandboxFiles(before, after);
   const kept: string[] = [];
@@ -605,6 +632,113 @@ function meterLine(via: CodingVia): string {
   if (via === "openai-compatible") return "Meter: OpenAI-compatible";
   if (via === "grok-build") return "Meter: Grok Build";
   return "Meter: none";
+}
+
+async function applyToolReply(
+  input: ChatTurnInput,
+  stdout: string,
+  openclawDrove: boolean,
+  via: CodingVia,
+): Promise<{ coding: ChatTurnResult["coding"]; qa: QaResult | null; security: GateDecision | null } | null> {
+  const reply = parseCodingReply(stdout);
+  if (!reply) return null;
+  const log: string[] = [];
+  const kept: string[] = [];
+  const blocked: string[] = [];
+  let security: GateDecision | null = null;
+  let check: { code: number; stdout: string; stderr: string } | null = null;
+  for (const step of reply.steps) {
+    if (step.tool === "list") {
+      const listed = await listSandboxDir(input.sandboxRoot, step.path ?? ".");
+      log.push(`Tool: list ${step.path || "."} (${listed.detail})`);
+    } else if (step.tool === "read" && step.path) {
+      const read = await readSandboxText(input.sandboxRoot, step.path);
+      log.push(`Tool: read ${step.path} (${read.ok ? "ok" : read.detail})`);
+    } else if (step.tool === "run") {
+      const decision = commandDecision(step.argv ?? []);
+      if (!decision.allow) {
+        log.push(`Tool: run refused (${decision.reason})`);
+        check = { code: 1, stdout: "", stderr: decision.reason };
+        continue;
+      }
+      const result = await (input.checkExec ?? defaultCheckExec)(step.argv ?? [], input.sandboxRoot);
+      check = result;
+      log.push(`Tool: run ${(step.argv ?? []).join(" ")} (exit ${result.code})`);
+    } else if ((step.tool === "write" || step.tool === "patch") && step.path) {
+      let content = step.content ?? "";
+      if (step.tool === "patch") {
+        const current = await readSandboxText(input.sandboxRoot, step.path);
+        const next = current.ok ? applyUnifiedDiff(current.detail, step.diff ?? "") : null;
+        if (!current.ok || next === null) {
+          log.push(`Tool: patch ${step.path} (did not apply)`);
+          continue;
+        }
+        content = next;
+      }
+      const gate = securityGate({ relativePath: step.path, content, sandboxRoot: input.sandboxRoot });
+      if (!gate.allow) {
+        blocked.push(step.path);
+        security = { allow: false, reasons: gate.reasons };
+        log.push(`Tool: ${step.tool} ${step.path} (blocked)`);
+        continue;
+      }
+      if (openclawDrove && input.openclawWrite) {
+        const landed = await input.openclawWrite(step.path, content);
+        const onDisk = landed.ok && (await fileMatches(input.sandboxRoot, step.path, content));
+        if (!onDisk) {
+          log.push(`Tool: ${step.tool} ${step.path} (OpenClaw write did not land)`);
+          continue;
+        }
+      } else {
+        await writeSandboxFile(input.sandboxRoot, step.path, content);
+      }
+      kept.push(step.path);
+      log.push(`Tool: ${step.tool} ${step.path}`);
+    }
+  }
+  let qa = await reviewChangedFiles(input.sandboxRoot, kept, kept.length > 0 || check?.code === 0);
+  qa = (await addFileExpectations(qa, input.message, input.sandboxRoot, kept, blocked)) ?? qa;
+  if (check && check.code !== 0) {
+    const detail = (check.stderr || check.stdout || "no output").slice(0, 500);
+    qa = { pass: false, summary: `check failed (exit ${check.code}): ${detail}` };
+  }
+  const note = [
+    ...log,
+    openclawDrove ? "Write path: OpenClaw-driven. The gateway invoked the sandbox write bridge." : "Write path: local sandbox.",
+    blocked.length > 0 ? `Security agent removed ${blocked.join(", ")} after the edit.` : "",
+  ].filter((line) => line.length > 0).join("\n");
+  return {
+    coding: { relativePath: kept.length > 0 ? kept.join(", ") : "no files", wrote: kept.length > 0, via, note },
+    qa,
+    security,
+  };
+}
+
+function defaultCheckExec(argv: readonly string[], cwd: string): Promise<{ code: number; stdout: string; stderr: string }> {
+  return new Promise((resolve) => {
+    const child = spawn(argv[0] ?? "node", argv.slice(1), { cwd, shell: false, stdio: ["ignore", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+    const timer = setTimeout(() => {
+      child.kill();
+    }, 15000);
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => {
+      stdout += chunk;
+    });
+    child.stderr.on("data", (chunk: string) => {
+      stderr += chunk;
+    });
+    child.on("error", (error) => {
+      clearTimeout(timer);
+      resolve({ code: 127, stdout, stderr: error.message });
+    });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      resolve({ code: code ?? 1, stdout, stderr });
+    });
+  });
 }
 
 /** Put existing sandbox files in the meter prompt. Secret files stay out. */

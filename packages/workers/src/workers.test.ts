@@ -3,12 +3,26 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { applyUnifiedDiff, commandDecision, parseCodingReply } from "./agent-tools.js";
 import { parseCreateFileInstruction, writeSandboxFile } from "./coding.js";
 import { computerChain, executeComputerVisit, pageClaim, planGtmActions, selectorDecision, urlDecision } from "./computer.js";
 import { grokBuildArgv, runOnGrokBuild } from "./grok.js";
 import { openAiCompatibleRunner, parseFileEdits } from "./openai.js";
 import { fileExpectations, qaCheckFile, reviewComputerClaim, reviewFileExpectations } from "./qa.js";
 import { securityGate } from "./security.js";
+
+test("node --test is allowed and a unified diff edits one line", () => {
+  assert.equal(commandDecision(["node", "--test", "src/math.test.ts"]).allow, true);
+  assert.equal(commandDecision(["bash", "-c", "rm -rf /"]).allow, false);
+  assert.equal(commandDecision(["node", "-e", "process.exit(1)"]).allow, false);
+  assert.equal(commandDecision(["node", "--test", "../secret"]).allow, false);
+  const next = applyUnifiedDiff(
+    "export function add(left: number, right: number): number {\n  return left - right;\n}\n",
+    "--- a/src/math.ts\n+++ b/src/math.ts\n@@ -1,3 +1,3 @@\n export function add(left: number, right: number): number {\n-  return left - right;\n+  return left + right;\n }\n",
+  );
+  assert.match(next ?? "", /return left \+ right/);
+  assert.equal(parseCodingReply('{"steps":[{"tool":"read","path":"src/math.ts"}]}')?.steps[0]?.tool, "read");
+});
 
 test("create-file parse keeps the trailing newline and rejects an unknown tool", () => {
   const parsed = parseCreateFileInstruction(

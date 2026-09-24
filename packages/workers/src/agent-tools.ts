@@ -3,7 +3,7 @@ import path from "node:path";
 import { securityGate } from "./security.js";
 
 export interface ToolStep {
-  tool: "list" | "read" | "grep" | "run" | "write" | "patch" | "delete" | "rename";
+  tool: "list" | "read" | "grep" | "glob" | "run" | "write" | "patch" | "delete" | "rename";
   path?: string;
   to?: string;
   query?: string;
@@ -42,7 +42,7 @@ export function parseCodingReply(stdout: string): CodingReply | null {
     for (const item of parsed.steps) {
       if (!item || typeof item !== "object") return null;
       const record = item as { tool?: unknown; path?: unknown; to?: unknown; query?: unknown; content?: unknown; diff?: unknown; argv?: unknown };
-      if (record.tool !== "list" && record.tool !== "read" && record.tool !== "grep" && record.tool !== "run" && record.tool !== "write" && record.tool !== "patch" && record.tool !== "delete" && record.tool !== "rename") {
+      if (record.tool !== "list" && record.tool !== "read" && record.tool !== "grep" && record.tool !== "glob" && record.tool !== "run" && record.tool !== "write" && record.tool !== "patch" && record.tool !== "delete" && record.tool !== "rename") {
         return null;
       }
       const step: ToolStep = { tool: record.tool };
@@ -203,6 +203,62 @@ export async function grepSandbox(
   };
   await walk(start);
   return { ok: true, detail: hits.length > 0 ? hits.join("\n") : "(no matches)" };
+}
+
+const GLOB_CAP = 40;
+
+/** Relative glob. `*` stays in one segment. `**` crosses directories. No shell. */
+export async function globSandbox(sandboxRoot: string, pattern: string): Promise<{ ok: boolean; detail: string }> {
+  const matcher = globMatcher(pattern);
+  if (!matcher) return { ok: false, detail: "pattern is not a relative glob" };
+  const root = path.resolve(sandboxRoot);
+  const hits: string[] = [];
+  const walk = async (dir: string): Promise<void> => {
+    if (hits.length >= GLOB_CAP) return;
+    let names;
+    try {
+      names = await readdir(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const name of names) {
+      if (hits.length >= GLOB_CAP) return;
+      const abs = path.join(dir, name.name);
+      const rel = path.relative(root, abs).split(path.sep).join("/");
+      if (rel === "gtm" || rel.startsWith("gtm/") || rel === ".ocp" || rel.startsWith(".ocp/")) continue;
+      if (name.isDirectory()) {
+        await walk(abs);
+        continue;
+      }
+      if (!name.isFile()) continue;
+      if (matcher.test(rel)) hits.push(rel);
+    }
+  };
+  await walk(root);
+  return { ok: true, detail: hits.length > 0 ? hits.join("\n") : "(no matches)" };
+}
+
+function globMatcher(pattern: string): RegExp | null {
+  if (!pattern || pattern.length > 120 || pattern.startsWith("/") || pattern.includes("..")) return null;
+  if (/[\n\r\0;&|`$><\\]/.test(pattern)) return null;
+  let source = "^";
+  for (let index = 0; index < pattern.length; index += 1) {
+    const char = pattern[index] ?? "";
+    if (char === "*" && pattern[index + 1] === "*") {
+      if (pattern[index + 2] === "/") {
+        source += "(?:.*/)?";
+        index += 2;
+      } else {
+        source += ".*";
+        index += 1;
+      }
+      continue;
+    }
+    if (char === "*") source += "[^/]*";
+    else if (char === "?") source += "[^/]";
+    else source += char.replace(/[.+^${}()|[\]\\]/g, "\\$&");
+  }
+  return new RegExp(`${source}$`);
 }
 
 /** Unlink one file inside the sandbox. Directories and gtm/ evidence stay. */

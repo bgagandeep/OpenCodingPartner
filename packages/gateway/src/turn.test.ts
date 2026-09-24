@@ -819,6 +819,46 @@ test("a coding turn writes a file and then renames it", async () => {
   }
 });
 
+test("a coding turn globs a pattern and patches only the hit file", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-glob-turn-"));
+  try {
+    await writeSandboxFile(root, "src/math.ts", "export function add(left: number, right: number): number {\n  return left - right;\n}\n");
+    await writeSandboxFile(root, "src/other.js", "export const other = 1;\n");
+    const turn = await runChatTurn({
+      message: "fix add",
+      sandboxRoot: root,
+      grokRunner: {
+        async run(argv) {
+          const prompt = argv[argv.indexOf("-p") + 1] ?? "";
+          if (!prompt.includes("Tool observations:\n")) {
+            return { exitCode: 0, stdout: JSON.stringify({ steps: [{ tool: "glob", query: "src/**/*.ts" }] }) };
+          }
+          assert.match(prompt, /src\/math.ts/);
+          assert.doesNotMatch(prompt, /other.js/);
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify({
+              done: true,
+              steps: [
+                {
+                  tool: "patch",
+                  path: "src/math.ts",
+                  diff: "--- a/src/math.ts\n+++ b/src/math.ts\n@@ -1,3 +1,3 @@\n export function add(left: number, right: number): number {\n-  return left - right;\n+  return left + right;\n }\n",
+                },
+              ],
+            }),
+          };
+        },
+      },
+    });
+    assert.match(turn.transcript, /Tool: glob src\/\*\*\/\*\.ts/);
+    assert.match(await readFile(path.join(root, "src/math.ts"), "utf8"), /return left \+ right/);
+    assert.match(await readFile(path.join(root, "src/other.js"), "utf8"), /other/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("a coding turn greps for a symbol and patches only the hit file", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "ocp-grep-turn-"));
   try {

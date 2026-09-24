@@ -202,7 +202,8 @@ async function executeTurn(input: ChatTurnInput, session: SwarmSession, key: str
       const write = input.openclawWrite;
       const stage = await mkdtemp(path.join(tmpdir(), "ocp-stage-"));
       try {
-        const grok = await swarm.dispatch("coding", () => runOnGrokBuild(runner, input.message, stage));
+        const aware = await codingPrompt(input.sandboxRoot, input.message);
+        const grok = await swarm.dispatch("coding", () => runOnGrokBuild(runner, aware, stage));
         const staged = await snapshotSandbox(stage);
         const kept: string[] = [];
         const blocked: string[] = [];
@@ -249,7 +250,8 @@ async function executeTurn(input: ChatTurnInput, session: SwarmSession, key: str
     } else if (input.grokRunner) {
       const runner = input.grokRunner;
       const before = await snapshotSandbox(input.sandboxRoot);
-      const grok = await swarm.dispatch("coding", () => runOnGrokBuild(runner, input.message, input.sandboxRoot));
+      const aware = await codingPrompt(input.sandboxRoot, input.message);
+      const grok = await swarm.dispatch("coding", () => runOnGrokBuild(runner, aware, input.sandboxRoot));
       const after = await snapshotSandbox(input.sandboxRoot);
       const changed = changedSandboxFiles(before, after);
       const kept: string[] = [];
@@ -516,7 +518,8 @@ async function applyCodingPass(
     const write = input.openclawWrite;
     const stage = await mkdtemp(path.join(tmpdir(), "ocp-fix-"));
     try {
-      const grok = await swarm.dispatch("coding", () => runOnGrokBuild(runner, prompt, stage));
+      const aware = await codingPrompt(input.sandboxRoot, prompt);
+      const grok = await swarm.dispatch("coding", () => runOnGrokBuild(runner, aware, stage));
       const staged = await snapshotSandbox(stage);
       const kept: string[] = [];
       const blocked: string[] = [];
@@ -548,7 +551,8 @@ async function applyCodingPass(
     }
   }
   const before = await snapshotSandbox(input.sandboxRoot);
-  const grok = await swarm.dispatch("coding", () => runOnGrokBuild(runner, prompt, input.sandboxRoot));
+  const aware = await codingPrompt(input.sandboxRoot, prompt);
+  const grok = await swarm.dispatch("coding", () => runOnGrokBuild(runner, aware, input.sandboxRoot));
   const after = await snapshotSandbox(input.sandboxRoot);
   const changed = changedSandboxFiles(before, after);
   const kept: string[] = [];
@@ -601,6 +605,26 @@ function meterLine(via: CodingVia): string {
   if (via === "openai-compatible") return "Meter: OpenAI-compatible";
   if (via === "grok-build") return "Meter: Grok Build";
   return "Meter: none";
+}
+
+/** Put existing sandbox files in the meter prompt. Secret files stay out. */
+async function codingPrompt(sandboxRoot: string, message: string): Promise<string> {
+  const files = await snapshotSandbox(sandboxRoot);
+  const blocks: string[] = [];
+  let used = 0;
+  for (const relativePath of [...files.keys()].sort()) {
+    if (relativePath.startsWith("gtm/") || relativePath.startsWith(`gtm${path.sep}`)) continue;
+    const content = files.get(relativePath) ?? "";
+    if (content.includes("\0")) continue;
+    const gate = securityGate({ relativePath, content, sandboxRoot });
+    if (!gate.allow) continue;
+    const block = `File ${relativePath}:\n${content}`;
+    if (used + block.length > 12000) break;
+    blocks.push(block);
+    used += block.length;
+  }
+  if (blocks.length === 0) return message;
+  return `Sandbox files already on disk:\n${blocks.join("\n")}\nUser request:\n${message}`;
 }
 
 async function fileMatches(sandboxRoot: string, relativePath: string, content: string): Promise<boolean> {

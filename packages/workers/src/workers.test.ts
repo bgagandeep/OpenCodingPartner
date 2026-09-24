@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { applyUnifiedDiff, commandDecision, grepSandbox, parseCodingReply } from "./agent-tools.js";
+import { applyUnifiedDiff, commandDecision, deleteSandboxFile, grepSandbox, parseCodingReply } from "./agent-tools.js";
 import { parseCreateFileInstruction, writeSandboxFile } from "./coding.js";
 import { computerChain, executeComputerVisit, pageClaim, planGtmActions, selectorDecision, urlDecision } from "./computer.js";
 import { grokBuildArgv, runOnGrokBuild } from "./grok.js";
@@ -41,6 +41,30 @@ test("grep finds a symbol and skips secrets and gtm", async () => {
   assert.doesNotMatch(found.detail, /gtm/);
   assert.doesNotMatch(found.detail, /hunter2/);
   assert.doesNotMatch(found.detail, /secret.ts/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("delete removes one file and refuses escape, secrets, and gtm", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-delete-"));
+  try {
+    await mkdir(path.join(root, "src"), { recursive: true });
+    await mkdir(path.join(root, "gtm"), { recursive: true });
+    await writeFile(path.join(root, "src/old.ts"), "export const old = 1;\n");
+    await writeFile(path.join(root, "src/secret.ts"), "password=hunter2\n");
+    await writeFile(path.join(root, "gtm/last-run.json"), "{}\n");
+    assert.equal((await deleteSandboxFile(root, "src/old.ts")).ok, true);
+    await assert.rejects(readFile(path.join(root, "src/old.ts"), "utf8"));
+    const escaped = await deleteSandboxFile(root, "../secret.txt");
+    assert.equal(escaped.ok, false);
+    const secret = await deleteSandboxFile(root, "src/secret.ts");
+    assert.equal(secret.ok, false);
+    assert.match(secret.detail, /blocked/);
+    assert.match(await readFile(path.join(root, "src/secret.ts"), "utf8"), /hunter2/);
+    const evidence = await deleteSandboxFile(root, "gtm/last-run.json");
+    assert.equal(evidence.ok, false);
+    assert.match(await readFile(path.join(root, "gtm/last-run.json"), "utf8"), /\{\}/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

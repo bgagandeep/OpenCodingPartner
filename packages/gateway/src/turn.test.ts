@@ -720,6 +720,39 @@ test("a coding turn reads a file, patches it, and retries a failed check", async
   }
 });
 
+test("a coding turn writes a file and then deletes it", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-delete-turn-"));
+  try {
+    const turn = await runChatTurn({
+      message: "refactor and remove the old helper",
+      sandboxRoot: root,
+      grokRunner: {
+        async run(argv) {
+          const prompt = argv[argv.indexOf("-p") + 1] ?? "";
+          if (!prompt.includes("Tool observations:\n")) {
+            return {
+              exitCode: 0,
+              stdout: JSON.stringify({ steps: [{ tool: "write", path: "src/old.ts", content: "export const old = 1;\n" }] }),
+            };
+          }
+          assert.match(prompt, /Tool: write src\/old.ts/);
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify({ done: true, steps: [{ tool: "delete", path: "src/old.ts" }] }),
+          };
+        },
+      },
+    });
+    assert.match(turn.transcript, /Tool: write src\/old.ts/);
+    assert.match(turn.transcript, /Tool: delete src\/old.ts/);
+    assert.match(turn.transcript, /Delete path: local sandbox/);
+    assert.doesNotMatch(turn.transcript, /OpenClaw-driven/);
+    await assert.rejects(readFile(path.join(root, "src/old.ts"), "utf8"));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("a coding turn greps for a symbol and patches only the hit file", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "ocp-grep-turn-"));
   try {

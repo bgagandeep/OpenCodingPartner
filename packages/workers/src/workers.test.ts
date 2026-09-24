@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { applyUnifiedDiff, commandDecision, deleteSandboxFile, grepSandbox, parseCodingReply, renameSandboxFile } from "./agent-tools.js";
+import { applyUnifiedDiff, commandDecision, deleteSandboxFile, globSandbox, grepSandbox, parseCodingReply, renameSandboxFile } from "./agent-tools.js";
 import { parseCreateFileInstruction, writeSandboxFile } from "./coding.js";
 import { COMPUTER_WAIT_CAP_MS, computerChain, executeComputerVisit, pageClaim, planGtmActions, selectorDecision, urlDecision } from "./computer.js";
 import { grokBuildArgv, runOnGrokBuild } from "./grok.js";
@@ -48,6 +48,31 @@ test("grep finds a symbol and skips secrets and gtm", async () => {
   assert.doesNotMatch(found.detail, /gtm/);
   assert.doesNotMatch(found.detail, /hunter2/);
   assert.doesNotMatch(found.detail, /secret.ts/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("glob matches a relative pattern and skips gtm and ocp", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-glob-"));
+  try {
+    await mkdir(path.join(root, "src/lib"), { recursive: true });
+    await mkdir(path.join(root, "gtm"), { recursive: true });
+    await mkdir(path.join(root, ".ocp"), { recursive: true });
+    await writeFile(path.join(root, "src/math.ts"), "export const math = 1;\n");
+    await writeFile(path.join(root, "src/lib/util.ts"), "export const util = 1;\n");
+    await writeFile(path.join(root, "src/other.js"), "export const other = 1;\n");
+    await writeFile(path.join(root, "README.md"), "# Hi\n");
+    await writeFile(path.join(root, "gtm/note.ts"), "export const hidden = 1;\n");
+    await writeFile(path.join(root, ".ocp/prior-turns.json"), "{}\n");
+    const found = await globSandbox(root, "src/**/*.ts");
+    assert.match(found.detail, /src\/math.ts/);
+    assert.match(found.detail, /src\/lib\/util.ts/);
+    assert.doesNotMatch(found.detail, /other.js/);
+    assert.doesNotMatch(found.detail, /gtm/);
+    assert.doesNotMatch(found.detail, /\.ocp/);
+    assert.equal((await globSandbox(root, "../**")).ok, false);
+    assert.equal((await globSandbox(root, "*.md")).detail, "README.md");
   } finally {
     await rm(root, { recursive: true, force: true });
   }

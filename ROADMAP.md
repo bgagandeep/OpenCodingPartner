@@ -21,7 +21,8 @@ Ads are off. Payments are off in the core.
 
 `pnpm bundle:install` already installs pinned OpenClaw, Grok Build, and Laya beside this repo. `ocp demo --live` checks that OpenClaw and Grok Build answer.
 
-- Start the OpenClaw gateway with `docker compose up -d openclaw-gateway` and send session traffic through it.
+- The OpenClaw gateway can drive sandbox writes. After it accepts the session plan, it invokes the local write bridge (`ocp_sandbox_write`). The transcript says OpenClaw-driven. When the gateway is down, the same create-file is a local sandbox write. `fs_write` and `sessions_spawn` stay blocked.
+- Start the OpenClaw gateway with `docker compose up -d openclaw-gateway` and send session traffic through it. Load `integrations/openclaw-sandbox-write` so the gateway can call the bridge.
 - Send a real coding prompt through Grok Build when the operator has a key.
 - The computer agent can open a URL, read the screen, and type into one selector. Longer browser sessions can come later.
 - Keep Laya on route and policy only. Weights stay on the operator machine.

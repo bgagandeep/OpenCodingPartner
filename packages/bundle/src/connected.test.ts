@@ -2,12 +2,13 @@ import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import test from "node:test";
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { routeWithPredict } from "@opencodingpartner/policy";
 import { runOnGrokBuild } from "@opencodingpartner/workers";
-import { LITELLM_LOCAL_BASE_URL, resolveCodingMeter, runConnectedPath } from "./connected.js";
+import { LITELLM_LOCAL_BASE_URL, resolveCodingMeter, runConnectedPath, writeViaOpenClaw } from "./connected.js";
+import { startSandboxWriteBridge } from "./write-bridge.js";
 import { predictWithLaya } from "./laya.js";
 
 test("predict.py is selected when the Laya python is present", async () => {
@@ -80,6 +81,88 @@ test("LiteLLM env wins over OpenAI and XAI and does not print the key", async ()
 
   const none = resolveCodingMeter({}, {});
   assert.equal(none.runner, undefined);
+});
+
+test("the gateway invokes the write bridge and fs_write is not sent", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-write-http-"));
+  const bridge = await startSandboxWriteBridge(root);
+  const seen: { tool?: string }[] = [];
+  const server = createServer(async (req, res) => {
+    if (req.url === "/healthz") {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end('{"ok":true}');
+      return;
+    }
+    const chunks: Buffer[] = [];
+    for await (const chunk of req) chunks.push(chunk as Buffer);
+    const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as {
+      tool?: string;
+      args?: { bridgeUrl?: string; relativePath?: string; content?: string; path?: string };
+    };
+    seen.push({ tool: body.tool });
+    if (body.tool === "fs_write" || body.tool === "sessions_spawn") {
+      res.writeHead(404, { "content-type": "application/json" });
+      res.end('{"ok":false}');
+      return;
+    }
+    if (body.tool === "ocp_sandbox_write" && body.args?.bridgeUrl) {
+      const forwarded = await fetch(body.args.bridgeUrl, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ relativePath: body.args.relativePath, content: body.args.content }),
+      });
+      res.writeHead(forwarded.status, { "content-type": "application/json" });
+      res.end(await forwarded.text());
+      return;
+    }
+    res.writeHead(404, { "content-type": "application/json" });
+    res.end('{"ok":false}');
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+  const port = (server.address() as AddressInfo).port;
+  try {
+    const landed = await writeViaOpenClaw(
+      { env: { OCP_WRITE_BRIDGE_URL: bridge.url }, bins: {}, gatewayHttp: `http://127.0.0.1:${port}` },
+      root,
+      "hello.txt",
+      "from-gateway\n",
+    );
+    assert.equal(landed.ok, true);
+    assert.equal(seen[0]?.tool, "ocp_sandbox_write");
+    assert.equal(seen.some((call) => call.tool === "fs_write"), false);
+    assert.equal(await readFile(path.join(root, "hello.txt"), "utf8"), "from-gateway\n");
+    const blocked = await writeViaOpenClaw(
+      { env: { OCP_WRITE_BRIDGE_URL: bridge.url }, bins: {}, gatewayHttp: `http://127.0.0.1:${port}` },
+      root,
+      "../secret.txt",
+      "password=hunter2\n",
+    );
+    assert.equal(blocked.ok, false);
+    await assert.rejects(readFile(path.join(root, "secret.txt"), "utf8"));
+
+    const refused = await writeViaOpenClaw(
+      {
+        env: {},
+        bins: {},
+        gatewayHttp: `http://127.0.0.1:${port}`,
+        fetchImpl: async (url, init) => {
+          const payload = JSON.parse(String(init?.body)) as { tool?: string };
+          assert.equal(payload.tool, "write");
+          if (String(url).endsWith("/healthz")) return new Response('{"ok":true}', { status: 200 });
+          return new Response('{"ok":false}', { status: 404 });
+        },
+      },
+      root,
+      "missing.txt",
+      "nope\n",
+    );
+    assert.equal(refused.ok, false);
+    await assert.rejects(readFile(path.join(root, "missing.txt"), "utf8"));
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+    await bridge.close();
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("gateway down and missing grok are both skipped", async () => {

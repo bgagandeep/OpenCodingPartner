@@ -119,7 +119,20 @@ hello
 "
 ```
 
-When the OpenClaw gateway is up, it owns the session plan on `agent:board:main`. The chat agent sends that plan with `sessions.send` and checks `skills.status` on that session. The local swarm does not run a second plan. If the gateway rejects the plan, the turn stops and no worker writes files. When the gateway is down, the transcript prints a manager plan from the local manager before any worker runs. OpenClaw does not write sandbox files. The gateway blocks remote `fs_write` and `sessions_spawn`. After the plan is accepted, Grok Build or the OpenAI-compatible meter writes files from this process. If no key is set, only a simple create-file message is written locally. Do not commit `XAI_API_KEY`, `OPENAI_API_KEY`, or `OPENCLAW_GATEWAY_TOKEN`.
+When the OpenClaw gateway is up, it owns the session plan on `agent:board:main`. The chat agent sends that plan with `sessions.send` and checks `skills.status` on that session. The local swarm does not run a second plan. If the gateway rejects the plan, the turn stops and no worker writes files. When the gateway is down, the transcript prints a manager plan from the local manager before any worker runs, and a create-file is a local sandbox write. The transcript says `Write path: local sandbox.`
+
+After the plan is accepted, this process starts a loopback write bridge and asks the gateway to invoke `ocp_sandbox_write`. The gateway calls that bridge. The bridge runs the security gate and writes the file. The transcript says `Write path: OpenClaw-driven.` A general edit is drafted in a temp directory by LiteLLM, the OpenAI-compatible meter, or Grok Build, then each kept file is sent through that same bridge. The meter order is unchanged. `fs_write`, `apply_patch`, and `sessions_spawn` stay blocked. If the bridge tool is missing on the gateway, the turn asks the built-in `write` tool for an absolute path in the sandbox. If that also refuses, the file does not land and this process does not copy it in. `pnpm demo:connected` checks the gateway and the meter. It does not itself write a sandbox file. Do not commit `XAI_API_KEY`, `OPENAI_API_KEY`, or `OPENCLAW_GATEWAY_TOKEN`.
+
+Live check when you have a gateway and a meter key. Tests do not call a live gateway. Load `integrations/openclaw-sandbox-write` in the gateway, then:
+
+```bash
+docker compose up -d openclaw-gateway
+export OPENCLAW_GATEWAY_TOKEN="the gateway token"
+export LITELLM_API_KEY="the operator key"
+pnpm exec ocp chat --sandbox .sandbox "add a README section explaining install"
+```
+
+The sandbox file should exist, and the transcript should say `Write path: OpenClaw-driven.` If the plugin is not loaded, the same command still tries the built-in `write` tool. A missing file means that tool refused the path.
 
 Open the multi-file proof without a key: [examples/proof-multifile/src/math.ts](examples/proof-multifile/src/math.ts) and [examples/proof-multifile/src/math.test.ts](examples/proof-multifile/src/math.test.ts). With a meter key, this writes those files into `.sandbox-proof/`:
 
@@ -197,4 +210,4 @@ Apache-2.0. See [LICENSE](LICENSE).
 
 ## Independence
 
-We package and connect these tools for the operator. We are not affiliated with OpenClaw, xAI, SpaceXAI, or Convai Innovations. The offline demo still uses a local sandbox. System-1 uses the Laya install from `pnpm bundle:install` (or `pnpm bundle:install:laya`) and says fallback when that Python is missing. The computer agent does not run a browser. OpenClaw owns the session plan and does not write sandbox files. Laya weights download into `.bundle/laya/hf` and are not committed.
+We package and connect these tools for the operator. We are not affiliated with OpenClaw, xAI, SpaceXAI, or Convai Innovations. The offline demo still uses a local sandbox. System-1 uses the Laya install from `pnpm bundle:install` (or `pnpm bundle:install:laya`) and says fallback when that Python is missing. The computer agent does not run a browser unless you pass `--computer-execute`. OpenClaw owns the session plan. A create-file after that plan uses the gateway `write` tool. General model edits still run in this process. Laya weights download into `.bundle/laya/hf` and are not committed.

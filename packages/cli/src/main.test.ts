@@ -73,6 +73,9 @@ test("ocp prove coding passes with a scripted runner and does not print a key", 
     assert.match(captured, /Tool: mkdir src/);
     assert.match(captured, /Tool: glob src\/\*\*\/\*\.mjs/);
     assert.match(captured, /Tool: patch src\/math\.mjs/);
+    assert.match(captured, /Tool: copy src\/math\.mjs → src\/math\.copy\.mjs/);
+    assert.match(captured, /Copy path: local sandbox/);
+    assert.doesNotMatch(captured, /Copy path: OpenClaw-driven/);
     assert.match(captured, /Tool: run node --test src\/math\.test\.mjs \(exit 0\)/);
     assert.match(captured, /Mkdir path: local sandbox/);
     assert.match(captured, /Meter: scripted/);

@@ -17,6 +17,13 @@ test("node --test is allowed and a unified diff edits one line", () => {
   assert.equal(commandDecision(["node", "-e", "process.exit(1)"]).allow, false);
   assert.equal(commandDecision(["node", "--test", "../secret"]).allow, false);
   assert.equal(commandDecision(["node", "--test", "/tmp/x.test.js"]).allow, false);
+  assert.equal(commandDecision(["pnpm", "test"]).allow, true);
+  assert.equal(commandDecision(["tsc", "--noEmit", "tsconfig.json"]).allow, true);
+  assert.equal(commandDecision(["pnpm", "test", "--filter", "web"]).allow, false);
+  assert.equal(commandDecision(["tsc", "--noEmit", "/etc/passwd"]).allow, false);
+  assert.equal(commandDecision(["curl", "https://example.com"]).allow, false);
+  assert.equal(commandDecision(["rm", "-rf", "."]).allow, false);
+  assert.equal(commandDecision(["node", "--test", "a", "b", "c", "d", "e", "f", "g"]).allow, false);
   const next = applyUnifiedDiff(
     "export function add(left: number, right: number): number {\n  return left - right;\n}\n",
     "--- a/src/math.ts\n+++ b/src/math.ts\n@@ -1,3 +1,3 @@\n export function add(left: number, right: number): number {\n-  return left - right;\n+  return left + right;\n }\n",

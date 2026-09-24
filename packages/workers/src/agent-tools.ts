@@ -17,16 +17,17 @@ export interface CodingReply {
   done: boolean;
 }
 
-/** Only `node --test` plus relative paths. No shell. */
+/** `node --test`, `pnpm test`, or `tsc --noEmit`. Argv only. No shell. */
 export function commandDecision(argv: readonly string[]): { allow: boolean; reason: string } {
   if (argv.length < 2 || argv.length > 8) return { allow: false, reason: "command is not on the allow list" };
-  if (argv[0] !== "node" || argv[1] !== "--test") return { allow: false, reason: "only node --test is allowed" };
-  for (const arg of argv.slice(2)) {
-    if (!arg || arg.startsWith("-") || arg.startsWith("/") || arg.includes("..") || arg.includes("\n") || arg.includes("\0") || /[;&|`$><\\]/.test(arg)) {
-      return { allow: false, reason: "command argument is not a relative test path" };
-    }
-  }
-  return { allow: true, reason: "" };
+  const unsafe = (arg: string) => !arg || arg.startsWith("/") || arg.includes("..") || /[\n\r\0;&|`$><\\]/.test(arg);
+  if (argv.some(unsafe)) return { allow: false, reason: "command argument is not a relative path" };
+  const [bin, sub, ...rest] = argv;
+  const relative = (arg: string) => !arg.startsWith("-");
+  if (bin === "node" && sub === "--test" && rest.every(relative)) return { allow: true, reason: "" };
+  if (bin === "pnpm" && sub === "test" && rest.length === 0) return { allow: true, reason: "" };
+  if (bin === "tsc" && sub === "--noEmit" && rest.every(relative)) return { allow: true, reason: "" };
+  return { allow: false, reason: "only node --test, pnpm test, and tsc --noEmit are allowed" };
 }
 
 export function parseCodingReply(stdout: string): CodingReply | null {

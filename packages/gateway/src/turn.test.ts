@@ -753,6 +753,40 @@ test("a coding turn writes a file and then deletes it", async () => {
   }
 });
 
+test("pnpm test is allowed and a failed check still retries", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-pnpm-test-"));
+  try {
+    const seen: string[][] = [];
+    let checks = 0;
+    const turn = await runChatTurn({
+      message: "fix the suite and run pnpm test",
+      sandboxRoot: root,
+      checkExec: async (argv, cwd) => {
+        seen.push([...argv]);
+        assert.equal(cwd, root);
+        checks += 1;
+        return checks === 1 ? { code: 1, stdout: "", stderr: "1 failed" } : { code: 0, stdout: "pass", stderr: "" };
+      },
+      grokRunner: {
+        async run(argv) {
+          const prompt = argv[argv.indexOf("-p") + 1] ?? "";
+          if (prompt.includes("QA failed")) {
+            return { exitCode: 0, stdout: JSON.stringify({ done: true, steps: [{ tool: "run", argv: ["pnpm", "test"] }] }) };
+          }
+          if (prompt.includes("Tool observations:\n")) return { exitCode: 0, stdout: JSON.stringify({ done: true }) };
+          return { exitCode: 0, stdout: JSON.stringify({ steps: [{ tool: "run", argv: ["pnpm", "test"] }] }) };
+        },
+      },
+    });
+    assert.deepEqual(seen[0], ["pnpm", "test"]);
+    assert.equal(checks, 2);
+    assert.match(turn.transcript, /Tool: run pnpm test \(exit 1\)/);
+    assert.match(turn.transcript, /fix loop passed on retry 1/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("a coding turn writes a file and then renames it", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "ocp-rename-turn-"));
   try {

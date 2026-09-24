@@ -250,15 +250,82 @@ export async function writeViaOpenClaw(
   return { ok: false, detail: direct.detail };
 }
 
+export interface OpenClawFileResult {
+  ok: boolean;
+  missing: boolean;
+  detail: string;
+}
+
+/**
+ * Ask the gateway to invoke the delete bridge. This function does not unlink the file.
+ * `fs_delete` is never sent. A missing plugin returns missing so the turn can delete locally.
+ */
+export async function deleteViaOpenClaw(
+  deps: ConnectedDeps,
+  sandboxRoot: string,
+  relativePath: string,
+): Promise<OpenClawFileResult> {
+  return invokeSandboxAction(deps, sandboxRoot, "ocp_sandbox_delete", "/delete", { relativePath }, relativePath);
+}
+
+/**
+ * Ask the gateway to invoke the rename bridge. This function does not move the file.
+ * `fs_move` is never sent. A missing plugin returns missing so the turn can rename locally.
+ */
+export async function renameViaOpenClaw(
+  deps: ConnectedDeps,
+  sandboxRoot: string,
+  fromPath: string,
+  toPath: string,
+): Promise<OpenClawFileResult> {
+  return invokeSandboxAction(deps, sandboxRoot, "ocp_sandbox_rename", "/rename", { from: fromPath, to: toPath }, fromPath, toPath);
+}
+
+async function invokeSandboxAction(
+  deps: ConnectedDeps,
+  sandboxRoot: string,
+  tool: "ocp_sandbox_delete" | "ocp_sandbox_rename",
+  actionPath: "/delete" | "/rename",
+  args: Record<string, string>,
+  ...paths: string[]
+): Promise<OpenClawFileResult> {
+  for (const relativePath of paths) {
+    const gate = securityGate({ relativePath, content: "", sandboxRoot });
+    if (!gate.allow) {
+      return { ok: false, missing: false, detail: `Security gate blocked the path (${gate.reasons.join(", ")}).` };
+    }
+  }
+  const fetchImpl = deps.fetchImpl ?? fetch;
+  const exec = deps.exec ?? defaultExec;
+  const gatewayHttp = (deps.gatewayHttp ?? deps.env.OPENCLAW_GATEWAY_URL ?? "http://127.0.0.1:18789").replace(/\/$/, "");
+  const up = await gatewayIsUp(gatewayHttp, fetchImpl);
+  if (!up) {
+    return { ok: false, missing: true, detail: "OpenClaw gateway is not up. The tool did not run." };
+  }
+  const bridgeUrl = deps.env.OCP_WRITE_BRIDGE_URL;
+  if (!bridgeUrl) {
+    return { ok: false, missing: true, detail: "Write bridge URL is not set." };
+  }
+  const bridged = await invokeGatewayTool(deps, gatewayHttp, exec, fetchImpl, tool, {
+    ...args,
+    bridgeUrl: bridgeUrl.replace(/\/write$/, actionPath),
+  });
+  if (bridged.ok) return { ok: true, missing: false, detail: `OpenClaw invoked the sandbox ${tool} bridge.` };
+  if (bridged.missing) return { ok: false, missing: true, detail: bridged.detail };
+  return { ok: false, missing: false, detail: bridged.detail };
+}
+
+const GATEWAY_TOOLS = new Set(["ocp_sandbox_write", "ocp_sandbox_delete", "ocp_sandbox_rename", "write"]);
+
 async function invokeGatewayTool(
   deps: ConnectedDeps,
   gatewayHttp: string,
   exec: NonNullable<ConnectedDeps["exec"]>,
   fetchImpl: typeof fetch,
-  tool: "ocp_sandbox_write" | "write",
+  tool: "ocp_sandbox_write" | "ocp_sandbox_delete" | "ocp_sandbox_rename" | "write",
   args: Record<string, string>,
 ): Promise<{ ok: boolean; missing: boolean; detail: string }> {
-  if (tool !== "ocp_sandbox_write" && tool !== "write") {
+  if (!GATEWAY_TOOLS.has(tool)) {
     return { ok: false, missing: true, detail: "Refused tool." };
   }
   if (deps.bins.openclawBin) {

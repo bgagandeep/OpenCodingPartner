@@ -811,9 +811,93 @@ test("a coding turn writes a file and then renames it", async () => {
     });
     assert.match(turn.transcript, /Tool: rename src\/old.ts → src\/lib\/old.ts/);
     assert.match(turn.transcript, /Rename path: local sandbox/);
-    assert.match(turn.transcript, /OpenClaw does not rename files/);
+    assert.doesNotMatch(turn.transcript, /Rename path: OpenClaw-driven/);
     await assert.rejects(readFile(path.join(root, "src/old.ts"), "utf8"));
     assert.match(await readFile(path.join(root, "src/lib/old.ts"), "utf8"), /export const old/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("an OpenClaw-driven turn deletes and renames through the bridge", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-remote-move-"));
+  try {
+    await writeSandboxFile(root, "src/old.ts", "export const old = 1;\n");
+    await writeSandboxFile(root, "src/keep.ts", "export const keep = 1;\n");
+    const calls: string[] = [];
+    const turn = await runChatTurn({
+      message: "refactor the helpers",
+      sandboxRoot: root,
+      orchestration: async () => ({
+        state: "ran",
+        driver: "openclaw",
+        detail: "Session agent:board:main accepted the plan.",
+      }),
+      grokRunner: {
+        async run() {
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify({
+              done: true,
+              steps: [
+                { tool: "delete", path: "src/old.ts" },
+                { tool: "rename", path: "src/keep.ts", to: "src/lib/keep.ts" },
+              ],
+            }),
+          };
+        },
+      },
+      openclawDelete: async (relativePath) => {
+        calls.push(`delete ${relativePath}`);
+        await rm(path.join(root, relativePath));
+        return { ok: true, missing: false, detail: "bridge" };
+      },
+      openclawRename: async (fromPath, toPath) => {
+        calls.push(`rename ${fromPath} ${toPath}`);
+        const { rename, mkdir } = await import("node:fs/promises");
+        await mkdir(path.join(root, "src/lib"), { recursive: true });
+        await rename(path.join(root, fromPath), path.join(root, toPath));
+        return { ok: true, missing: false, detail: "bridge" };
+      },
+    });
+    assert.deepEqual(calls, ["delete src/old.ts", "rename src/keep.ts src/lib/keep.ts"]);
+    assert.match(turn.transcript, /Delete path: OpenClaw-driven/);
+    assert.match(turn.transcript, /Rename path: OpenClaw-driven/);
+    assert.doesNotMatch(turn.transcript, /Delete path: local sandbox/);
+    assert.doesNotMatch(turn.transcript, /Rename path: local sandbox/);
+    await assert.rejects(readFile(path.join(root, "src/old.ts"), "utf8"));
+    await assert.rejects(readFile(path.join(root, "src/keep.ts"), "utf8"));
+    assert.match(await readFile(path.join(root, "src/lib/keep.ts"), "utf8"), /export const keep/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a missing OpenClaw delete plugin falls back to the local sandbox", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-delete-fallback-"));
+  try {
+    await writeSandboxFile(root, "src/old.ts", "export const old = 1;\n");
+    const turn = await runChatTurn({
+      message: "refactor and remove the old helper",
+      sandboxRoot: root,
+      orchestration: async () => ({
+        state: "ran",
+        driver: "openclaw",
+        detail: "Session agent:board:main accepted the plan.",
+      }),
+      grokRunner: {
+        async run() {
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify({ done: true, steps: [{ tool: "delete", path: "src/old.ts" }] }),
+          };
+        },
+      },
+      openclawDelete: async () => ({ ok: false, missing: true, detail: "plugin missing" }),
+    });
+    assert.match(turn.transcript, /Delete path: local sandbox/);
+    assert.doesNotMatch(turn.transcript, /Delete path: OpenClaw-driven/);
+    await assert.rejects(readFile(path.join(root, "src/old.ts"), "utf8"));
   } finally {
     await rm(root, { recursive: true, force: true });
   }

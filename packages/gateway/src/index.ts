@@ -72,6 +72,10 @@ export interface ChatTurnInput {
   computerAllowHosts?: readonly string[];
   /** Gateway `write` tool. Set when the product talks to OpenClaw. This process does not write the bytes. */
   openclawWrite?: (relativePath: string, content: string) => Promise<{ ok: boolean; detail: string }>;
+  /** Gateway delete tool. `missing` means the plugin is absent and a local delete is allowed. */
+  openclawDelete?: (relativePath: string) => Promise<{ ok: boolean; missing: boolean; detail: string }>;
+  /** Gateway rename tool. `missing` means the plugin is absent and a local rename is allowed. */
+  openclawRename?: (fromPath: string, toPath: string) => Promise<{ ok: boolean; missing: boolean; detail: string }>;
   /** Bounded check runner. Tests inject this. The default does not use a shell. */
   checkExec?: (argv: readonly string[], cwd: string) => Promise<{ code: number; stdout: string; stderr: string }>;
 }
@@ -213,7 +217,7 @@ async function executeTurn(input: ChatTurnInput, session: SwarmSession, key: str
     security = messageGate;
     if (!messageGate.allow) {
       coding = { relativePath: "the request", wrote: false, via };
-    } else if (input.grokRunner && openclawDrove && input.openclawWrite) {
+    } else if (input.grokRunner && openclawDrove && (input.openclawWrite || input.openclawDelete || input.openclawRename)) {
       const runner = input.grokRunner;
       const write = input.openclawWrite;
       const stage = await mkdtemp(path.join(tmpdir(), "ocp-stage-"));
@@ -249,6 +253,7 @@ async function executeTurn(input: ChatTurnInput, session: SwarmSession, key: str
             security = { allow: false, reasons: gate.reasons };
             continue;
           }
+          if (!write) continue;
           const landed = await write(relativePath, content);
           if (landed.ok && (await fileMatches(input.sandboxRoot, relativePath, content))) kept.push(relativePath);
         }
@@ -683,7 +688,9 @@ async function applyToolReply(
   let security: GateDecision | null = null;
   let check: { code: number; stdout: string; stderr: string } | null = null;
   let deletedLocal = false;
+  let deletedRemote = false;
   let renamedLocal = false;
+  let renamedRemote = false;
   let nextStdout = stdout;
   for (let round = 1; round <= TOOL_ROUND_CAP; round += 1) {
     const reply = parseCodingReply(nextStdout);
@@ -770,22 +777,24 @@ async function applyToolReply(
         log.push(line);
         observations.push(line);
       } else if (step.tool === "delete" && step.path) {
-        const removed = await deleteSandboxFile(input.sandboxRoot, step.path);
+        const removed = await deleteThroughTurn(input, openclawDrove, step.path);
         const line = removed.ok ? `Tool: delete ${step.path}` : `Tool: delete ${step.path} (${removed.detail})`;
         log.push(line);
         observations.push(line);
         if (removed.ok) {
-          deletedLocal = true;
+          if (removed.via === "openclaw") deletedRemote = true;
+          else deletedLocal = true;
           const index = kept.indexOf(step.path);
           if (index >= 0) kept.splice(index, 1);
         }
       } else if (step.tool === "rename" && step.path && step.to) {
-        const moved = await renameSandboxFile(input.sandboxRoot, step.path, step.to);
+        const moved = await renameThroughTurn(input, openclawDrove, step.path, step.to);
         const line = moved.ok ? `Tool: rename ${step.path} → ${step.to}` : `Tool: rename ${step.path} → ${step.to} (${moved.detail})`;
         log.push(line);
         observations.push(line);
         if (moved.ok) {
-          renamedLocal = true;
+          if (moved.via === "openclaw") renamedRemote = true;
+          else renamedLocal = true;
           const index = kept.indexOf(step.path);
           if (index >= 0) kept.splice(index, 1);
           kept.push(step.to);
@@ -807,14 +816,16 @@ async function applyToolReply(
     qa = { pass: false, summary: `check failed (exit ${check.code}): ${detail}` };
   } else if (check && check.code === 0 && qa && !qa.pass && fileExpectations(input.message).length === 0) {
     qa = { pass: true, summary: "check passed" };
-  } else if (deletedLocal && qa && !qa.pass && fileExpectations(input.message).length === 0 && !(check && check.code !== 0)) {
+  } else if ((deletedLocal || deletedRemote) && qa && !qa.pass && fileExpectations(input.message).length === 0 && !(check && check.code !== 0)) {
     qa = { pass: true, summary: "deleted the named file" };
   }
   const note = [
     ...log,
     openclawDrove ? "Write path: OpenClaw-driven. The gateway invoked the sandbox write bridge." : "Write path: local sandbox.",
-    deletedLocal ? "Delete path: local sandbox. OpenClaw does not delete files." : "",
-    renamedLocal ? "Rename path: local sandbox. OpenClaw does not rename files." : "",
+    deletedRemote ? "Delete path: OpenClaw-driven." : "",
+    deletedLocal ? "Delete path: local sandbox." : "",
+    renamedRemote ? "Rename path: OpenClaw-driven." : "",
+    renamedLocal ? "Rename path: local sandbox." : "",
     blocked.length > 0 ? `Security agent removed ${blocked.join(", ")} after the edit.` : "",
   ].filter((line) => line.length > 0).join("\n");
   return {
@@ -937,6 +948,61 @@ async function codingPrompt(sandboxRoot: string, message: string): Promise<strin
   const filesNote = message.startsWith("Tool observations:") || blocks.length === 0 ? "" : `Sandbox files already on disk:\n${blocks.join("\n")}\n`;
   const history = await priorTurns(sandboxRoot);
   return `${history}${filesNote}User request:\n${message}\nReply with JSON only: {"steps":[{"tool":"list"|"read"|"grep"|"glob"|"run"|"write"|"patch"|"delete"|"rename","to":"relative destination","query":"text or /regex/","path":"relative","content":"full text for write","diff":"unified diff for patch","argv":["node","--test","relative.test.ts"]}],"done":false}. One reply is one round. After you see Tool observations, send the next round. Set "done" to true when finished. List or read before you edit. Patch a file that already exists. Write only a new file. Allowed commands are node --test plus relative paths, pnpm test with no extra arguments, and tsc --noEmit plus relative paths.`;
+}
+
+async function deleteThroughTurn(
+  input: ChatTurnInput,
+  openclawDrove: boolean,
+  relativePath: string,
+): Promise<{ ok: boolean; via: "openclaw" | "local"; detail: string }> {
+  if (openclawDrove && input.openclawDelete) {
+    const remote = await input.openclawDelete(relativePath);
+    if (remote.ok && (await fileGone(input.sandboxRoot, relativePath))) {
+      return { ok: true, via: "openclaw", detail: remote.detail };
+    }
+    if (remote.ok || !remote.missing) {
+      return { ok: false, via: "openclaw", detail: remote.ok ? "OpenClaw delete did not remove the file." : remote.detail };
+    }
+  }
+  const local = await deleteSandboxFile(input.sandboxRoot, relativePath);
+  return { ok: local.ok, via: "local", detail: local.detail };
+}
+
+async function renameThroughTurn(
+  input: ChatTurnInput,
+  openclawDrove: boolean,
+  fromPath: string,
+  toPath: string,
+): Promise<{ ok: boolean; via: "openclaw" | "local"; detail: string }> {
+  if (openclawDrove && input.openclawRename) {
+    const remote = await input.openclawRename(fromPath, toPath);
+    if (remote.ok && (await fileGone(input.sandboxRoot, fromPath)) && (await fileExists(input.sandboxRoot, toPath))) {
+      return { ok: true, via: "openclaw", detail: remote.detail };
+    }
+    if (remote.ok || !remote.missing) {
+      return { ok: false, via: "openclaw", detail: remote.ok ? "OpenClaw rename did not move the file." : remote.detail };
+    }
+  }
+  const local = await renameSandboxFile(input.sandboxRoot, fromPath, toPath);
+  return { ok: local.ok, via: "local", detail: local.detail };
+}
+
+async function fileGone(sandboxRoot: string, relativePath: string): Promise<boolean> {
+  try {
+    await readFile(path.join(sandboxRoot, relativePath));
+    return false;
+  } catch {
+    return true;
+  }
+}
+
+async function fileExists(sandboxRoot: string, relativePath: string): Promise<boolean> {
+  try {
+    await readFile(path.join(sandboxRoot, relativePath));
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function fileMatches(sandboxRoot: string, relativePath: string, content: string): Promise<boolean> {

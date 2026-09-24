@@ -1,6 +1,6 @@
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { securityGate, writeSandboxFile } from "@opencodingpartner/workers";
+import { deleteSandboxFile, renameSandboxFile, securityGate, writeSandboxFile } from "@opencodingpartner/workers";
 
 export interface BridgeWriteBody {
   relativePath?: unknown;
@@ -10,6 +10,15 @@ export interface BridgeWriteBody {
 export interface BridgeWriteResult {
   ok: boolean;
   detail: string;
+}
+
+export interface BridgeDeleteBody {
+  relativePath?: unknown;
+}
+
+export interface BridgeRenameBody {
+  from?: unknown;
+  to?: unknown;
 }
 
 /** Security gate, then a sandbox write. This is the only place the bridge writes. */
@@ -25,23 +34,50 @@ export async function applyBridgeWrite(sandboxRoot: string, body: BridgeWriteBod
   return { ok: true, detail: "Write bridge landed the file." };
 }
 
+/** Unlink one sandbox file. This is the only place the bridge deletes. */
+export async function applyBridgeDelete(sandboxRoot: string, body: BridgeDeleteBody): Promise<BridgeWriteResult> {
+  if (typeof body.relativePath !== "string") {
+    return { ok: false, detail: "Delete bridge needs relativePath." };
+  }
+  const removed = await deleteSandboxFile(sandboxRoot, body.relativePath);
+  return removed.ok
+    ? { ok: true, detail: "Delete bridge removed the file." }
+    : { ok: false, detail: removed.detail };
+}
+
+/** Move one sandbox file. This is the only place the bridge renames. */
+export async function applyBridgeRename(sandboxRoot: string, body: BridgeRenameBody): Promise<BridgeWriteResult> {
+  if (typeof body.from !== "string" || typeof body.to !== "string") {
+    return { ok: false, detail: "Rename bridge needs from and to." };
+  }
+  const moved = await renameSandboxFile(sandboxRoot, body.from, body.to);
+  return moved.ok
+    ? { ok: true, detail: "Rename bridge moved the file." }
+    : { ok: false, detail: moved.detail };
+}
+
 /** Local tool host. OpenClaw invokes it. The server binds loopback only. */
 export async function startSandboxWriteBridge(sandboxRoot: string): Promise<{ url: string; close: () => Promise<void> }> {
   const server: Server = createServer(async (req, res) => {
-    if (req.method !== "POST" || req.url !== "/write") {
+    if (req.method !== "POST" || (req.url !== "/write" && req.url !== "/delete" && req.url !== "/rename")) {
       res.writeHead(404, { "content-type": "application/json" });
       res.end('{"ok":false}');
       return;
     }
     const chunks: Buffer[] = [];
     for await (const chunk of req) chunks.push(chunk as Buffer);
-    let body: BridgeWriteBody = {};
+    let body: BridgeWriteBody & BridgeDeleteBody & BridgeRenameBody = {};
     try {
-      body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as BridgeWriteBody;
+      body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as BridgeWriteBody & BridgeDeleteBody & BridgeRenameBody;
     } catch {
       body = {};
     }
-    const result = await applyBridgeWrite(sandboxRoot, body);
+    const result =
+      req.url === "/delete"
+        ? await applyBridgeDelete(sandboxRoot, body)
+        : req.url === "/rename"
+          ? await applyBridgeRename(sandboxRoot, body)
+          : await applyBridgeWrite(sandboxRoot, body);
     res.writeHead(result.ok ? 200 : 403, { "content-type": "application/json" });
     res.end(JSON.stringify(result));
   });

@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
+import path from "node:path";
 import { BOARD_SESSION_KEY } from "@opencodingpartner/mesh";
-import { openAiCompatibleRunner, runOnGrokBuild, type InjectedRunner } from "@opencodingpartner/workers";
+import { openAiCompatibleRunner, runOnGrokBuild, securityGate, type InjectedRunner } from "@opencodingpartner/workers";
 import type { StackBins } from "./discover.js";
 
 export interface ExecResult {
@@ -53,8 +54,9 @@ function sessionPlan(message: string, plan?: SessionPlanInput): string {
   return [
     `Session plan for ${BOARD_SESSION_KEY}.`,
     "Stand up a coding agent, a QA agent, a security agent, and a computer agent.",
-    "OpenClaw does not write sandbox files.",
-    "Coding and QA edit the sandbox from this process with Grok Build.",
+    "A create-file request uses the gateway write tool after the plan is accepted.",
+    "The gateway still blocks fs_write, apply_patch, and sessions_spawn.",
+    "General model edits still run in this process with Grok Build or the meter.",
     "Security gates path escape and secrets.",
     "The computer agent records a GTM plan and does not run a browser.",
     "User request:",
@@ -203,6 +205,85 @@ function spawnGrokRunner(bin: string, env: NodeJS.ProcessEnv, exec: ConnectedDep
       return { exitCode: result.code, stdout: result.stdout };
     },
   };
+}
+
+export interface OpenClawWriteResult {
+  ok: boolean;
+  detail: string;
+}
+
+/**
+ * Ask the OpenClaw gateway `write` tool to put bytes in the operator sandbox.
+ * This function does not write the file. `fs_write` stays blocked and is never sent.
+ */
+export async function writeViaOpenClaw(
+  deps: ConnectedDeps,
+  sandboxRoot: string,
+  relativePath: string,
+  content: string,
+): Promise<OpenClawWriteResult> {
+  const gate = securityGate({ relativePath, content, sandboxRoot });
+  if (!gate.allow) {
+    return { ok: false, detail: `Security gate blocked the write (${gate.reasons.join(", ")}).` };
+  }
+  const absolute = path.resolve(sandboxRoot, relativePath);
+  const fetchImpl = deps.fetchImpl ?? fetch;
+  const exec = deps.exec ?? defaultExec;
+  const gatewayHttp = (deps.gatewayHttp ?? deps.env.OPENCLAW_GATEWAY_URL ?? "http://127.0.0.1:18789").replace(/\/$/, "");
+  const up = await gatewayIsUp(gatewayHttp, fetchImpl);
+  if (!up) {
+    return { ok: false, detail: "OpenClaw gateway is not up. The write tool did not run." };
+  }
+  const args = { path: absolute, content };
+  if (deps.bins.openclawBin) {
+    const port = new URL(gatewayHttp).port || "18789";
+    const tokenArgs = deps.env.OPENCLAW_GATEWAY_TOKEN ? ["--token", deps.env.OPENCLAW_GATEWAY_TOKEN] : [];
+    const sent = await exec(
+      deps.bins.openclawBin,
+      [
+        "gateway",
+        "call",
+        "tools.invoke",
+        "--params",
+        JSON.stringify({ name: "write", sessionKey: BOARD_SESSION_KEY, args }),
+        "--timeout",
+        "15000",
+        "--port",
+        port,
+        ...tokenArgs,
+      ],
+      deps.env,
+    );
+    if (sent.code !== 0) {
+      return { ok: false, detail: "OpenClaw write tool did not accept the call." };
+    }
+    return { ok: true, detail: "OpenClaw write tool accepted the file." };
+  }
+  const headers: Record<string, string> = { "content-type": "application/json", "x-openclaw-session-key": BOARD_SESSION_KEY };
+  if (deps.env.OPENCLAW_GATEWAY_TOKEN) headers.authorization = `Bearer ${deps.env.OPENCLAW_GATEWAY_TOKEN}`;
+  try {
+    const response = await fetchImpl(`${gatewayHttp}/tools/invoke`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ tool: "write", sessionKey: BOARD_SESSION_KEY, args }),
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!response.ok) {
+      return { ok: false, detail: `OpenClaw write tool returned HTTP ${response.status}.` };
+    }
+    let body: { ok?: boolean } = {};
+    try {
+      body = (await response.json()) as { ok?: boolean };
+    } catch {
+      body = {};
+    }
+    if (body.ok === false) {
+      return { ok: false, detail: "OpenClaw write tool refused the file." };
+    }
+    return { ok: true, detail: "OpenClaw write tool accepted the file." };
+  } catch {
+    return { ok: false, detail: "OpenClaw write tool did not finish." };
+  }
 }
 
 async function gatewayIsUp(url: string, fetchImpl: typeof fetch): Promise<boolean> {

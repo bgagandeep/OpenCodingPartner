@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
-import { codingRunnerForEnv, discoverStack, predictWithLaya, runConnectedPath, sendOrchestrationTurn } from "@opencodingpartner/bundle";
+import { codingRunnerForEnv, discoverStack, predictWithLaya, runConnectedPath, sendOrchestrationTurn, writeViaOpenClaw } from "@opencodingpartner/bundle";
 import { readFile } from "node:fs/promises";
 import { runChatTurn, runDemo, type ChatTurnInput } from "@opencodingpartner/gateway";
 import { playwrightBrowserDriver } from "@opencodingpartner/workers";
@@ -94,7 +94,7 @@ export async function main(argv: readonly string[]): Promise<number> {
     return 0;
   }
   process.stdout.write(
-    "OpenCodingPartner chat agent\n\n  ocp chat --sandbox .sandbox\n  ocp chat --sandbox .sandbox \"Use Grok Build to create hello.txt with content:\nhello\n\"\n  ocp chat --sandbox .sandbox --computer-execute \"Open https://example.com\"\n  ocp demo --sandbox .sandbox\n\nOpenClaw owns the session plan. It does not write sandbox files. Coding workers in this process write files after the plan is accepted.\nThe computer agent opens a browser only with --computer-execute or OCP_COMPUTER_EXECUTE=1. It opens a named http(s) URL, reads the screen, and types into one selector when you ask.\n",
+    "OpenCodingPartner chat agent\n\n  ocp chat --sandbox .sandbox\n  ocp chat --sandbox .sandbox \"Use Grok Build to create hello.txt with content:\nhello\n\"\n  ocp chat --sandbox .sandbox --computer-execute \"Open https://example.com\"\n  ocp demo --sandbox .sandbox\n\nOpenClaw owns the session plan. After it accepts the plan, a create-file uses the gateway write tool. fs_write, apply_patch, and sessions_spawn stay blocked. General model edits still run in this process.\nThe computer agent opens a browser only with --computer-execute or OCP_COMPUTER_EXECUTE=1. It opens a named http(s) URL, reads the screen, and types into one selector when you ask.\n",
   );
   return command === undefined || command === "--help" || command === "-h" ? 0 : 2;
 }
@@ -121,6 +121,7 @@ async function runProductTurn(message: string, sandbox: string, computerExecute:
     computerAllowHosts: process.env.OCP_COMPUTER_ALLOW_HOSTS?.split(","),
     browserDriver: computerExecute ? playwrightBrowserDriver() : undefined,
     orchestration: (plan) => sendOrchestrationTurn(message, { env: process.env, bins }, plan),
+    openclawWrite: (relativePath, content) => writeViaOpenClaw({ env: process.env, bins }, sandbox, relativePath, content),
   };
   if (bins.layaPython) {
     const pythonBin = bins.layaPython;

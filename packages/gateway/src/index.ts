@@ -1,4 +1,4 @@
-import { mkdir, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { StoodUpAgent, SwarmSession } from "@opencodingpartner/mesh";
 import { boardSession } from "@opencodingpartner/mesh";
@@ -55,6 +55,8 @@ export interface ChatTurnInput {
   computerUrl?: string;
   /** When set, only these hosts (and their subdomains) may be opened. */
   computerAllowHosts?: readonly string[];
+  /** Gateway `write` tool. Set when the product talks to OpenClaw. This process does not write the bytes. */
+  openclawWrite?: (relativePath: string, content: string) => Promise<{ ok: boolean; detail: string }>;
 }
 
 export interface ChatTurnResult {
@@ -62,7 +64,7 @@ export interface ChatTurnResult {
   decision: RouteDecision;
   agents: StoodUpAgent[];
   security: GateDecision | null;
-  coding: { relativePath: string; wrote: boolean; via: "local-sandbox" | "grok-build" | "openai-compatible" | "litellm"; note?: string } | null;
+  coding: { relativePath: string; wrote: boolean; via: CodingVia; note?: string } | null;
   plan: ManagerPlan;
   qa: QaResult | null;
   computer: GtmPlan | null;
@@ -75,10 +77,13 @@ export interface ChatTurnResult {
 const lanes = new Map<string, Promise<void>>();
 const completed = new Map<string, ChatTurnResult>();
 
+type CodingVia = "local-sandbox" | "grok-build" | "openai-compatible" | "litellm" | "openclaw-write";
+
 function idempotencyKey(input: ChatTurnInput, sessionKey: string): string {
   const mode = input.codingVia ?? (input.grokRunner ? "grok-build" : "local-sandbox");
+  const remote = input.openclawWrite ? "openclaw-write" : "no-openclaw-write";
   const computer = input.computerExecute === true ? "computer-live" : "computer-plan";
-  return `${sessionKey}\n${path.resolve(input.sandboxRoot)}\n${mode}\n${computer}\n${input.message}`;
+  return `${sessionKey}\n${path.resolve(input.sandboxRoot)}\n${mode}\n${remote}\n${computer}\n${input.message}`;
 }
 
 export function runChatTurn(input: ChatTurnInput): Promise<ChatTurnResult> {
@@ -104,14 +109,15 @@ function stepsFor(decision: RouteDecision): string[] {
   if (decision.roles.length === 0) return ["No agents stand up. This turn stays on the status route."];
   return [
     "Stand up the roles in this plan. Do not add a second plan.",
-    "OpenClaw does not write sandbox files.",
-    "Coding and QA edit the sandbox from this process with Grok Build or the OpenAI-compatible meter.",
+    "After the session plan is accepted, the gateway write tool writes a create-file into the sandbox.",
+    "The gateway still blocks fs_write, apply_patch, and sessions_spawn.",
+    "General model edits still run in this process.",
     "Security gates path escape and secrets.",
     "The computer agent records a GTM plan and does not run a browser.",
   ];
 }
 
-function codingVia(input: ChatTurnInput): "local-sandbox" | "grok-build" | "openai-compatible" | "litellm" {
+function codingVia(input: ChatTurnInput): CodingVia {
   if (!input.grokRunner) return "local-sandbox";
   return input.codingVia ?? "grok-build";
 }
@@ -138,7 +144,7 @@ async function executeTurn(input: ChatTurnInput, session: SwarmSession, key: str
   if (openclawDrove) plan = { ...plan, source: "openclaw" };
   const agents = openclawFailed ? [] : swarm.standUp(plan.roles);
   const orchestration = openclawDrove
-    ? `ran: OpenClaw accepted the session plan. ${notice.detail} OpenClaw does not write sandbox files. Coding workers in this process write them after the plan is accepted. The gateway blocks remote fs_write and sessions_spawn.`
+    ? `ran: OpenClaw accepted the session plan. ${notice.detail} A create-file uses the gateway write tool. The gateway still blocks fs_write, apply_patch, and sessions_spawn. General model edits still run in this process.`
     : openclawFailed
       ? `failed: OpenClaw gateway was up but did not accept the session plan. ${notice.detail} The local swarm did not take over.`
       : `${notice.state}: ${notice.detail}`;
@@ -226,7 +232,23 @@ async function executeTurn(input: ChatTurnInput, session: SwarmSession, key: str
   }
 
   if (instruction && agents.some((agent) => agent.role === "coding")) {
-    if (security?.allow && input.grokRunner) {
+    if (security?.allow && openclawDrove && input.openclawWrite) {
+      const write = input.openclawWrite;
+      const landed = await swarm.dispatch("coding", () => write(instruction.relativePath, instruction.content));
+      const onDisk = await fileMatches(input.sandboxRoot, instruction.relativePath, instruction.content);
+      const wrote = landed.ok && onDisk;
+      coding = {
+        relativePath: instruction.relativePath,
+        wrote,
+        via: "openclaw-write",
+        note: wrote
+          ? "OpenClaw write tool landed the file in the sandbox."
+          : "OpenClaw write tool did not land the file. This process did not write it locally.",
+      };
+      if (agents.some((agent) => agent.role === "qa")) {
+        qa = await swarm.dispatch("qa", () => qaCheckFile(input.sandboxRoot, instruction.relativePath, instruction.content));
+      }
+    } else if (security?.allow && input.grokRunner) {
       const runner = input.grokRunner;
       const prompt = `Coding agent: write ${instruction.relativePath} with this exact content and nothing else:\n${instruction.content}`;
       const grok = await swarm.dispatch("coding", () => runOnGrokBuild(runner, prompt, input.sandboxRoot));
@@ -353,11 +375,19 @@ export function formatTranscript(result: ChatTurnResult): string {
   return `${lines.join("\n")}\n`;
 }
 
-function meterLine(via: "local-sandbox" | "grok-build" | "openai-compatible" | "litellm"): string {
+function meterLine(via: CodingVia): string {
   if (via === "litellm") return "Meter: LiteLLM";
   if (via === "openai-compatible") return "Meter: OpenAI-compatible";
   if (via === "grok-build") return "Meter: Grok Build";
   return "Meter: none";
+}
+
+async function fileMatches(sandboxRoot: string, relativePath: string, content: string): Promise<boolean> {
+  try {
+    return (await readFile(path.join(sandboxRoot, relativePath), "utf8")) === content;
+  } catch {
+    return false;
+  }
 }
 
 function labelFor(agent: StoodUpAgent): string {

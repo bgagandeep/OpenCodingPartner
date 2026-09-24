@@ -166,7 +166,9 @@ test("OpenClaw drives a general edit and QA checks the kept files", async () => 
       },
     });
     assert.match(turn.transcript, /OpenClaw accepted the session plan/);
-    assert.match(turn.transcript, /OpenClaw does not write sandbox files/);
+    assert.match(turn.transcript, /General model edits still run in this process/);
+    assert.match(turn.transcript, /via grok-build/);
+    assert.doesNotMatch(turn.transcript, /write tool landed/);
     assert.equal(turn.qa?.pass, true);
     assert.match(turn.qa?.summary ?? "", /README.md is non-empty/);
     assert.equal(await readFile(path.join(root, "README.md"), "utf8"), "# Install\n");
@@ -321,9 +323,75 @@ test("the golden proof tree is what a multi-file coding turn writes", async () =
     assert.equal(await readFile(path.join(sandbox, "src/math.ts"), "utf8"), math);
     assert.equal(await readFile(path.join(sandbox, "src/math.test.ts"), "utf8"), spec);
     assert.match(math, /export function add/);
-    assert.match(turn.transcript, /OpenClaw does not write sandbox files/);
+    assert.match(turn.transcript, /gateway write tool writes a create-file/);
+    assert.match(turn.transcript, /blocks fs_write/);
   } finally {
     await rm(sandbox, { recursive: true, force: true });
+  }
+});
+
+test("an accepted plan writes a create-file through the OpenClaw write tool", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-remote-write-"));
+  try {
+    const content = "hello from openclaw\n";
+    const turn = await runChatTurn({
+      message: `Use Grok Build to create hello.txt with content:\n${content}`,
+      sandboxRoot: root,
+      orchestration: async () => ({
+        state: "ran",
+        driver: "openclaw",
+        detail: "Session agent:board:main accepted the plan.",
+      }),
+      grokRunner: {
+        async run() {
+          await writeSandboxFile(root, "hello.txt", "local-fallback\n");
+          return { exitCode: 0, stdout: "" };
+        },
+      },
+      openclawWrite: async (relativePath, bytes) => {
+        await writeSandboxFile(root, relativePath, bytes);
+        return { ok: true, detail: "wrote" };
+      },
+    });
+    assert.equal(turn.coding?.wrote, true);
+    assert.equal(turn.coding?.via, "openclaw-write");
+    assert.equal(await readFile(path.join(root, "hello.txt"), "utf8"), content);
+    assert.match(turn.transcript, /OpenClaw write tool landed the file/);
+    assert.match(turn.transcript, /blocks fs_write/);
+    assert.doesNotMatch(turn.transcript, /fs_write landed/);
+    assert.equal(turn.qa?.pass, true);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a refused OpenClaw write does not land a local file", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-remote-refuse-"));
+  try {
+    const turn = await runChatTurn({
+      message: "Use Grok Build to create hello.txt with content:\nhello\n",
+      sandboxRoot: root,
+      orchestration: async () => ({
+        state: "ran",
+        driver: "openclaw",
+        detail: "Session agent:board:main accepted the plan.",
+      }),
+      grokRunner: {
+        async run() {
+          await writeSandboxFile(root, "hello.txt", "should-not\n");
+          return { exitCode: 0, stdout: "" };
+        },
+      },
+      openclawWrite: async () => ({ ok: false, detail: "refused" }),
+    });
+    assert.equal(turn.coding?.wrote, false);
+    assert.equal(turn.coding?.via, "openclaw-write");
+    assert.match(turn.transcript, /did not land the file/);
+    assert.match(turn.transcript, /did not write it locally/);
+    await assert.rejects(readFile(path.join(root, "hello.txt"), "utf8"));
+    assert.equal(turn.qa?.pass, false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
   }
 });
 

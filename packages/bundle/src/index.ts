@@ -5,6 +5,7 @@ export {
   resolveCodingMeter,
   runConnectedPath,
   sendOrchestrationTurn,
+  writeViaOpenClaw,
   type CodingMeter,
   type ConnectedReport,
 } from "./connected.js";

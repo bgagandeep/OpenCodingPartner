@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { routeWithPredict } from "@opencodingpartner/policy";
 import { runOnGrokBuild } from "@opencodingpartner/workers";
-import { deleteViaOpenClaw, LITELLM_LOCAL_BASE_URL, mkdirViaOpenClaw, renameViaOpenClaw, resolveCodingMeter, rmdirViaOpenClaw, runConnectedPath, writeViaOpenClaw } from "./connected.js";
+import { copyViaOpenClaw, deleteViaOpenClaw, LITELLM_LOCAL_BASE_URL, mkdirViaOpenClaw, renameViaOpenClaw, resolveCodingMeter, rmdirViaOpenClaw, runConnectedPath, writeViaOpenClaw } from "./connected.js";
 import { startSandboxWriteBridge } from "./write-bridge.js";
 import { predictWithLaya } from "./laya.js";
 
@@ -388,6 +388,84 @@ test("the gateway invokes rmdir and does not send fs_rmdir", async () => {
     );
     assert.equal(missing.missing, true);
     assert.equal(await readFile(path.join(root, "src", "full", "note.txt"), "utf8"), "keep\n");
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+    await bridge.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("the gateway invokes copy and does not send fs_copy", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-copy-http-"));
+  const bridge = await startSandboxWriteBridge(root);
+  await mkdir(path.join(root, "src"), { recursive: true });
+  await writeFile(path.join(root, "src", "old.txt"), "keep\n");
+  await writeFile(path.join(root, "src", "kept.txt"), "stay\n");
+  const seen: { tool?: string }[] = [];
+  const server = createServer(async (req, res) => {
+    if (req.url === "/healthz") {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end('{"ok":true}');
+      return;
+    }
+    const chunks: Buffer[] = [];
+    for await (const chunk of req) chunks.push(chunk as Buffer);
+    const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as {
+      tool?: string;
+      args?: { bridgeUrl?: string; from?: string; to?: string };
+    };
+    seen.push({ tool: body.tool });
+    if (body.tool === "fs_copy" || body.tool === "fs_write") {
+      res.writeHead(404, { "content-type": "application/json" });
+      res.end('{"ok":false}');
+      return;
+    }
+    if (body.args?.bridgeUrl && body.tool === "ocp_sandbox_copy") {
+      const forwarded = await fetch(body.args.bridgeUrl, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ from: body.args.from, to: body.args.to }),
+      });
+      res.writeHead(forwarded.status, { "content-type": "application/json" });
+      res.end(await forwarded.text());
+      return;
+    }
+    res.writeHead(404, { "content-type": "application/json" });
+    res.end('{"ok":false}');
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+  const port = (server.address() as AddressInfo).port;
+  const deps = { env: { OCP_WRITE_BRIDGE_URL: bridge.url }, bins: {}, gatewayHttp: `http://127.0.0.1:${port}` };
+  try {
+    const copied = await copyViaOpenClaw(deps, root, "src/old.txt", "src/lib/old.txt");
+    assert.equal(copied.ok, true);
+    assert.equal(copied.missing, false);
+    assert.equal(await readFile(path.join(root, "src", "old.txt"), "utf8"), "keep\n");
+    assert.equal(await readFile(path.join(root, "src", "lib", "old.txt"), "utf8"), "keep\n");
+    const overwrite = await copyViaOpenClaw(deps, root, "src/old.txt", "src/kept.txt");
+    assert.equal(overwrite.ok, false);
+    assert.equal(await readFile(path.join(root, "src", "kept.txt"), "utf8"), "stay\n");
+    const escaped = await copyViaOpenClaw(deps, root, "../outside.txt", "src/x.txt");
+    assert.equal(escaped.ok, false);
+    assert.equal(escaped.missing, false);
+    assert.equal(seen.some((call) => call.tool === "fs_copy"), false);
+    assert.equal(seen.some((call) => call.tool === "ocp_sandbox_copy"), true);
+    const missing = await copyViaOpenClaw(
+      {
+        env: { OCP_WRITE_BRIDGE_URL: bridge.url },
+        bins: {},
+        gatewayHttp: `http://127.0.0.1:${port}`,
+        fetchImpl: async (url) => {
+          if (String(url).endsWith("/healthz")) return new Response('{"ok":true}', { status: 200 });
+          return new Response('{"ok":false}', { status: 404 });
+        },
+      },
+      root,
+      "src/old.txt",
+      "src/later.txt",
+    );
+    assert.equal(missing.missing, true);
+    await assert.rejects(readFile(path.join(root, "src", "later.txt"), "utf8"));
   } finally {
     await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
     await bridge.close();

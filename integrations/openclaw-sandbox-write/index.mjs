@@ -76,6 +76,22 @@ export default function register(api) {
     },
   });
   api.registerTool({
+    name: "ocp_sandbox_copy",
+    description: "Copy one sandbox file through the OpenCodingPartner write bridge.",
+    parameters: {
+      type: "object",
+      properties: {
+        bridgeUrl: { type: "string" },
+        from: { type: "string" },
+        to: { type: "string" },
+      },
+      required: ["bridgeUrl", "from", "to"],
+    },
+    async execute(_id, args) {
+      return postBridge(args.bridgeUrl, { from: args.from, to: args.to });
+    },
+  });
+  api.registerTool({
     name: "ocp_sandbox_rename",
     description: "Rename one sandbox file through the OpenCodingPartner write bridge.",
     parameters: {

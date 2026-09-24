@@ -293,6 +293,19 @@ export async function rmdirViaOpenClaw(
 }
 
 /**
+ * Ask the gateway to invoke the copy bridge. This function does not copy the file.
+ * A missing plugin returns missing so the turn can copy locally.
+ */
+export async function copyViaOpenClaw(
+  deps: ConnectedDeps,
+  sandboxRoot: string,
+  fromPath: string,
+  toPath: string,
+): Promise<OpenClawFileResult> {
+  return invokeSandboxAction(deps, sandboxRoot, "ocp_sandbox_copy", "/copy", { from: fromPath, to: toPath }, fromPath, toPath);
+}
+
+/**
  * Ask the gateway to invoke the rename bridge. This function does not move the file.
  * `fs_move` is never sent. A missing plugin returns missing so the turn can rename locally.
  */
@@ -308,8 +321,8 @@ export async function renameViaOpenClaw(
 async function invokeSandboxAction(
   deps: ConnectedDeps,
   sandboxRoot: string,
-  tool: "ocp_sandbox_delete" | "ocp_sandbox_rename" | "ocp_sandbox_mkdir" | "ocp_sandbox_rmdir",
-  actionPath: "/delete" | "/rename" | "/mkdir" | "/rmdir",
+  tool: "ocp_sandbox_delete" | "ocp_sandbox_rename" | "ocp_sandbox_mkdir" | "ocp_sandbox_rmdir" | "ocp_sandbox_copy",
+  actionPath: "/delete" | "/rename" | "/mkdir" | "/rmdir" | "/copy",
   args: Record<string, string>,
   ...paths: string[]
 ): Promise<OpenClawFileResult> {
@@ -339,14 +352,14 @@ async function invokeSandboxAction(
   return { ok: false, missing: false, detail: bridged.detail };
 }
 
-const GATEWAY_TOOLS = new Set(["ocp_sandbox_write", "ocp_sandbox_delete", "ocp_sandbox_rename", "ocp_sandbox_mkdir", "ocp_sandbox_rmdir", "write"]);
+const GATEWAY_TOOLS = new Set(["ocp_sandbox_write", "ocp_sandbox_delete", "ocp_sandbox_rename", "ocp_sandbox_mkdir", "ocp_sandbox_rmdir", "ocp_sandbox_copy", "write"]);
 
 async function invokeGatewayTool(
   deps: ConnectedDeps,
   gatewayHttp: string,
   exec: NonNullable<ConnectedDeps["exec"]>,
   fetchImpl: typeof fetch,
-  tool: "ocp_sandbox_write" | "ocp_sandbox_delete" | "ocp_sandbox_rename" | "ocp_sandbox_mkdir" | "ocp_sandbox_rmdir" | "write",
+  tool: "ocp_sandbox_write" | "ocp_sandbox_delete" | "ocp_sandbox_rename" | "ocp_sandbox_mkdir" | "ocp_sandbox_rmdir" | "ocp_sandbox_copy" | "write",
   args: Record<string, string>,
 ): Promise<{ ok: boolean; missing: boolean; detail: string }> {
   if (!GATEWAY_TOOLS.has(tool)) {

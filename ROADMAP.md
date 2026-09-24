@@ -1,6 +1,6 @@
 # Roadmap
 
-The finish line for this sequence is a Board UAT of the mesh, with every runtime either real or visibly unwired. Dates are not the plan. The order is.
+The goal is a Board review of the real request path. Each runtime is either running or clearly unwired. Dates are not the plan. The order is.
 
 ## 1. Foundation (this tree)
 

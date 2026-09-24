@@ -1,10 +1,10 @@
 # OpenCodingPartner
 
-OpenCodingPartner is a free, open-source control plane for agentic coding. One gateway owns the session. A small decision model chooses the lane. A manager writes a bounded plan. One coding worker executes that plan. The operator owns every model credential, weight file, and coding-runtime account.
+OpenCodingPartner handles one coding request at a time. It picks the session, decides what to do, writes a short plan, then one worker runs that plan. You own the model keys, the Laya weights, and the coding-tool account.
 
-The repository is private while the Board reviews it. The core is intended to stay free when the project is public. Consult and enterprise packs are a reserved name with no code (`packs/enterprise`).
+The repo is private while the Board reviews it. The core is meant to stay free when it is public. Consult and enterprise packs are a reserved folder with no code (`packs/enterprise`).
 
-This foundation runs that control plane on a laptop, offline. It records an honest seam where a chat model, the Laya weights, or Grok Build will sit later. The demo does not pretend those runtimes were called.
+This version runs on a laptop with no network. A chat model, the Laya weights, and Grok Build are named places to connect later. The demo does not call them.
 
 ## License
 
@@ -12,8 +12,8 @@ Apache-2.0. See [LICENSE](LICENSE).
 
 Apache-2.0 is the fit for three reasons:
 
-- The patent grant matters for an orchestration layer that will sit beside coding runtimes.
-- Two upstreams this mesh is built to call are already Apache-2.0: [Grok Build](https://github.com/xai-org/grok-build) and the [Laya](https://pypi.org/project/laya/) package (0.3.7). Staying in that family keeps a later in-process or vendored adapter simpler.
+- The patent grant matters for a control plane that will sit beside coding tools.
+- Two projects this repo is built to call are already Apache-2.0: [Grok Build](https://github.com/xai-org/grok-build) and the [Laya](https://pypi.org/project/laya/) package (0.3.7). The same license keeps a later adapter simpler.
 - MIT is shorter and omits the patent grant. That grant is the part we want on the core.
 
 OpenCodingPartner is independent of xAI, the OpenClaw project, and Convai Innovations. Citations below are so operators can check the pattern against the real upstream. They are not endorsements, certifications, or a partnership.

@@ -896,12 +896,13 @@ test("a follow-up turn sees the files from the previous turn", async () => {
       async run(argv: readonly string[]) {
         const prompt = argv[argv.indexOf("-p") + 1] ?? "";
         prompts.push(prompt);
-        if (prompt.includes("create the add function")) {
+        const request = prompt.split("User request:\n").pop()?.split("\nReply with JSON")[0] ?? prompt;
+        if (request.includes("create the add function")) {
           await writeSandboxFile(root, "src/math.ts", "export function add(left: number, right: number): number {\n  return left + right;\n}\n");
-        } else if (prompt.includes("add tests")) {
+        } else if (request.includes("add tests")) {
           assert.match(prompt, /export function add/);
           await writeSandboxFile(root, "src/math.test.ts", "import { add } from \"./math.js\";\nimport assert from \"node:assert/strict\";\nassert.equal(add(2, 3), 4);\n");
-        } else if (prompt.includes("fix the failing assert")) {
+        } else if (request.includes("fix the failing assert")) {
           assert.match(prompt, /assert.equal\(add\(2, 3\), 4\)/);
           await writeSandboxFile(root, "src/math.test.ts", "import { add } from \"./math.js\";\nimport assert from \"node:assert/strict\";\nassert.equal(add(2, 3), 5);\n");
         }
@@ -923,6 +924,38 @@ test("a follow-up turn sees the files from the previous turn", async () => {
     assert.match(await readFile(path.join(root, "src/math.test.ts"), "utf8"), /add\(2, 3\), 5\)/);
   } finally {
     await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a follow-up prompt remembers the prior user text and drops a blocked secret", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-memory-"));
+  const other = await mkdtemp(path.join(tmpdir(), "ocp-memory-other-"));
+  try {
+    const prompts: string[] = [];
+    const runner = {
+      async run(argv: readonly string[]) {
+        const prompt = argv[argv.indexOf("-p") + 1] ?? "";
+        prompts.push(prompt);
+        if (prompt.includes("add a README section explaining install") && !prompt.includes("Prior turns:")) {
+          await writeSandboxFile(root, "README.md", "# Install\n");
+          await writeSandboxFile(root, "secret.txt", "password=hunter2\n");
+        }
+        return { exitCode: 0, stdout: "" };
+      },
+    };
+    await runChatTurn({ message: "add a README section explaining install", sandboxRoot: root, grokRunner: runner });
+    await runChatTurn({ message: "also add subtract", sandboxRoot: root, grokRunner: runner });
+    const second = prompts[1] ?? "";
+    assert.match(second, /Prior turns:/);
+    assert.match(second, /add a README section explaining install/);
+    assert.doesNotMatch(second, /hunter2/);
+    prompts.length = 0;
+    await runChatTurn({ message: "add a note in other.txt", sandboxRoot: other, grokRunner: runner });
+    assert.doesNotMatch(prompts[0] ?? "", /add a README section explaining install/);
+    assert.doesNotMatch(prompts[0] ?? "", /hunter2/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(other, { recursive: true, force: true });
   }
 });
 

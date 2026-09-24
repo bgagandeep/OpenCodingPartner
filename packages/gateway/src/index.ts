@@ -90,6 +90,9 @@ export interface ChatTurnResult {
 
 const lanes = new Map<string, Promise<void>>();
 const completed = new Map<string, ChatTurnResult>();
+const sessionHistory = new Map<string, string[]>();
+const HISTORY_TURNS = 6;
+const HISTORY_CHARS = 4000;
 
 type CodingVia = "local-sandbox" | "grok-build" | "openai-compatible" | "litellm" | "openclaw-write";
 
@@ -179,6 +182,7 @@ async function executeTurn(input: ChatTurnInput, session: SwarmSession, key: str
       transcript: "",
     };
     failedResult.transcript = formatTranscript(failedResult);
+    rememberTurn(session.key, input.sandboxRoot, input.message, coding, qa, security);
     completed.set(key, failedResult);
     return failedResult;
   }
@@ -456,6 +460,7 @@ async function executeTurn(input: ChatTurnInput, session: SwarmSession, key: str
       transcript: "",
     }),
   };
+  rememberTurn(session.key, input.sandboxRoot, input.message, coding, qa, security);
   completed.set(key, result);
   return result;
 }
@@ -810,7 +815,37 @@ function defaultCheckExec(argv: readonly string[], cwd: string): Promise<{ code:
   });
 }
 
-/** Put existing sandbox files in the meter prompt. Secret files stay out. */
+function historyKey(sessionKey: string, sandboxRoot: string): string {
+  return `${sessionKey}\n${path.resolve(sandboxRoot)}`;
+}
+
+function priorTurns(sandboxRoot: string): string {
+  const lines = sessionHistory.get(historyKey(boardSession().key, sandboxRoot)) ?? [];
+  if (lines.length === 0) return "";
+  return `Prior turns:\n${lines.join("\n")}\n`;
+}
+
+function rememberTurn(
+  sessionKey: string,
+  sandboxRoot: string,
+  message: string,
+  coding: ChatTurnResult["coding"],
+  qa: QaResult | null,
+  security: GateDecision | null,
+): void {
+  const gate = securityGate({ relativePath: "turn.txt", content: message, sandboxRoot });
+  const user = gate.allow ? message.replace(/\s+/g, " ").trim().slice(0, 400) : "[blocked]";
+  const wrote = coding?.wrote && coding.relativePath !== "no files" ? `Wrote ${coding.relativePath}.` : "No file written.";
+  const qaLine = qa ? (qa.pass ? "QA pass." : "QA fail.") : "QA not run.";
+  const blocked = security && !security.allow ? " Security blocked a write." : "";
+  const line = `User: ${user} Outcome: ${wrote} ${qaLine}${blocked}`;
+  const key = historyKey(sessionKey, sandboxRoot);
+  const next = [...(sessionHistory.get(key) ?? []), line].slice(-HISTORY_TURNS);
+  while (next.join("\n").length > HISTORY_CHARS && next.length > 1) next.shift();
+  sessionHistory.set(key, next);
+}
+
+/** Put existing sandbox files and prior turns in the meter prompt. Secret files stay out. */
 async function codingPrompt(sandboxRoot: string, message: string): Promise<string> {
   const files = await snapshotSandbox(sandboxRoot);
   const blocks: string[] = [];
@@ -827,7 +862,8 @@ async function codingPrompt(sandboxRoot: string, message: string): Promise<strin
     used += block.length;
   }
   const filesNote = message.startsWith("Tool observations:") || blocks.length === 0 ? "" : `Sandbox files already on disk:\n${blocks.join("\n")}\n`;
-  return `${filesNote}User request:\n${message}\nReply with JSON only: {"steps":[{"tool":"list"|"read"|"grep"|"run"|"write"|"patch","query":"text or /regex/","path":"relative","content":"full text for write","diff":"unified diff for patch","argv":["node","--test","relative.test.ts"]}],"done":false}. One reply is one round. After you see Tool observations, send the next round. Set "done" to true when finished. List or read before you edit. Patch a file that already exists. Write only a new file. The only command is node --test plus relative paths.`;
+  const history = priorTurns(sandboxRoot);
+  return `${history}${filesNote}User request:\n${message}\nReply with JSON only: {"steps":[{"tool":"list"|"read"|"grep"|"run"|"write"|"patch","query":"text or /regex/","path":"relative","content":"full text for write","diff":"unified diff for patch","argv":["node","--test","relative.test.ts"]}],"done":false}. One reply is one round. After you see Tool observations, send the next round. Set "done" to true when finished. List or read before you edit. Patch a file that already exists. Write only a new file. The only command is node --test plus relative paths.`;
 }
 
 async function fileMatches(sandboxRoot: string, relativePath: string, content: string): Promise<boolean> {

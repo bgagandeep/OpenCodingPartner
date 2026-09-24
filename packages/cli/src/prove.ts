@@ -2,6 +2,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { runChatTurn } from "@opencodingpartner/gateway";
+import type { BrowserDriver } from "@opencodingpartner/workers";
 
 const MATH = "src/math.mjs";
 const TEST = "src/math.test.mjs";
@@ -86,6 +87,90 @@ export async function proveCoding(): Promise<{ code: number; text: string }> {
     return {
       code: 0,
       text: `ocp prove coding\nPassed. A scripted runner made src/, wrote ${MATH}, globbed it, patched add, and node --test exited 0.\nNo live meter ran. No API key was used.\n\n${turn.transcript}`,
+    };
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
+const PROVE_PAGE = 'sell this page. Open https://example.com then scroll down then expect text "lower"';
+
+function fakeBrowser(): BrowserDriver {
+  const png = Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10]);
+  const top = { title: "Example", text: "top", screenshotPng: png };
+  const lower = { title: "Example", text: "lower", screenshotPng: png };
+  return {
+    async start() {
+      return {
+        async open() {
+          return top;
+        },
+        async readScreen() {
+          return lower;
+        },
+        async typeInto() {
+          return lower;
+        },
+        async scrollBy() {
+          return lower;
+        },
+        async close() {
+          return undefined;
+        },
+      };
+    },
+  };
+}
+
+/**
+ * One scripted computer chain. A fake browser driver does the work.
+ * Playwright is not required. OpenClaw does not run the browser.
+ */
+export async function proveComputer(): Promise<{ code: number; text: string }> {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-prove-computer-"));
+  try {
+    const turn = await runChatTurn({
+      message: PROVE_PAGE,
+      sandboxRoot: root,
+      computerExecute: true,
+      browserDriver: fakeBrowser(),
+    });
+    const reasons: string[] = [];
+    let run: { steps?: { kind?: string; passed?: boolean; screenshot?: string; executed?: boolean }[] } = {};
+    try {
+      run = JSON.parse(await readFile(path.join(root, "gtm", "last-run.json"), "utf8")) as typeof run;
+    } catch {
+      reasons.push("gtm/last-run.json is missing");
+    }
+    const scroll = run.steps?.find((step) => step.kind === "scroll");
+    if (!scroll?.passed || !scroll.screenshot) reasons.push("scroll did not pass with a screenshot");
+    else {
+      try {
+        const bytes = await readFile(path.join(root, scroll.screenshot));
+        if (bytes.length === 0) reasons.push("scroll screenshot is empty");
+      } catch {
+        reasons.push("scroll screenshot file is missing");
+      }
+    }
+    if (!turn.transcript.includes("- scroll") || !/scroll[^\n]*executed: true/.test(turn.transcript)) {
+      reasons.push("transcript did not show a scroll that ran");
+    }
+    if (!turn.transcript.includes("verify lower")) {
+      reasons.push("transcript did not show the page check");
+    }
+    if (/OpenClaw (opened|ran the browser)/i.test(turn.transcript)) {
+      reasons.push("transcript claimed OpenClaw ran the browser");
+    }
+    if (turn.qa?.pass !== true) reasons.push("the page check did not pass");
+    if (reasons.length > 0) {
+      return {
+        code: 1,
+        text: `ocp prove computer\nFailed. ${reasons[0]}\nThis proof uses a fake browser driver. OpenClaw does not run the browser. It does not print keys.\n`,
+      };
+    }
+    return {
+      code: 0,
+      text: `ocp prove computer\nPassed. A fake browser driver opened https://example.com, scrolled, and the page text matched.\nOpenClaw did not run the browser. Playwright was not required. No API key was used.\n\n${turn.transcript}`,
     };
   } finally {
     await rm(root, { recursive: true, force: true });

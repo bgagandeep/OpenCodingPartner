@@ -85,6 +85,31 @@ test("ocp prove coding passes with a scripted runner and does not print a key", 
   }
 });
 
+test("ocp prove computer passes with a fake browser and does not print a key", async () => {
+  let captured = "";
+  const original = process.stdout.write.bind(process.stdout);
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    captured += String(chunk);
+    return true;
+  }) as typeof process.stdout.write;
+  const previous = process.env.LITELLM_API_KEY;
+  process.env.LITELLM_API_KEY = "prove-computer-secret";
+  try {
+    const code = await main(["prove", "computer"]);
+    assert.equal(code, 0);
+    assert.match(captured, /Passed\./);
+    assert.match(captured, /scroll/);
+    assert.match(captured, /executed: true/);
+    assert.match(captured, /OpenClaw did not run the browser/);
+    assert.doesNotMatch(captured, /OpenClaw ran the browser/);
+    assert.doesNotMatch(captured, /prove-computer-secret/);
+  } finally {
+    if (previous === undefined) delete process.env.LITELLM_API_KEY;
+    else process.env.LITELLM_API_KEY = previous;
+    process.stdout.write = original;
+  }
+});
+
 test("the cli file is the ocp entry when spawned", () => {
   const root = mkdtempSync(path.join(tmpdir(), "ocp-spawn-"));
   try {

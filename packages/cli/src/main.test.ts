@@ -107,6 +107,7 @@ test("ocp prove computer passes with a fake browser and does not print a key", a
     assert.match(captured, /double-click #buy/);
     assert.match(captured, /right-click #buy/);
     assert.match(captured, /fill #email/);
+    assert.match(captured, /select #plan/);
     assert.match(captured, /executed: true/);
     assert.match(captured, /not a full go-to-market run/);
     assert.match(captured, /OpenClaw did not run the browser/);

@@ -57,6 +57,34 @@ test("ocp doctor prints a status and does not print the meter key", async () => 
   }
 });
 
+test("ocp prove coding passes with a scripted runner and does not print a key", async () => {
+  let captured = "";
+  const original = process.stdout.write.bind(process.stdout);
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    captured += String(chunk);
+    return true;
+  }) as typeof process.stdout.write;
+  const previous = process.env.LITELLM_API_KEY;
+  process.env.LITELLM_API_KEY = "prove-secret-value";
+  try {
+    const code = await main(["prove", "coding"]);
+    assert.equal(code, 0);
+    assert.match(captured, /Passed\./);
+    assert.match(captured, /Tool: mkdir src/);
+    assert.match(captured, /Tool: glob src\/\*\*\/\*\.mjs/);
+    assert.match(captured, /Tool: patch src\/math\.mjs/);
+    assert.match(captured, /Tool: run node --test src\/math\.test\.mjs \(exit 0\)/);
+    assert.match(captured, /Mkdir path: local sandbox/);
+    assert.match(captured, /Meter: scripted/);
+    assert.doesNotMatch(captured, /prove-secret-value/);
+    assert.doesNotMatch(captured, /Meter: Grok Build/);
+  } finally {
+    if (previous === undefined) delete process.env.LITELLM_API_KEY;
+    else process.env.LITELLM_API_KEY = previous;
+    process.stdout.write = original;
+  }
+});
+
 test("the cli file is the ocp entry when spawned", () => {
   const root = mkdtempSync(path.join(tmpdir(), "ocp-spawn-"));
   try {

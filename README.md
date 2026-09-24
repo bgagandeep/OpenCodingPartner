@@ -33,6 +33,14 @@ hello
 "
 ```
 
+Scripted coding proof, with no meter key:
+
+```bash
+pnpm exec ocp prove coding
+```
+
+That command runs one local turn in a temp sandbox. It creates `src/`, writes a small add function, globs `src/**/*.mjs`, patches the function, and runs `node --test`. Exit 0 means those files and transcript lines matched. It prints `Passed.` It does not call LiteLLM, OpenAI, or Grok, and it does not print keys. `pnpm proof:coding` is different: that one needs a meter key.
+
 Read the transcript. `System-1: real Laya.` or `System-1: fallback.` `Write path: OpenClaw-driven.` only if the gateway accepted the plan and the write landed. Otherwise `Write path: local sandbox.` `Meter: LiteLLM`, `Meter: OpenAI-compatible`, `Meter: Grok Build`, or `Meter: none`. The offline command `pnpm exec ocp demo --sandbox .sandbox` does not pretend those live pieces ran.
 
 ## Which tool runs what

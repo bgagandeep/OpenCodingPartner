@@ -14,7 +14,8 @@
     "bundle:install": "tsc -b && node packages/bundle/dist/install.js",
     "bundle:install:laya": "tsc -b && node packages/bundle/dist/install.js --laya-only",
     "bundle:plan": "tsc -b && node packages/bundle/dist/install.js --dry-run",
-    "proof:coding": "tsc -b && node scripts/proof-coding.mjs"
+    "proof:coding": "tsc -b && node scripts/proof-coding.mjs",
+    "prove:coding": "tsc -b && node packages/cli/dist/main.js prove coding"
   },
   "dependencies": {
     "@opencodingpartner/cli": "workspace:*"

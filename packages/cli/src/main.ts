@@ -9,6 +9,7 @@ import { access, readFile } from "node:fs/promises";
 import { runChatTurn, runDemo, type ChatTurnInput } from "@opencodingpartner/gateway";
 import { playwrightBrowserDriver } from "@opencodingpartner/workers";
 import { routeWithPredict } from "@opencodingpartner/policy";
+import { proveCoding } from "./prove.js";
 import { runChatRepl } from "./repl.js";
 
 function sameFile(left: string, right: string): boolean {
@@ -63,6 +64,11 @@ export async function main(argv: readonly string[]): Promise<number> {
     const demo = await runDemo(sandbox);
     process.stdout.write(demo.transcript);
     return demo.code;
+  }
+  if (command === "prove" && tail[0] === "coding") {
+    const proof = await proveCoding();
+    process.stdout.write(proof.text);
+    return proof.code;
   }
   if (command === "doctor") {
     const repoRoot = path.resolve(fileURLToPath(new URL("../../../", import.meta.url)));
@@ -119,7 +125,7 @@ export async function main(argv: readonly string[]): Promise<number> {
     return 0;
   }
   process.stdout.write(
-    "OpenCodingPartner chat agent\n\n  ocp chat --sandbox .sandbox\n  ocp chat --sandbox .sandbox \"Use Grok Build to create hello.txt with content:\nhello\n\"\n  ocp chat --sandbox .sandbox --computer-execute \"Open https://example.com\"\n  ocp demo --sandbox .sandbox\n  ocp doctor\n\nOpenClaw owns the session plan. After it accepts the plan, it invokes the sandbox write bridge. The transcript says Write path: OpenClaw-driven. Delete and rename use the same bridge when the gateway drove the turn. When the gateway is down, the transcript says Write path: local sandbox. fs_write, apply_patch, and sessions_spawn stay blocked.\nThe computer agent opens a browser only with --computer-execute or OCP_COMPUTER_EXECUTE=1. It opens a named http(s) URL, reads the screen, and types into one selector when you ask.\n",
+    "OpenCodingPartner chat agent\n\n  ocp chat --sandbox .sandbox\n  ocp chat --sandbox .sandbox \"Use Grok Build to create hello.txt with content:\nhello\n\"\n  ocp chat --sandbox .sandbox --computer-execute \"Open https://example.com\"\n  ocp demo --sandbox .sandbox\n  ocp doctor\n  ocp prove coding\n\nOpenClaw owns the session plan. After it accepts the plan, it invokes the sandbox write bridge. The transcript says Write path: OpenClaw-driven. Delete and rename use the same bridge when the gateway drove the turn. When the gateway is down, the transcript says Write path: local sandbox. fs_write, apply_patch, and sessions_spawn stay blocked.\nThe computer agent opens a browser only with --computer-execute or OCP_COMPUTER_EXECUTE=1. It opens a named http(s) URL, reads the screen, and types into one selector when you ask.\n",
   );
   return command === undefined || command === "--help" || command === "-h" ? 0 : 2;
 }

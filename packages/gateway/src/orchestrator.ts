@@ -20,7 +20,6 @@ import {
   type RouteDecision,
 } from "@opencodingpartner/policy";
 import {
-  CursorCloudCodingWorker,
   GrokBuildCodingWorker,
   LocalSandboxWorker,
   type CodingWorker,
@@ -291,7 +290,7 @@ export class Orchestrator {
     }
 
     const workerId = prediction.answers.worker.choice;
-    if (workerId !== "local-sandbox" && workerId !== "cursor-cloud" && workerId !== "grok-build") {
+    if (workerId !== "local-sandbox" && workerId !== "grok-build") {
       trace.push({ type: "control.blocked", reason: "route did not name a coding worker" });
       return this.finish({
         ok: true,
@@ -445,7 +444,6 @@ function defaultManagers(): Map<Manager["id"], Manager> {
 function defaultWorkers(): Map<CodingWorkerId, CodingWorker> {
   return new Map<CodingWorkerId, CodingWorker>([
     ["local-sandbox", new LocalSandboxWorker()],
-    ["cursor-cloud", new CursorCloudCodingWorker()],
     ["grok-build", new GrokBuildCodingWorker()],
   ]);
 }

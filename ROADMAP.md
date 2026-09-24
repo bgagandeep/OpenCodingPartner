@@ -7,7 +7,7 @@ The finish line for this sequence is a Board UAT of the mesh, with every runtime
 - Contracts for a Laya-shaped route, a manager plan, and one coding worker.
 - In-process session lane and the CLI binding `agent:board:main`.
 - Mock policy router, deterministic managers, local sandbox worker that writes a real file.
-- Cursor Cloud and Grok Build request builders with injected transports.
+- Grok Build request builder with an injected runner. The local sandbox worker is the offline runtime.
 - Offline tests, including the CLI demo.
 - Apache-2.0 core. Enterprise pack is a stub page.
 
@@ -27,11 +27,7 @@ A manager implementation that sends the route and the operator message to a chat
 
 An opt-in runner that spawns the operator's `grok` binary with the argv `buildGrokHeadlessInvocation` already builds, then maps the streaming-json result back onto `WorkerResult`. No spawn unless that runner is selected.
 
-## 6. Cursor Cloud worker
-
-An opt-in transport that `POST`s the body `buildCursorCreateAgentRequest` already builds to `/v1/agents`, then polls the run. The API key stays in the operator's environment. `autoCreatePR` stays false until a UAT case asks for a pull request on purpose.
-
-## 7. Board UAT
+## 6. Board UAT
 
 A scripted set of turns on the Board session, reviewed from the trace rather than from a chat scroll:
 
@@ -40,11 +36,11 @@ A scripted set of turns on the Board session, reviewed from the trace rather tha
 - Payment and advertisement wording stops before a worker.
 - A path that escapes the sandbox stops before a write.
 - A route with `needs_human` at or above 0.5 stops before a write.
-- Cursor and Grok stay quiet unless that scenario injects a transport.
+- Grok Build stays quiet unless that scenario injects a runner.
 - Replay of an idempotency key does not write twice.
 
 UAT passes when those traces match, on the daemon from phase 2, with Laya and one external worker available to turn on. The local sandbox worker remains a valid worker for air-gapped review.
 
-## 8. Consult and enterprise packs
+## 7. Consult and enterprise packs
 
 Still a stub (`packs/enterprise/README.md`). Any future pack is optional to the core, documents its own terms, and is not required to run the mesh. The core stays free of advertisements and of any OpenCodingPartner payment flow.

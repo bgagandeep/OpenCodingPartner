@@ -14,7 +14,7 @@ pnpm test
 pnpm demo
 ```
 
-`pnpm test` typechecks the workspace, then runs the offline suite. The suite does not download weights and does not call Cursor or Grok Build.
+`pnpm test` typechecks the workspace, then runs the offline suite. The suite does not download weights and does not spawn Grok Build.
 
 ## What belongs in the core
 
@@ -26,7 +26,7 @@ pnpm demo
 
 - Advertisements.
 - Any integration that charges a card, opens a checkout, or meters usage for OpenCodingPartner itself. Operators already pay their own model and runtime accounts.
-- Claims that xAI, Cursor, OpenClaw, or Convai Innovations ship, certify, or partner on this project.
+- Claims that xAI, OpenClaw, or Convai Innovations ship, certify, or partner on this project.
 - A speculative swarm that fans one turn out to several coding runtimes. `FOUNDATION_LIMITS.maxWorkersPerTurn` is 1 until the Board changes that on purpose.
 - Vendored weight files. Laya stays behind `integrations/laya/predict.py`.
 

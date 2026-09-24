@@ -62,12 +62,19 @@ test("readme cites the real upstreams and the license", async () => {
     "https://github.com/openclaw/openclaw",
     "https://github.com/xai-org/grok-build",
     "https://huggingface.co/convaiinnovations/laya",
-    "https://cursor.com/docs/cloud-agent/api/endpoints",
     "Apache-2.0",
   ]) {
     assert.equal(readme.includes(needle), true, needle);
   }
+  assert.equal(/\bcursor\b/i.test(readme), false);
   const architecture = await readFile(path.join(root, "ARCHITECTURE.md"), "utf8");
+  const roadmap = await readFile(path.join(root, "ROADMAP.md"), "utf8");
+  const contributing = await readFile(path.join(root, "CONTRIBUTING.md"), "utf8");
   assert.equal(architecture.includes("System-1"), true);
   assert.equal(architecture.includes("speculativeSwarm"), true);
+  assert.equal(architecture.includes("OpenClaw"), true);
+  assert.equal(architecture.includes("Grok Build"), true);
+  for (const text of [architecture, roadmap, contributing]) {
+    assert.equal(/\bcursor\b/i.test(text), false);
+  }
 });

@@ -6,7 +6,6 @@ import test from "node:test";
 
 import { PathRejectedError, type CodingDispatch, type WorkerTask } from "@opencodingpartner/mesh";
 
-import { CursorCloudCodingWorker, buildCursorCreateAgentRequest } from "./cursor-cloud.js";
 import { GrokBuildCodingWorker, buildGrokHeadlessInvocation } from "./grok-build.js";
 import { LocalSandboxWorker } from "./local-sandbox.js";
 import { CodingWorkerNotConfiguredError } from "./worker.js";
@@ -40,44 +39,6 @@ test("local sandbox worker writes only inside the sandbox", async () => {
     () => new LocalSandboxWorker().dispatch(dispatch(root, "../outside.txt")),
     PathRejectedError,
   );
-});
-
-test("cursor request matches the v1 create-agent shape and stays offline by default", async () => {
-  const body = buildCursorCreateAgentRequest({
-    prompt: "Perform exactly one file write.",
-    repositoryUrl: "https://github.com/example/repo",
-    startingRef: "main",
-  });
-  assert.equal(body.autoCreatePR, false);
-  assert.equal(body.mode, "agent");
-  assert.equal(body.repos[0].url, "https://github.com/example/repo");
-  assert.equal(body.repos[0].startingRef, "main");
-  assert.equal(body.prompt.text.includes("Perform exactly one file write."), true);
-
-  const calls: unknown[] = [];
-  await assert.rejects(
-    () => new CursorCloudCodingWorker().dispatch(dispatch("/tmp/unused")),
-    CodingWorkerNotConfiguredError,
-  );
-  assert.equal(calls.length, 0);
-
-  const worker = new CursorCloudCodingWorker({
-    apiKey: "operator-key",
-    repositoryUrl: "https://github.com/example/repo",
-    startingRef: "main",
-    transport: {
-      async createAgent(request, apiKey) {
-        calls.push({ request, apiKey });
-        return { agentId: "bc-test", runId: "run-test", runStatus: "CREATING" };
-      },
-    },
-  });
-  const result = await worker.dispatch(dispatch("/tmp/unused"));
-  assert.equal(calls.length, 1);
-  const call = calls[0] as { request: { autoCreatePR: boolean }; apiKey: string };
-  assert.equal(call.apiKey, "operator-key");
-  assert.equal(call.request.autoCreatePR, false);
-  assert.equal(result.location.kind, "external");
 });
 
 test("grok invocation is the documented headless argv and does not spawn", async () => {

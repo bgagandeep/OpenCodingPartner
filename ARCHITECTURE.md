@@ -4,6 +4,21 @@ OpenCodingPartner is a chat agent that runs an orchestration agent swarm. You as
 
 There is a temporary early-test cap of 8 agents in the code. That cap is for early tests only. It is not a one-worker rule.
 
+## Product path
+
+`ocp chat` is the product. With no message, it is a chat loop. With a message, it runs one turn and exits.
+
+Each turn does this:
+
+1. The chat agent opens the orchestration session `agent:board:main`.
+2. If the OpenClaw gateway answers `/healthz`, the same message is sent with `sessions.send`. If it does not answer, the transcript says the gateway was skipped and the local swarm continues.
+3. The swarm stands up a coding agent, a QA agent, a security agent, and a computer agent.
+4. The security agent checks the path and the contents before a write.
+5. The coding agent writes the file. It uses the bundled `grok` binary when `XAI_API_KEY` is set. Otherwise it uses the local sandbox worker. The QA agent then checks that file.
+6. The computer agent writes a go-to-market plan. Actions stay `executed: false` unless you pass `--computer-execute`. Even then, this build does not run a live browser, so the actions stay `executed: false`.
+
+The transcript is one block: session, route, which agents stood up, the security decision, the file write, the QA result, and the computer plan.
+
 ## A turn
 
 1. You send a message to the chat agent (`ocp` or `opencodingpartner`).

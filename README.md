@@ -37,6 +37,42 @@ docker compose up -d openclaw-gateway
 
 The image is `ghcr.io/openclaw/openclaw:2026.9.6`.
 
+## Run a chat turn
+
+```bash
+pnpm install
+pnpm exec ocp chat --sandbox .sandbox
+```
+
+Type a message, then type `exit`. One turn stands up a coding agent, a QA agent, a security agent, and a computer agent. The transcript says what each one did.
+
+This message writes a file with the local sandbox worker:
+
+```text
+Use Grok Build to create hello.txt with content:
+hello
+```
+
+The security agent blocks a path that escapes the sandbox, and it blocks secrets. The QA agent checks the file that was written. The computer agent writes `gtm/action-plan.json`. Every computer action stays `executed: false`. `--computer-execute` records that you asked to run those actions. It still does not claim a live browser ran.
+
+You can also send one message and return:
+
+```bash
+pnpm exec ocp chat --sandbox .sandbox "Use Grok Build to create hello.txt with content:
+hello
+"
+```
+
+When the OpenClaw gateway is up, the same chat turn is also sent to session `agent:board:main`. When `XAI_API_KEY` is set and the bundled `grok` binary is installed, the coding agent edits the sandbox with Grok Build instead of the local writer. If the gateway is down, or the key is missing, the local swarm still writes the file. Do not commit `XAI_API_KEY` or `OPENCLAW_GATEWAY_TOKEN`.
+
+```bash
+pnpm bundle:install
+export OPENCLAW_GATEWAY_TOKEN="the gateway token"
+export XAI_API_KEY="the operator key"
+docker compose up -d openclaw-gateway
+pnpm exec ocp chat --sandbox .sandbox
+```
+
 ## Demo
 
 ```bash

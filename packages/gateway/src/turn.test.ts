@@ -907,6 +907,62 @@ test("git log --oneline -n runs, and a wide log is refused", async () => {
   }
 });
 
+test("git show HEAD:path runs, and other show forms are refused", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-git-show-"));
+  try {
+    const seen: string[][] = [];
+    const turn = await runChatTurn({
+      message: "fix the note and show the file at HEAD",
+      sandboxRoot: root,
+      checkExec: async (argv) => {
+        seen.push([...argv]);
+        return { code: 0, stdout: `${"x".repeat(2500)}\n`, stderr: "" };
+      },
+      grokRunner: {
+        async run() {
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify({
+              done: true,
+              steps: [{ tool: "run", argv: ["git", "show", "HEAD:src/math.ts"] }],
+            }),
+          };
+        },
+      },
+    });
+    assert.deepEqual(seen, [["git", "show", "HEAD:src/math.ts"]]);
+    assert.match(turn.transcript, /Tool: run git show HEAD:src\/math.ts \(exit 0, truncated\)/);
+    const refused = await runChatTurn({
+      message: "fix the note and refuse a bad git show",
+      sandboxRoot: root,
+      checkExec: async () => {
+        throw new Error("refused show must not run");
+      },
+      grokRunner: {
+        async run(argv) {
+          const prompt = argv[argv.indexOf("-p") + 1] ?? "";
+          if (prompt.includes("QA failed")) return { exitCode: 0, stdout: JSON.stringify({ done: true, steps: [] }) };
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify({
+              done: true,
+              steps: [
+                { tool: "run", argv: ["git", "show", "main:src/math.ts"] },
+                { tool: "run", argv: ["git", "show", "HEAD:../secret.ts"] },
+                { tool: "run", argv: ["git", "show", "--stat", "HEAD:src/math.ts"] },
+              ],
+            }),
+          };
+        },
+      },
+    });
+    assert.match(refused.transcript, /Tool: run refused/);
+    assert.doesNotMatch(refused.transcript, /exit 0/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("a coding turn writes a file and then renames it", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "ocp-rename-turn-"));
   try {

@@ -1,6 +1,7 @@
 declare module "playwright" {
   interface PlaywrightLocator {
     fill(text: string, options?: { timeout?: number }): Promise<void>;
+    selectOption(values: { label: string }, options?: { timeout?: number }): Promise<string[]>;
     innerText(options?: { timeout?: number }): Promise<string>;
     isVisible(options?: { timeout?: number }): Promise<boolean>;
     inputValue(options?: { timeout?: number }): Promise<string>;

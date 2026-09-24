@@ -1326,6 +1326,125 @@ test("fill clears a selector, and a missing selector stops the chain", async () 
   }
 });
 
+test("select chooses an option, and a missing selector or option stops the chain", async () => {
+  assert.deepEqual(computerChain('select "Plan" option "Pro"'), [{ kind: "select", target: "Plan", text: "text", value: "Pro" }]);
+  assert.deepEqual(computerChain('select #plan option "Pro"'), [{ kind: "select", target: "#plan", value: "Pro" }]);
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-select-"));
+  const png = Uint8Array.from([137, 80, 78, 71]);
+  try {
+    const chosen: { target: string; label: string; by: string }[] = [];
+    const plan = await executeComputerVisit({
+      productName: "OpenCodingPartner",
+      message: "Open https://example.com then select #plan option \"Pro\" then expect text \"saved\"",
+      sandboxRoot: root,
+      execute: true,
+      driver: {
+        async start() {
+          return {
+            async open() {
+              return { title: "Example", text: "page", screenshotPng: png };
+            },
+            async readScreen() {
+              return { title: "Example", text: "saved", screenshotPng: png };
+            },
+            async typeInto() {
+              return { title: "Example", text: "saved", screenshotPng: png };
+            },
+            async selectOption(target: string, label: string, by: "selector" | "text") {
+              chosen.push({ target, label, by });
+              return { title: "Example", text: "saved", screenshotPng: png };
+            },
+            async close() {
+              return undefined;
+            },
+          };
+        },
+      },
+    });
+    assert.deepEqual(chosen, [{ target: "#plan", label: "Pro", by: "selector" }]);
+    assert.equal(plan.actions.find((action) => action.kind === "select")?.passed, true);
+    const saved = JSON.parse(await readFile(path.join(root, "gtm/last-run.json"), "utf8")) as {
+      steps: { kind: string; passed?: boolean; screenshot?: string }[];
+    };
+    assert.ok(saved.steps.some((step) => step.kind === "select" && step.passed === true && step.screenshot));
+
+    const blocked = await mkdtemp(path.join(tmpdir(), "ocp-select-miss-"));
+    const refused = await executeComputerVisit({
+      productName: "OpenCodingPartner",
+      message: "Open https://example.com then select #missing option \"Pro\" then expect text \"saved\"",
+      sandboxRoot: blocked,
+      execute: true,
+      driver: {
+        async start() {
+          return {
+            async open() {
+              return { title: "Example", text: "page", screenshotPng: png };
+            },
+            async readScreen() {
+              return { title: "Example", text: "page", screenshotPng: png };
+            },
+            async typeInto() {
+              return { title: "Example", text: "page", screenshotPng: png };
+            },
+            async selectOption() {
+              throw new Error("selector missing");
+            },
+            async close() {
+              return undefined;
+            },
+          };
+        },
+      },
+    });
+    const step = refused.actions.find((action) => action.kind === "select");
+    assert.equal(step?.passed, false);
+    assert.match(step?.reason ?? "", /selector missing/);
+    assert.equal(refused.actions.find((action) => action.purpose === "Check the page text")?.executed, false);
+    const missed = JSON.parse(await readFile(path.join(blocked, "gtm/last-run.json"), "utf8")) as {
+      steps: { kind: string; passed?: boolean; screenshot?: string; executed?: boolean }[];
+    };
+    assert.ok(missed.steps.some((item) => item.kind === "select" && item.passed === false && item.screenshot));
+    assert.equal(missed.steps.find((item) => item.kind === "verify")?.executed, false);
+
+    const noOption = await mkdtemp(path.join(tmpdir(), "ocp-select-option-"));
+    const optionMiss = await executeComputerVisit({
+      productName: "OpenCodingPartner",
+      message: "Open https://example.com then select #plan option \"Missing\" then expect text \"saved\"",
+      sandboxRoot: noOption,
+      execute: true,
+      driver: {
+        async start() {
+          return {
+            async open() {
+              return { title: "Example", text: "page", screenshotPng: png };
+            },
+            async readScreen() {
+              return { title: "Example", text: "page", screenshotPng: png };
+            },
+            async typeInto() {
+              return { title: "Example", text: "page", screenshotPng: png };
+            },
+            async selectOption() {
+              throw new Error("option missing");
+            },
+            async close() {
+              return undefined;
+            },
+          };
+        },
+      },
+    });
+    const optionStep = optionMiss.actions.find((action) => action.kind === "select");
+    assert.equal(optionStep?.passed, false);
+    assert.match(optionStep?.reason ?? "", /option missing/);
+    assert.equal(optionMiss.actions.find((action) => action.purpose === "Check the page text")?.executed, false);
+    await rm(blocked, { recursive: true, force: true });
+    await rm(noOption, { recursive: true, force: true });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("computer agent records a GTM plan that did not run", () => {
   const plan = planGtmActions("OpenCodingPartner");
   assert.match(plan.note, /No live browser ran/);

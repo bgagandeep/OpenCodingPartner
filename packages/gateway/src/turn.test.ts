@@ -325,6 +325,31 @@ test("the golden proof tree is what a multi-file coding turn writes", async () =
   }
 });
 
+test("computer execute with a fake browser saves evidence and marks the action executed", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-computer-live-"));
+  try {
+    const turn = await runChatTurn({
+      message: "Stand up a computer agent and open https://example.com",
+      sandboxRoot: root,
+      computerExecute: true,
+      computerAllowHosts: ["example.com"],
+      browserDriver: {
+        async open(url) {
+          assert.equal(url, "https://example.com");
+          return { title: "Example Domain", screenshotPng: Uint8Array.from([137, 80, 78, 71]) };
+        },
+      },
+    });
+    assert.equal(turn.computer?.actions[0]?.executed, true);
+    assert.match(turn.transcript, /Live browser opened https:\/\/example.com/);
+    assert.match(turn.transcript, /executed: true/);
+    const saved = JSON.parse(await readFile(path.join(root, "gtm/last-run.json"), "utf8")) as { title: string };
+    assert.equal(saved.title, "Example Domain");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("demo command path writes the product file and blocks the secret", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "ocp-demo-"));
   try {

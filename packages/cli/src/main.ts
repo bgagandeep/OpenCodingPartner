@@ -7,6 +7,7 @@ import { stdin, stdout } from "node:process";
 import { codingRunnerForEnv, discoverStack, predictWithLaya, runConnectedPath, sendOrchestrationTurn } from "@opencodingpartner/bundle";
 import { readFile } from "node:fs/promises";
 import { runChatTurn, runDemo, type ChatTurnInput } from "@opencodingpartner/gateway";
+import { openWithPlaywright } from "@opencodingpartner/workers";
 import { routeWithPredict } from "@opencodingpartner/policy";
 import { runChatRepl } from "./repl.js";
 
@@ -64,7 +65,7 @@ export async function main(argv: readonly string[]): Promise<number> {
     return demo.code;
   }
   if (command === "chat") {
-    const computerExecute = tail.includes("--computer-execute");
+    const computerExecute = tail.includes("--computer-execute") || process.env.OCP_COMPUTER_EXECUTE === "1";
     const { value, rest } = takeFlag(
       tail.filter((arg) => arg !== "--computer-execute"),
       "--sandbox",
@@ -93,7 +94,7 @@ export async function main(argv: readonly string[]): Promise<number> {
     return 0;
   }
   process.stdout.write(
-    "OpenCodingPartner chat agent\n\n  ocp chat --sandbox .sandbox\n  ocp chat --sandbox .sandbox \"Use Grok Build to create hello.txt with content:\nhello\n\"\n  ocp demo --sandbox .sandbox\n\nOpenClaw owns the session plan. It does not write sandbox files. Coding workers in this process write files after the plan is accepted.\n",
+    "OpenCodingPartner chat agent\n\n  ocp chat --sandbox .sandbox\n  ocp chat --sandbox .sandbox \"Use Grok Build to create hello.txt with content:\nhello\n\"\n  ocp chat --sandbox .sandbox --computer-execute \"Open https://example.com\"\n  ocp demo --sandbox .sandbox\n\nOpenClaw owns the session plan. It does not write sandbox files. Coding workers in this process write files after the plan is accepted.\nThe computer agent opens a browser only with --computer-execute or OCP_COMPUTER_EXECUTE=1, and only for a named http(s) URL.\n",
   );
   return command === undefined || command === "--help" || command === "-h" ? 0 : 2;
 }
@@ -116,6 +117,9 @@ async function runProductTurn(message: string, sandbox: string, computerExecute:
     message,
     sandboxRoot: sandbox,
     computerExecute,
+    computerUrl: process.env.OCP_COMPUTER_URL,
+    computerAllowHosts: process.env.OCP_COMPUTER_ALLOW_HOSTS?.split(","),
+    browserDriver: computerExecute ? { open: openWithPlaywright } : undefined,
     orchestration: (plan) => sendOrchestrationTurn(message, { env: process.env, bins }, plan),
   };
   if (bins.layaPython) {

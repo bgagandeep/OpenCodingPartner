@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { parseCreateFileInstruction, writeSandboxFile } from "./coding.js";
-import { planGtmActions } from "./computer.js";
+import { executeComputerVisit, planGtmActions, urlDecision } from "./computer.js";
 import { grokBuildArgv, runOnGrokBuild } from "./grok.js";
 import { openAiCompatibleRunner, parseFileEdits } from "./openai.js";
 import { qaCheckFile } from "./qa.js";
@@ -106,6 +106,68 @@ test("an OpenAI-compatible meter writes the files the model returns", async () =
     assert.match(math, /function add/);
     assert.match(spec, /add\(1, 2\)/);
     assert.equal(parseFileEdits("not json").length, 0);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a blocked URL never calls the browser", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-browser-block-"));
+  try {
+    assert.equal(urlDecision("file:///etc/passwd").allow, false);
+    assert.equal(urlDecision("http://127.0.0.1/secret").allow, false);
+    assert.equal(urlDecision("http://169.254.169.254/").allow, false);
+    assert.equal(urlDecision("https://user:pass@example.com/").allow, false);
+    let called = false;
+    const plan = await executeComputerVisit({
+      productName: "OpenCodingPartner",
+      message: "open http://127.0.0.1/admin",
+      sandboxRoot: root,
+      execute: true,
+      driver: {
+        async open() {
+          called = true;
+          return { title: "nope", screenshotPng: new Uint8Array([1, 2, 3]) };
+        },
+      },
+    });
+    assert.equal(called, false);
+    assert.equal(plan.actions.every((action) => action.executed === false), true);
+    assert.match(plan.note, /No live browser ran/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a fake browser records the title and a screenshot inside the sandbox", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-browser-ok-"));
+  try {
+    const plan = await executeComputerVisit({
+      productName: "OpenCodingPartner",
+      message: "Open https://example.com/docs",
+      sandboxRoot: root,
+      execute: true,
+      allowHosts: ["example.com"],
+      driver: {
+        async open(url) {
+          assert.equal(url, "https://example.com/docs");
+          return { title: "Example Domain", screenshotPng: Uint8Array.from([137, 80, 78, 71]) };
+        },
+      },
+    });
+    assert.equal(plan.actions[0]?.executed, true);
+    assert.equal(plan.actions[0]?.liveBrowser, true);
+    const evidence = JSON.parse(await readFile(path.join(root, "gtm/last-run.json"), "utf8")) as {
+      url: string;
+      title: string;
+      screenshot: string;
+      executed: boolean;
+    };
+    assert.equal(evidence.url, "https://example.com/docs");
+    assert.equal(evidence.title, "Example Domain");
+    assert.equal(evidence.executed, true);
+    const png = await readFile(path.join(root, evidence.screenshot));
+    assert.equal(png[0], 137);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

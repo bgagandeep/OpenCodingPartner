@@ -16,7 +16,8 @@
   "dependencies": {
     "@opencodingpartner/bundle": "workspace:*",
     "@opencodingpartner/gateway": "workspace:*",
-    "@opencodingpartner/policy": "workspace:*"
+    "@opencodingpartner/policy": "workspace:*",
+    "@opencodingpartner/workers": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.14.0"

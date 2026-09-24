@@ -1445,6 +1445,102 @@ test("select chooses an option, and a missing selector or option stops the chain
   }
 });
 
+test("check and uncheck a selector, and a missing selector stops the chain", async () => {
+  assert.deepEqual(computerChain('check "Agree"'), [{ kind: "check", target: "Agree", text: "text" }]);
+  assert.deepEqual(computerChain('uncheck "Agree"'), [{ kind: "uncheck", target: "Agree", text: "text" }]);
+  assert.deepEqual(computerChain("check #agree"), [{ kind: "check", target: "#agree" }]);
+  assert.deepEqual(computerChain("uncheck #agree"), [{ kind: "uncheck", target: "#agree" }]);
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-check-"));
+  const png = Uint8Array.from([137, 80, 78, 71]);
+  try {
+    const seen: { kind: string; target: string; by: string }[] = [];
+    const plan = await executeComputerVisit({
+      productName: "OpenCodingPartner",
+      message: "Open https://example.com then check #agree then uncheck #agree then expect text \"saved\"",
+      sandboxRoot: root,
+      execute: true,
+      driver: {
+        async start() {
+          return {
+            async open() {
+              return { title: "Example", text: "page", screenshotPng: png };
+            },
+            async readScreen() {
+              return { title: "Example", text: "saved", screenshotPng: png };
+            },
+            async typeInto() {
+              return { title: "Example", text: "saved", screenshotPng: png };
+            },
+            async check(target: string, by: "selector" | "text") {
+              seen.push({ kind: "check", target, by });
+              return { title: "Example", text: "saved", screenshotPng: png };
+            },
+            async uncheck(target: string, by: "selector" | "text") {
+              seen.push({ kind: "uncheck", target, by });
+              return { title: "Example", text: "saved", screenshotPng: png };
+            },
+            async close() {
+              return undefined;
+            },
+          };
+        },
+      },
+    });
+    assert.deepEqual(seen, [
+      { kind: "check", target: "#agree", by: "selector" },
+      { kind: "uncheck", target: "#agree", by: "selector" },
+    ]);
+    assert.equal(plan.actions.find((action) => action.kind === "check")?.passed, true);
+    assert.equal(plan.actions.find((action) => action.kind === "uncheck")?.passed, true);
+    const saved = JSON.parse(await readFile(path.join(root, "gtm/last-run.json"), "utf8")) as {
+      steps: { kind: string; passed?: boolean; screenshot?: string }[];
+    };
+    assert.ok(saved.steps.some((step) => step.kind === "check" && step.passed === true && step.screenshot));
+    assert.ok(saved.steps.some((step) => step.kind === "uncheck" && step.passed === true && step.screenshot));
+
+    const blocked = await mkdtemp(path.join(tmpdir(), "ocp-check-miss-"));
+    const refused = await executeComputerVisit({
+      productName: "OpenCodingPartner",
+      message: "Open https://example.com then check #missing then expect text \"saved\"",
+      sandboxRoot: blocked,
+      execute: true,
+      driver: {
+        async start() {
+          return {
+            async open() {
+              return { title: "Example", text: "page", screenshotPng: png };
+            },
+            async readScreen() {
+              return { title: "Example", text: "page", screenshotPng: png };
+            },
+            async typeInto() {
+              return { title: "Example", text: "page", screenshotPng: png };
+            },
+            async check() {
+              throw new Error("selector missing");
+            },
+            async close() {
+              return undefined;
+            },
+          };
+        },
+      },
+    });
+    const step = refused.actions.find((action) => action.kind === "check");
+    assert.equal(step?.passed, false);
+    assert.match(step?.reason ?? "", /selector missing/);
+    assert.equal(refused.actions.find((action) => action.purpose === "Check the page text")?.executed, false);
+    const missed = JSON.parse(await readFile(path.join(blocked, "gtm/last-run.json"), "utf8")) as {
+      steps: { kind: string; passed?: boolean; screenshot?: string; executed?: boolean }[];
+    };
+    assert.ok(missed.steps.some((item) => item.kind === "check" && item.passed === false && item.screenshot));
+    assert.equal(missed.steps.find((item) => item.kind === "verify")?.executed, false);
+    await rm(blocked, { recursive: true, force: true });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("computer agent records a GTM plan that did not run", () => {
   const plan = planGtmActions("OpenCodingPartner");
   assert.match(plan.note, /No live browser ran/);

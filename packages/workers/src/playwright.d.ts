@@ -4,7 +4,7 @@ declare module "playwright" {
     innerText(options?: { timeout?: number }): Promise<string>;
     isVisible(options?: { timeout?: number }): Promise<boolean>;
     inputValue(options?: { timeout?: number }): Promise<string>;
-    click(options?: { timeout?: number }): Promise<void>;
+    click(options?: { timeout?: number; button?: "left" | "right" }): Promise<void>;
     waitFor(options?: { state?: "visible" | "attached"; timeout?: number }): Promise<void>;
     scrollIntoViewIfNeeded(options?: { timeout?: number }): Promise<void>;
     hover(options?: { timeout?: number }): Promise<void>;

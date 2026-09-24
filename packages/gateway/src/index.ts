@@ -672,7 +672,7 @@ function meterLine(via: CodingVia): string {
   return "Meter: none";
 }
 
-const TOOL_ROUND_CAP = 5;
+const TOOL_ROUND_CAP = 10;
 
 async function applyToolReply(
   input: ChatTurnInput,

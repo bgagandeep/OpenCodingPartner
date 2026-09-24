@@ -5,6 +5,7 @@ declare module "playwright" {
     isVisible(options?: { timeout?: number }): Promise<boolean>;
     inputValue(options?: { timeout?: number }): Promise<string>;
     click(options?: { timeout?: number }): Promise<void>;
+    waitFor(options?: { state?: "visible" | "attached"; timeout?: number }): Promise<void>;
   }
   interface PlaywrightPage {
     goto(url: string, options?: { waitUntil?: "domcontentloaded"; timeout?: number }): Promise<unknown>;

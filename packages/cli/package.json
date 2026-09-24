@@ -1,0 +1,26 @@
+{
+  "name": "@opencodingpartner/cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "ocp": "./dist/main.js",
+    "opencodingpartner": "./dist/main.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/main.d.ts",
+      "import": "./dist/main.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b"
+  },
+  "dependencies": {
+    "@opencodingpartner/gateway": "workspace:*",
+    "@opencodingpartner/mesh": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.14.0"
+  }
+}

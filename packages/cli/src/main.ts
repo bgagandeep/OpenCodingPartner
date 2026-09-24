@@ -2,7 +2,7 @@
 import { realpathSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { discoverStack, probeLiveStack } from "@opencodingpartner/bundle";
+import { discoverStack, runConnectedPath } from "@opencodingpartner/bundle";
 import { readFile } from "node:fs/promises";
 import { runChatTurn, runDemo } from "@opencodingpartner/gateway";
 
@@ -50,9 +50,9 @@ export async function main(argv: readonly string[]): Promise<number> {
         stack = undefined;
       }
       const bins = await discoverStack({ env: process.env, repoRoot, stack });
-      const probe = await probeLiveStack(bins);
-      process.stdout.write(probe.transcript);
-      return probe.skipped || probe.connected ? 0 : 1;
+      const report = await runConnectedPath({ env: process.env, bins, cwd: path.resolve(value ?? ".sandbox") });
+      process.stdout.write(report.transcript);
+      return report.code;
     }
     const sandbox = value ?? ".sandbox";
     const demo = await runDemo(sandbox);

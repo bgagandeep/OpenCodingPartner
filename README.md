@@ -47,7 +47,18 @@ pnpm exec opencodingpartner demo --sandbox .sandbox
 pnpm demo:connected
 ```
 
-`ocp demo --live` is the same connected check as `pnpm demo:connected`. If OpenClaw or Grok Build is missing, it skips and says to run `pnpm bundle:install`. It does not pretend the live tools ran.
+`ocp demo --live` is the same command as `pnpm demo:connected`. It tries a real chat turn on the OpenClaw gateway and a real coding/QA call through the bundled `grok` binary. The report says what ran and what was skipped.
+
+Set these in your shell. Do not commit them.
+
+```bash
+export OPENCLAW_GATEWAY_TOKEN="the gateway token"
+export XAI_API_KEY="the operator key"
+docker compose up -d openclaw-gateway
+pnpm demo:connected
+```
+
+If the gateway is down, the chat turn is skipped. If `XAI_API_KEY` is unset, the Grok Build call is skipped. The offline demo still works without the bundle.
 
 The demo stands up a coding agent, a QA agent, a security agent, and a computer agent. The coding agent writes `PRODUCT.md` in the sandbox. The QA agent checks that file. The security agent blocks a path escape and a secret. The computer agent writes `gtm/action-plan.json`. Every computer action is marked not executed. No live browser ran.
 

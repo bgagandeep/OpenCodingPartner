@@ -17,6 +17,13 @@ importers:
         version: 5.9.3
 
   packages/bundle:
+    dependencies:
+      '@opencodingpartner/mesh':
+        specifier: workspace:*
+        version: link:../mesh
+      '@opencodingpartner/workers':
+        specifier: workspace:*
+        version: link:../workers
     devDependencies:
       '@types/node':
         specifier: ^22.14.0

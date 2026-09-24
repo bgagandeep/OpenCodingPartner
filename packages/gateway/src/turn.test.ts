@@ -3,6 +3,7 @@ import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { writeSandboxFile } from "@opencodingpartner/workers";
 import { DEMO_MESSAGE, runChatTurn, runDemo } from "./index.js";
 
 test("chat stands up agents, writes, checks QA, gates security, and records GTM", async () => {
@@ -39,6 +40,40 @@ test("chat stands up agents, writes, checks QA, gates security, and records GTM"
     const replay = await runChatTurn({ message: DEMO_MESSAGE, sandboxRoot: root });
     assert.equal(replay.replayed, true);
     assert.equal(await readFile(path.join(root, "PRODUCT.md"), "utf8"), "changed\n");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a grok runner edits the sandbox and the transcript names each agent", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-grok-turn-"));
+  try {
+    const message = "Use Grok Build to create hello.txt with content:\nhello from grok\n";
+    const turn = await runChatTurn({
+      message,
+      sandboxRoot: root,
+      computerExecute: true,
+      orchestration: async () => ({ state: "ran", detail: "OpenClaw session agent:board:main accepted the turn." }),
+      grokRunner: {
+        async run() {
+          await writeSandboxFile(root, "hello.txt", "hello from grok\n");
+          return { exitCode: 0, stdout: "" };
+        },
+      },
+    });
+    assert.match(turn.transcript, /Orchestration: ran:/);
+    assert.match(turn.transcript, /coding agent/);
+    assert.match(turn.transcript, /QA agent/);
+    assert.match(turn.transcript, /security agent/);
+    assert.match(turn.transcript, /computer agent/);
+    assert.match(turn.transcript, /via grok-build/);
+    assert.match(turn.transcript, /executed: false/);
+    assert.match(turn.transcript, /Computer execute was requested/);
+    assert.equal(await readFile(path.join(root, "hello.txt"), "utf8"), "hello from grok\n");
+    const plan = JSON.parse(await readFile(path.join(root, "gtm", "action-plan.json"), "utf8")) as {
+      actions: { executed: boolean }[];
+    };
+    assert.ok(plan.actions.every((action) => action.executed === false));
   } finally {
     await rm(root, { recursive: true, force: true });
   }

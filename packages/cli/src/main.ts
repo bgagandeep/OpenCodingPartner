@@ -2,9 +2,12 @@
 import { realpathSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { discoverStack, runConnectedPath } from "@opencodingpartner/bundle";
+import { createInterface } from "node:readline/promises";
+import { stdin, stdout } from "node:process";
+import { discoverStack, grokRunnerForBin, runConnectedPath, sendOrchestrationTurn } from "@opencodingpartner/bundle";
 import { readFile } from "node:fs/promises";
-import { runChatTurn, runDemo } from "@opencodingpartner/gateway";
+import { runChatTurn, runDemo, type ChatTurnInput } from "@opencodingpartner/gateway";
+import { runChatRepl } from "./repl.js";
 
 function sameFile(left: string, right: string): boolean {
   try {
@@ -60,20 +63,63 @@ export async function main(argv: readonly string[]): Promise<number> {
     return demo.code;
   }
   if (command === "chat") {
-    const { value, rest } = takeFlag(tail, "--sandbox");
+    const computerExecute = tail.includes("--computer-execute");
+    const { value, rest } = takeFlag(
+      tail.filter((arg) => arg !== "--computer-execute"),
+      "--sandbox",
+    );
+    const sandbox = value ?? ".sandbox";
     const message = rest.join(" ");
+    const turn = (text: string) => runProductTurn(text, sandbox, computerExecute);
     if (message.replace(/^\s+/, "").length === 0) {
-      process.stderr.write("Usage: ocp chat --sandbox .sandbox \"your message\"\n");
-      return 2;
+      if (!stdin.isTTY) {
+        process.stderr.write("Usage: ocp chat --sandbox .sandbox \"your message\"\n");
+        return 2;
+      }
+      const rl = createInterface({ input: stdin, output: stdout });
+      try {
+        return await runChatRepl({
+          read: async () => rl.question(""),
+          write: (text) => process.stdout.write(text),
+          turn,
+        });
+      } finally {
+        rl.close();
+      }
     }
-    const turn = await runChatTurn({ message, sandboxRoot: value ?? ".sandbox" });
-    process.stdout.write(turn.transcript);
+    const result = await turn(message);
+    process.stdout.write(result.transcript);
     return 0;
   }
   process.stdout.write(
-    "OpenCodingPartner chat agent\n\n  ocp demo --sandbox .sandbox\n  ocp demo --live\n  ocp chat --sandbox .sandbox \"Stand up a coding agent and a QA agent.\"\n",
+    "OpenCodingPartner chat agent\n\n  ocp chat --sandbox .sandbox\n  ocp chat --sandbox .sandbox \"Use Grok Build to create hello.txt with content:\nhello\n\"\n  ocp demo --sandbox .sandbox\n",
   );
   return command === undefined || command === "--help" || command === "-h" ? 0 : 2;
+}
+
+async function runProductTurn(message: string, sandbox: string, computerExecute: boolean) {
+  const repoRoot = path.resolve(fileURLToPath(new URL("../../../", import.meta.url)));
+  let stack: { openclawBin?: string; grokBin?: string; layaPython?: string } | undefined;
+  try {
+    stack = JSON.parse(await readFile(path.join(repoRoot, ".bundle/stack.json"), "utf8")) as {
+      openclawBin?: string;
+      grokBin?: string;
+      layaPython?: string;
+    };
+  } catch {
+    stack = undefined;
+  }
+  const bins = await discoverStack({ env: process.env, repoRoot, stack });
+  const input: ChatTurnInput = {
+    message,
+    sandboxRoot: sandbox,
+    computerExecute,
+    orchestration: () => sendOrchestrationTurn(message, { env: process.env, bins }),
+  };
+  if (bins.grokBin && process.env.XAI_API_KEY) {
+    input.grokRunner = grokRunnerForBin(bins.grokBin, process.env);
+  }
+  return runChatTurn(input);
 }
 
 const entry = process.argv[1];

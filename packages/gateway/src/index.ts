@@ -8,10 +8,12 @@ import {
   parseCreateFileInstruction,
   planGtmActions,
   qaCheckFile,
+  runOnGrokBuild,
   securityGate,
   writeSandboxFile,
   type GateDecision,
   type GtmPlan,
+  type InjectedRunner,
   type QaResult,
 } from "@opencodingpartner/workers";
 
@@ -28,6 +30,12 @@ password=hunter2
 export interface ChatTurnInput {
   message: string;
   sandboxRoot: string;
+  /** When set, the turn also notifies a live OpenClaw gateway. */
+  orchestration?: () => Promise<{ state: "ran" | "skipped" | "failed"; detail: string }>;
+  /** When set, the coding agent edits the sandbox through Grok Build. */
+  grokRunner?: InjectedRunner;
+  /** Ask the computer agent to run. The stub still records executed: false. */
+  computerExecute?: boolean;
 }
 
 export interface ChatTurnResult {
@@ -35,9 +43,11 @@ export interface ChatTurnResult {
   decision: RouteDecision;
   agents: StoodUpAgent[];
   security: GateDecision | null;
-  coding: { relativePath: string; wrote: boolean } | null;
+  coding: { relativePath: string; wrote: boolean; via: "local-sandbox" | "grok-build" } | null;
   qa: QaResult | null;
   computer: GtmPlan | null;
+  orchestration: string;
+  computerExecuteRequested: boolean;
   replayed: boolean;
   transcript: string;
 }
@@ -45,13 +55,14 @@ export interface ChatTurnResult {
 const lanes = new Map<string, Promise<void>>();
 const completed = new Map<string, ChatTurnResult>();
 
-function idempotencyKey(sessionKey: string, sandboxRoot: string, message: string): string {
-  return `${sessionKey}\n${path.resolve(sandboxRoot)}\n${message}`;
+function idempotencyKey(input: ChatTurnInput, sessionKey: string): string {
+  const mode = input.grokRunner ? "grok-build" : "local-sandbox";
+  return `${sessionKey}\n${path.resolve(input.sandboxRoot)}\n${mode}\n${input.message}`;
 }
 
 export function runChatTurn(input: ChatTurnInput): Promise<ChatTurnResult> {
   const session = boardSession();
-  const key = idempotencyKey(session.key, input.sandboxRoot, input.message);
+  const key = idempotencyKey(input, session.key);
   const cached = completed.get(key);
   if (cached) {
     return Promise.resolve({ ...cached, replayed: true, transcript: `${cached.transcript}Replayed the same turn.\n` });
@@ -77,6 +88,8 @@ async function executeTurn(input: ChatTurnInput, session: SwarmSession, key: str
   let coding: ChatTurnResult["coding"] = null;
   let qa: QaResult | null = null;
   let computer: GtmPlan | null = null;
+  const notice = input.orchestration ? await input.orchestration() : { state: "skipped" as const, detail: "OpenClaw gateway was not used. The local swarm ran this turn." };
+  const orchestration = `${notice.state}: ${notice.detail}`;
 
   if (instruction && agents.some((agent) => agent.role === "security")) {
     security = swarm.dispatch("security", () =>
@@ -89,18 +102,26 @@ async function executeTurn(input: ChatTurnInput, session: SwarmSession, key: str
   }
 
   if (instruction && agents.some((agent) => agent.role === "coding")) {
-    if (security?.allow) {
+    if (security?.allow && input.grokRunner) {
+      const runner = input.grokRunner;
+      const prompt = `Coding agent: write ${instruction.relativePath} with this exact content and nothing else:\n${instruction.content}`;
+      const grok = await swarm.dispatch("coding", () => runOnGrokBuild(runner, prompt, input.sandboxRoot));
+      coding = { relativePath: instruction.relativePath, wrote: grok.exitCode === 0, via: "grok-build" };
+      if (agents.some((agent) => agent.role === "qa")) {
+        qa = await swarm.dispatch("qa", () => qaCheckFile(input.sandboxRoot, instruction.relativePath, instruction.content));
+      }
+    } else if (security?.allow) {
       await swarm.dispatch("coding", async () => {
         await writeSandboxFile(input.sandboxRoot, instruction.relativePath, instruction.content);
       });
-      coding = { relativePath: instruction.relativePath, wrote: true };
+      coding = { relativePath: instruction.relativePath, wrote: true, via: "local-sandbox" };
       if (agents.some((agent) => agent.role === "qa")) {
         qa = await swarm.dispatch("qa", () =>
           qaCheckFile(input.sandboxRoot, instruction.relativePath, instruction.content),
         );
       }
     } else {
-      coding = { relativePath: instruction.relativePath, wrote: false };
+      coding = { relativePath: instruction.relativePath, wrote: false, via: input.grokRunner ? "grok-build" : "local-sandbox" };
     }
   }
 
@@ -119,6 +140,8 @@ async function executeTurn(input: ChatTurnInput, session: SwarmSession, key: str
     coding,
     qa,
     computer,
+    orchestration,
+    computerExecuteRequested: input.computerExecute === true,
     replayed: false,
     transcript: formatTranscript({
       session,
@@ -128,6 +151,8 @@ async function executeTurn(input: ChatTurnInput, session: SwarmSession, key: str
       coding,
       qa,
       computer,
+      orchestration,
+      computerExecuteRequested: input.computerExecute === true,
       replayed: false,
       transcript: "",
     }),
@@ -142,6 +167,7 @@ export function formatTranscript(result: ChatTurnResult): string {
     `Session: ${result.session.key}`,
     `Binding: channel=${result.session.binding.channel} account=${result.session.binding.accountId} agent=${result.session.binding.agentId}`,
     `Route: ${result.decision.route}`,
+    `Orchestration: ${result.orchestration}`,
     "Stood up:",
   ];
   if (result.agents.length === 0) {
@@ -160,7 +186,7 @@ export function formatTranscript(result: ChatTurnResult): string {
   if (result.coding) {
     lines.push(
       result.coding.wrote
-        ? `Coding agent wrote ${result.coding.relativePath}`
+        ? `Coding agent wrote ${result.coding.relativePath} via ${result.coding.via}`
         : `Coding agent did not write ${result.coding.relativePath}`,
     );
   }
@@ -168,6 +194,9 @@ export function formatTranscript(result: ChatTurnResult): string {
     lines.push(`QA agent: ${result.qa.pass ? "pass" : "fail"} (${result.qa.summary})`);
   }
   if (result.computer) {
+    if (result.computerExecuteRequested) {
+      lines.push("Computer execute was requested. No live browser ran. Actions stay executed: false.");
+    }
     lines.push("Computer agent recorded a GTM plan. No live browser ran.");
     for (const action of result.computer.actions) {
       lines.push(`- ${action.kind} ${action.target} (executed: false)`);

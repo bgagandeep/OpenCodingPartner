@@ -38,7 +38,7 @@ test("a live gateway receives the chat turn and grok runs only with a key", asyn
         throw new Error("grok must not run without XAI_API_KEY");
       },
     });
-    assert.match(skipped.transcript, /Chat turn: ran \(POST \/v1\/chat\/completions, session agent:board:main\)/);
+    assert.match(skipped.transcript, /Chat turn: ran\. OpenClaw chat completions accepted session agent:board:main/);
     assert.match(skipped.transcript, /skipped \(set XAI_API_KEY/);
     assert.equal(skipped.code, 0);
 

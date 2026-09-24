@@ -956,6 +956,94 @@ test("press Enter succeeds, and an unknown key stops the chain", async () => {
   }
 });
 
+test("hover moves onto a selector, and a missing selector stops the chain", async () => {
+  assert.deepEqual(computerChain('hover "Buy now"'), [{ kind: "hover", target: "Buy now", text: "text" }]);
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-hover-"));
+  const png = Uint8Array.from([137, 80, 78, 71]);
+  try {
+    const hovered: { target: string; by: string }[] = [];
+    const plan = await executeComputerVisit({
+      productName: "OpenCodingPartner",
+      message: "Open https://example.com then hover #buy then expect text \"menu\"",
+      sandboxRoot: root,
+      execute: true,
+      driver: {
+        async start() {
+          return {
+            async open() {
+              return { title: "Example", text: "page", screenshotPng: png };
+            },
+            async readScreen() {
+              return { title: "Example", text: "menu", screenshotPng: png };
+            },
+            async typeInto() {
+              return { title: "Example", text: "menu", screenshotPng: png };
+            },
+            async hover(target: string, by: "selector" | "text") {
+              hovered.push({ target, by });
+              return { title: "Example", text: "menu", screenshotPng: png };
+            },
+            async close() {
+              return undefined;
+            },
+          };
+        },
+      },
+    });
+    assert.deepEqual(hovered, [{ target: "#buy", by: "selector" }]);
+    assert.equal(plan.actions.find((action) => action.kind === "hover")?.passed, true);
+    assert.equal(plan.actions.find((action) => action.purpose === "Check the page text")?.passed, true);
+    const saved = JSON.parse(await readFile(path.join(root, "gtm/last-run.json"), "utf8")) as {
+      steps: { kind: string; passed?: boolean; screenshot?: string }[];
+    };
+    assert.ok(saved.steps.some((step) => step.kind === "hover" && step.passed === true && step.screenshot));
+
+    const blocked = await mkdtemp(path.join(tmpdir(), "ocp-hover-miss-"));
+    let called = false;
+    const refused = await executeComputerVisit({
+      productName: "OpenCodingPartner",
+      message: "Open https://example.com then hover #missing then expect text \"menu\"",
+      sandboxRoot: blocked,
+      execute: true,
+      driver: {
+        async start() {
+          return {
+            async open() {
+              return { title: "Example", text: "page", screenshotPng: png };
+            },
+            async readScreen() {
+              return { title: "Example", text: "page", screenshotPng: png };
+            },
+            async typeInto() {
+              return { title: "Example", text: "page", screenshotPng: png };
+            },
+            async hover() {
+              called = true;
+              throw new Error("selector missing");
+            },
+            async close() {
+              return undefined;
+            },
+          };
+        },
+      },
+    });
+    assert.equal(called, true);
+    const hover = refused.actions.find((action) => action.kind === "hover");
+    assert.equal(hover?.passed, false);
+    assert.match(hover?.reason ?? "", /selector missing/);
+    assert.equal(refused.actions.find((action) => action.purpose === "Check the page text")?.executed, false);
+    const missed = JSON.parse(await readFile(path.join(blocked, "gtm/last-run.json"), "utf8")) as {
+      steps: { kind: string; passed?: boolean; executed?: boolean; screenshot?: string }[];
+    };
+    assert.ok(missed.steps.some((step) => step.kind === "hover" && step.passed === false && step.screenshot));
+    assert.ok(missed.steps.some((step) => step.kind === "verify" && step.executed === false));
+    await rm(blocked, { recursive: true, force: true });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("computer agent records a GTM plan that did not run", () => {
   const plan = planGtmActions("OpenCodingPartner");
   assert.match(plan.note, /No live browser ran/);

@@ -4,7 +4,7 @@ import path from "node:path";
 
 export interface ComputerAction {
   id: string;
-  kind: "open-url" | "type" | "read-screen" | "verify" | "click" | "navigate" | "wait" | "scroll" | "press";
+  kind: "open-url" | "type" | "read-screen" | "verify" | "click" | "navigate" | "wait" | "scroll" | "press" | "hover";
   target: string;
   purpose: string;
   executed: boolean;
@@ -30,6 +30,7 @@ export interface BrowserSession {
   scrollBy?(deltaY: number): Promise<ScreenShot>;
   scrollIntoView?(selector: string): Promise<ScreenShot>;
   press?(key: string): Promise<ScreenShot>;
+  hover?(target: string, by: "selector" | "text"): Promise<ScreenShot>;
   selectorState?(selector: string): Promise<{ visible: boolean; value: string }>;
   close(): Promise<void>;
 }
@@ -134,7 +135,7 @@ export function pageClaim(message: string): { title?: string; text?: string } | 
 }
 
 export interface ChainStep {
-  kind: "type" | "expect-title" | "expect-text" | "expect-selector" | "click" | "navigate" | "wait" | "scroll" | "press";
+  kind: "type" | "expect-title" | "expect-text" | "expect-selector" | "click" | "navigate" | "wait" | "scroll" | "press" | "hover";
   target: string;
   text?: string;
 }
@@ -149,7 +150,7 @@ export const COMPUTER_PRESS_KEYS = ["Enter", "Escape", "Tab", "Backspace", "Arro
 
 /** Steps in the order they appear. A short chain can include more than one type. */
 export function computerChain(message: string): ChainStep[] {
-  const pattern = /expect title "([^"]*)"|expect text "([^"]*)"|type "([^"]*)" into (\S+)|expect selector (\S+) value "([^"]*)"|click "([^"]*)"|click '([^']*)'|click (\S+)|navigate (https?:\/\/[^\s)]+)|expect title '([^']*)'|expect text '([^']*)'|type '([^']*)' into (\S+)|expect selector (\S+) value '([^']*)'|wait (\d+)ms|wait (\d+)|wait (\S+)|scroll down|scroll up|scroll (-?\d+)px|scroll (-?\d+)|scroll (\S+)|press (\S+)/gi;
+  const pattern = /expect title "([^"]*)"|expect text "([^"]*)"|type "([^"]*)" into (\S+)|expect selector (\S+) value "([^"]*)"|click "([^"]*)"|click '([^']*)'|click (\S+)|navigate (https?:\/\/[^\s)]+)|expect title '([^']*)'|expect text '([^']*)'|type '([^']*)' into (\S+)|expect selector (\S+) value '([^']*)'|wait (\d+)ms|wait (\d+)|wait (\S+)|scroll down|scroll up|scroll (-?\d+)px|scroll (-?\d+)|scroll (\S+)|press (\S+)|hover "([^"]*)"|hover '([^']*)'|hover (\S+)/gi;
   const steps: ChainStep[] = [];
   for (const match of message.matchAll(pattern)) {
     if (match[1] !== undefined) steps.push({ kind: "expect-title", target: match[1] });
@@ -173,6 +174,9 @@ export function computerChain(message: string): ChainStep[] {
     else if (match[21]) steps.push({ kind: "scroll", target: match[21], text: "delta" });
     else if (match[22]) steps.push({ kind: "scroll", target: match[22].replace(/[.,]$/, ""), text: "into-view" });
     else if (match[23]) steps.push({ kind: "press", target: match[23].replace(/[.,]$/, "") });
+    else if (match[24] !== undefined) steps.push({ kind: "hover", target: match[24], text: "text" });
+    else if (match[25] !== undefined) steps.push({ kind: "hover", target: match[25], text: "text" });
+    else if (match[26]) steps.push({ kind: "hover", target: match[26].replace(/[.,]$/, "") });
   }
   return steps;
 }
@@ -254,7 +258,7 @@ export async function executeComputerVisit(input: ComputerVisitInput): Promise<G
   for (const [index, item] of chain.entries()) {
     steps.push({
       id: `gtm-${index + 3}`,
-      kind: item.kind === "type" ? "type" : item.kind === "click" ? "click" : item.kind === "navigate" ? "navigate" : item.kind === "wait" ? "wait" : item.kind === "scroll" ? "scroll" : item.kind === "press" ? "press" : "verify",
+      kind: item.kind === "type" ? "type" : item.kind === "click" ? "click" : item.kind === "navigate" ? "navigate" : item.kind === "wait" ? "wait" : item.kind === "scroll" ? "scroll" : item.kind === "press" ? "press" : item.kind === "hover" ? "hover" : "verify",
       target: item.target,
       purpose: chainPurpose(item),
       executed: false,
@@ -328,6 +332,7 @@ function chainPurpose(item: ChainStep): string {
   if (item.kind === "wait") return item.text === "sleep" ? "Wait a short time" : "Wait until the selector is visible";
   if (item.kind === "scroll") return item.text === "into-view" ? "Scroll the selector into view" : "Scroll the page";
   if (item.kind === "press") return "Press a named key";
+  if (item.kind === "hover") return item.text === "text" ? "Hover the named text" : "Hover the named selector";
   if (item.kind === "expect-selector") return "Check the selector value";
   if (item.kind === "expect-text") return "Check the page text";
   return "Check the page title";
@@ -355,7 +360,7 @@ async function finishStep(
     reason: reason || undefined,
     title: redact(screen.title),
     text: redact(screen.text).slice(0, 500),
-    selector: action.kind === "type" || action.kind === "verify" || action.kind === "click" || action.kind === "navigate" ? action.target : undefined,
+    selector: action.kind === "type" || action.kind === "verify" || action.kind === "click" || action.kind === "navigate" || action.kind === "hover" ? action.target : undefined,
     screenshot: shot,
   });
 }
@@ -446,6 +451,18 @@ async function runChainStep(
     if (!session.press) return { passed: false, reason: "browser cannot press keys", screen };
     const next = await session.press(key);
     return { passed: true, reason: "", screen: next };
+  }
+  if (item.kind === "hover") {
+    const gate = selectorDecision(item.target);
+    if (!gate.allow) return { passed: false, reason: gate.reason, screen };
+    if (!session.hover) return { passed: false, reason: "browser cannot hover", screen };
+    try {
+      const next = await session.hover(item.target, item.text === "text" ? "text" : "selector");
+      return { passed: true, reason: "", screen: next };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "selector missing";
+      return { passed: false, reason: redact(message), screen };
+    }
   }
   if (!session.selectorState) return { passed: false, reason: "browser cannot read selector state", screen };
   const state = await session.selectorState(item.target);
@@ -554,6 +571,11 @@ export function playwrightBrowserDriver(): BrowserDriver {
         },
         async press(key) {
           await page.keyboard.press(key);
+          return shot();
+        },
+        async hover(target, by) {
+          const locator = by === "text" ? page.getByText(target, { exact: true }) : page.locator(target);
+          await locator.hover({ timeout: 5000 });
           return shot();
         },
         async selectorState(selector) {

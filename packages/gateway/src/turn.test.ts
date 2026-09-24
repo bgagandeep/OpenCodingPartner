@@ -1114,6 +1114,101 @@ test("a missing OpenClaw mkdir plugin falls back to the local sandbox", async ()
   }
 });
 
+test("an OpenClaw-driven turn removes an empty directory through the bridge", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-remote-rmdir-"));
+  try {
+    const { mkdir } = await import("node:fs/promises");
+    await mkdir(path.join(root, "src/empty"), { recursive: true });
+    const calls: string[] = [];
+    const turn = await runChatTurn({
+      message: "fix the empty folder",
+      sandboxRoot: root,
+      orchestration: async () => ({
+        state: "ran",
+        driver: "openclaw",
+        detail: "Session agent:board:main accepted the plan.",
+      }),
+      grokRunner: {
+        async run() {
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify({ done: true, steps: [{ tool: "rmdir", path: "src/empty" }] }),
+          };
+        },
+      },
+      openclawRmdir: async (relativePath) => {
+        calls.push(relativePath);
+        const { rmdir } = await import("node:fs/promises");
+        await rmdir(path.join(root, relativePath));
+        return { ok: true, missing: false, detail: "bridge" };
+      },
+    });
+    assert.deepEqual(calls, ["src/empty"]);
+    assert.match(turn.transcript, /Rmdir path: OpenClaw-driven/);
+    assert.doesNotMatch(turn.transcript, /Rmdir path: local sandbox/);
+    const { stat } = await import("node:fs/promises");
+    await assert.rejects(stat(path.join(root, "src/empty")));
+
+    const blocked = await mkdtemp(path.join(tmpdir(), "ocp-rmdir-refuse-"));
+    await mkdir(path.join(blocked, "src/kept"), { recursive: true });
+    const refused = await runChatTurn({
+      message: "fix the empty folder",
+      sandboxRoot: blocked,
+      orchestration: async () => ({
+        state: "ran",
+        driver: "openclaw",
+        detail: "Session agent:board:main accepted the plan.",
+      }),
+      grokRunner: {
+        async run() {
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify({ done: true, steps: [{ tool: "rmdir", path: "src/kept" }] }),
+          };
+        },
+      },
+      openclawRmdir: async () => ({ ok: false, missing: false, detail: "directory is not empty" }),
+    });
+    assert.doesNotMatch(refused.transcript, /Rmdir path: local sandbox/);
+    assert.doesNotMatch(refused.transcript, /Rmdir path: OpenClaw-driven/);
+    assert.equal((await stat(path.join(blocked, "src/kept"))).isDirectory(), true);
+    await rm(blocked, { recursive: true, force: true });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a missing OpenClaw rmdir plugin falls back to the local sandbox", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-rmdir-fallback-"));
+  try {
+    const { mkdir, stat } = await import("node:fs/promises");
+    await mkdir(path.join(root, "src/empty"), { recursive: true });
+    const turn = await runChatTurn({
+      message: "fix the empty folder",
+      sandboxRoot: root,
+      orchestration: async () => ({
+        state: "ran",
+        driver: "openclaw",
+        detail: "Session agent:board:main accepted the plan.",
+      }),
+      grokRunner: {
+        async run() {
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify({ done: true, steps: [{ tool: "rmdir", path: "src/empty" }] }),
+          };
+        },
+      },
+      openclawRmdir: async () => ({ ok: false, missing: true, detail: "plugin missing" }),
+    });
+    assert.match(turn.transcript, /Rmdir path: local sandbox/);
+    assert.doesNotMatch(turn.transcript, /Rmdir path: OpenClaw-driven/);
+    await assert.rejects(stat(path.join(root, "src/empty")));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("a coding turn creates a directory and then writes a file in it", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "ocp-mkdir-turn-"));
   try {

@@ -82,6 +82,8 @@ export interface ChatTurnInput {
   openclawRename?: (fromPath: string, toPath: string) => Promise<{ ok: boolean; missing: boolean; detail: string }>;
   /** Gateway mkdir tool. `missing` means the plugin is absent and a local mkdir is allowed. */
   openclawMkdir?: (relativePath: string) => Promise<{ ok: boolean; missing: boolean; detail: string }>;
+  /** Gateway rmdir tool. `missing` means the plugin is absent and a local rmdir is allowed. */
+  openclawRmdir?: (relativePath: string) => Promise<{ ok: boolean; missing: boolean; detail: string }>;
   /** Bounded check runner. Tests inject this. The default does not use a shell. */
   checkExec?: (argv: readonly string[], cwd: string) => Promise<{ code: number; stdout: string; stderr: string }>;
 }
@@ -223,7 +225,7 @@ async function executeTurn(input: ChatTurnInput, session: SwarmSession, key: str
     security = messageGate;
     if (!messageGate.allow) {
       coding = { relativePath: "the request", wrote: false, via };
-    } else if (input.grokRunner && openclawDrove && (input.openclawWrite || input.openclawDelete || input.openclawRename || input.openclawMkdir)) {
+    } else if (input.grokRunner && openclawDrove && (input.openclawWrite || input.openclawDelete || input.openclawRename || input.openclawMkdir || input.openclawRmdir)) {
       const runner = input.grokRunner;
       const write = input.openclawWrite;
       const stage = await mkdtemp(path.join(tmpdir(), "ocp-stage-"));
@@ -700,7 +702,8 @@ async function applyToolReply(
   let renamedRemote = false;
   let madeDirLocal = false;
   let madeDirRemote = false;
-  let removedDir = false;
+  let removedDirLocal = false;
+  let removedDirRemote = false;
   let todoBlock = "";
   let nextStdout = stdout;
   for (let round = 1; round <= TOOL_ROUND_CAP; round += 1) {
@@ -797,11 +800,14 @@ async function applyToolReply(
           else madeDirLocal = true;
         }
       } else if (step.tool === "rmdir" && step.path) {
-        const removed = await rmdirSandboxDir(input.sandboxRoot, step.path);
+        const removed = await rmdirThroughTurn(input, openclawDrove, step.path);
         const line = removed.ok ? `Tool: rmdir ${step.path}` : `Tool: rmdir ${step.path} (${removed.detail})`;
         log.push(line);
         observations.push(line);
-        if (removed.ok) removedDir = true;
+        if (removed.ok) {
+          if (removed.via === "openclaw") removedDirRemote = true;
+          else removedDirLocal = true;
+        }
       } else if (step.tool === "todo") {
         const changed = await applySandboxTodo(input.sandboxRoot, step.action ?? "", step.content ?? "");
         const line = changed.ok ? `Todo: ${changed.detail}` : `Todo: ${step.action || "todo"} (${changed.detail})`;
@@ -861,7 +867,8 @@ async function applyToolReply(
     renamedLocal ? "Rename path: local sandbox." : "",
     madeDirRemote ? "Mkdir path: OpenClaw-driven." : "",
     madeDirLocal ? "Mkdir path: local sandbox." : "",
-    removedDir ? "Rmdir path: local sandbox." : "",
+    removedDirRemote ? "Rmdir path: OpenClaw-driven." : "",
+    removedDirLocal ? "Rmdir path: local sandbox." : "",
     todoBlock,
     blocked.length > 0 ? `Security agent removed ${blocked.join(", ")} after the edit.` : "",
   ].filter((line) => line.length > 0).join("\n");
@@ -1009,6 +1016,24 @@ async function mkdirThroughTurn(
     }
   }
   const local = await mkdirSandboxDir(input.sandboxRoot, relativePath);
+  return { ok: local.ok, via: "local", detail: local.detail };
+}
+
+async function rmdirThroughTurn(
+  input: ChatTurnInput,
+  openclawDrove: boolean,
+  relativePath: string,
+): Promise<{ ok: boolean; via: "openclaw" | "local"; detail: string }> {
+  if (openclawDrove && input.openclawRmdir) {
+    const remote = await input.openclawRmdir(relativePath);
+    if (remote.ok && !(await dirExists(input.sandboxRoot, relativePath))) {
+      return { ok: true, via: "openclaw", detail: remote.detail };
+    }
+    if (remote.ok || !remote.missing) {
+      return { ok: false, via: "openclaw", detail: remote.ok ? "OpenClaw rmdir did not remove the directory." : remote.detail };
+    }
+  }
+  const local = await rmdirSandboxDir(input.sandboxRoot, relativePath);
   return { ok: local.ok, via: "local", detail: local.detail };
 }
 

@@ -7,6 +7,7 @@ export {
   sendOrchestrationTurn,
   deleteViaOpenClaw,
   mkdirViaOpenClaw,
+  rmdirViaOpenClaw,
   renameViaOpenClaw,
   writeViaOpenClaw,
   type CodingMeter,
@@ -17,5 +18,5 @@ export { predictWithLaya } from "./laya.js";
 export { installBundle, installPlan } from "./install.js";
 export { probeLiveStack, type LiveProbe } from "./live.js";
 export { loadPins, type StackPins } from "./pins.js";
-export { applyBridgeDelete, applyBridgeMkdir, applyBridgeRename, applyBridgeWrite, startSandboxWriteBridge } from "./write-bridge.js";
+export { applyBridgeDelete, applyBridgeMkdir, applyBridgeRename, applyBridgeRmdir, applyBridgeWrite, startSandboxWriteBridge } from "./write-bridge.js";
 export { runDoctor, type DoctorReport } from "./doctor.js";

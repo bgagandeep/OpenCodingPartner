@@ -5,8 +5,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { routeWithPredict, type ManagerPlan } from "@opencodingpartner/policy";
-import { writeSandboxFile } from "@opencodingpartner/workers";
-import { DEMO_MESSAGE, runChatTurn, runDemo } from "./index.js";
+import { grepSandbox, listSandboxDir, writeSandboxFile } from "@opencodingpartner/workers";
+import { DEMO_MESSAGE, clearSessionMemory, runChatTurn, runDemo } from "./index.js";
 
 test("chat stands up agents, writes, checks QA, gates security, and records GTM", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "ocp-turn-"));
@@ -986,6 +986,49 @@ test("a follow-up prompt remembers the prior user text and drops a blocked secre
     await runChatTurn({ message: "add a note in other.txt", sandboxRoot: other, grokRunner: runner });
     assert.doesNotMatch(prompts[0] ?? "", /add a README section explaining install/);
     assert.doesNotMatch(prompts[0] ?? "", /hunter2/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(other, { recursive: true, force: true });
+  }
+});
+
+test("prior turns survive a fresh process and stay inside one sandbox", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-disk-"));
+  const other = await mkdtemp(path.join(tmpdir(), "ocp-disk-other-"));
+  try {
+    const prompts: string[] = [];
+    const runner = {
+      async run(argv: readonly string[]) {
+        const prompt = argv[argv.indexOf("-p") + 1] ?? "";
+        prompts.push(prompt);
+        if (prompt.includes("add a README section explaining install") && !prompt.includes("Prior turns:")) {
+          await writeSandboxFile(root, "README.md", "# Install\n");
+          await writeSandboxFile(root, "secret.txt", "password=hunter2\n");
+        }
+        return { exitCode: 0, stdout: "" };
+      },
+    };
+    await runChatTurn({ message: "add a README section explaining install", sandboxRoot: root, grokRunner: runner });
+    const saved = await readFile(path.join(root, ".ocp", "prior-turns.json"), "utf8");
+    assert.match(saved, /add a README section explaining install/);
+    assert.doesNotMatch(saved, /hunter2/);
+    const listed = await listSandboxDir(root, ".");
+    assert.doesNotMatch(listed.detail, /\.ocp/);
+    const found = await grepSandbox(root, "README section");
+    assert.equal(found.detail, "(no matches)");
+    clearSessionMemory();
+    prompts.length = 0;
+    await runChatTurn({ message: "also add subtract", sandboxRoot: root, grokRunner: runner });
+    assert.match(prompts[0] ?? "", /Prior turns:/);
+    assert.match(prompts[0] ?? "", /add a README section explaining install/);
+    assert.doesNotMatch(prompts[0] ?? "", /hunter2/);
+    prompts.length = 0;
+    await runChatTurn({ message: "add a note in other.txt", sandboxRoot: other, grokRunner: runner });
+    assert.doesNotMatch(prompts[0] ?? "", /add a README section explaining install/);
+    const otherSaved = await readFile(path.join(other, ".ocp", "prior-turns.json"), "utf8");
+    assert.match(otherSaved, /add a note in other.txt/);
+    assert.doesNotMatch(otherSaved, /add a README section explaining install/);
+    assert.doesNotMatch(otherSaved, /hunter2/);
   } finally {
     await rm(root, { recursive: true, force: true });
     await rm(other, { recursive: true, force: true });

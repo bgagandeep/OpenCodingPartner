@@ -183,7 +183,7 @@ async function executeTurn(input: ChatTurnInput, session: SwarmSession, key: str
       transcript: "",
     };
     failedResult.transcript = formatTranscript(failedResult);
-    rememberTurn(session.key, input.sandboxRoot, input.message, coding, qa, security);
+    await rememberTurn(session.key, input.sandboxRoot, input.message, coding, qa, security);
     completed.set(key, failedResult);
     return failedResult;
   }
@@ -461,7 +461,7 @@ async function executeTurn(input: ChatTurnInput, session: SwarmSession, key: str
       transcript: "",
     }),
   };
-  rememberTurn(session.key, input.sandboxRoot, input.message, coding, qa, security);
+  await rememberTurn(session.key, input.sandboxRoot, input.message, coding, qa, security);
   completed.set(key, result);
   return result;
 }
@@ -834,20 +834,54 @@ function historyKey(sessionKey: string, sandboxRoot: string): string {
   return `${sessionKey}\n${path.resolve(sandboxRoot)}`;
 }
 
-function priorTurns(sandboxRoot: string): string {
-  const lines = sessionHistory.get(historyKey(boardSession().key, sandboxRoot)) ?? [];
+export function clearSessionMemory(): void {
+  sessionHistory.clear();
+}
+
+async function priorTurns(sandboxRoot: string): Promise<string> {
+  const key = historyKey(boardSession().key, sandboxRoot);
+  if (!sessionHistory.has(key)) sessionHistory.set(key, await readHistory(sandboxRoot));
+  const lines = sessionHistory.get(key) ?? [];
   if (lines.length === 0) return "";
   return `Prior turns:\n${lines.join("\n")}\n`;
 }
 
-function rememberTurn(
+async function readHistory(sandboxRoot: string): Promise<string[]> {
+  try {
+    const raw = await readFile(historyFile(sandboxRoot), "utf8");
+    const parsed = JSON.parse(raw) as { turns?: unknown };
+    if (!Array.isArray(parsed.turns)) return [];
+    return parsed.turns
+      .filter((line): line is string => typeof line === "string" && !line.includes("\0"))
+      .filter((line) => securityGate({ relativePath: "turn.txt", content: line, sandboxRoot }).allow)
+      .slice(-HISTORY_TURNS);
+  } catch {
+    return [];
+  }
+}
+
+async function writeHistory(sandboxRoot: string, turns: readonly string[]): Promise<void> {
+  const root = path.resolve(sandboxRoot);
+  const target = historyFile(root);
+  const rootPrefix = root.endsWith(path.sep) ? root : `${root}${path.sep}`;
+  if (!target.startsWith(rootPrefix)) return;
+  const safe = turns.filter((line) => securityGate({ relativePath: "turn.txt", content: line, sandboxRoot: root }).allow);
+  await mkdir(path.dirname(target), { recursive: true });
+  await writeFile(target, `${JSON.stringify({ turns: safe }, null, 2)}\n`);
+}
+
+function historyFile(sandboxRoot: string): string {
+  return path.join(path.resolve(sandboxRoot), ".ocp", "prior-turns.json");
+}
+
+async function rememberTurn(
   sessionKey: string,
   sandboxRoot: string,
   message: string,
   coding: ChatTurnResult["coding"],
   qa: QaResult | null,
   security: GateDecision | null,
-): void {
+): Promise<void> {
   const gate = securityGate({ relativePath: "turn.txt", content: message, sandboxRoot });
   const user = gate.allow ? message.replace(/\s+/g, " ").trim().slice(0, 400) : "[blocked]";
   const wrote = coding?.wrote && coding.relativePath !== "no files" ? `Wrote ${coding.relativePath}.` : "No file written.";
@@ -855,9 +889,11 @@ function rememberTurn(
   const blocked = security && !security.allow ? " Security blocked a write." : "";
   const line = `User: ${user} Outcome: ${wrote} ${qaLine}${blocked}`;
   const key = historyKey(sessionKey, sandboxRoot);
+  if (!sessionHistory.has(key)) sessionHistory.set(key, await readHistory(sandboxRoot));
   const next = [...(sessionHistory.get(key) ?? []), line].slice(-HISTORY_TURNS);
   while (next.join("\n").length > HISTORY_CHARS && next.length > 1) next.shift();
   sessionHistory.set(key, next);
+  await writeHistory(sandboxRoot, next);
 }
 
 /** Put existing sandbox files and prior turns in the meter prompt. Secret files stay out. */
@@ -867,6 +903,7 @@ async function codingPrompt(sandboxRoot: string, message: string): Promise<strin
   let used = 0;
   for (const relativePath of [...files.keys()].sort()) {
     if (relativePath.startsWith("gtm/") || relativePath.startsWith(`gtm${path.sep}`)) continue;
+    if (relativePath === ".ocp" || relativePath.startsWith(`.ocp${path.sep}`)) continue;
     const content = files.get(relativePath) ?? "";
     if (content.includes("\0")) continue;
     const gate = securityGate({ relativePath, content, sandboxRoot });
@@ -877,7 +914,7 @@ async function codingPrompt(sandboxRoot: string, message: string): Promise<strin
     used += block.length;
   }
   const filesNote = message.startsWith("Tool observations:") || blocks.length === 0 ? "" : `Sandbox files already on disk:\n${blocks.join("\n")}\n`;
-  const history = priorTurns(sandboxRoot);
+  const history = await priorTurns(sandboxRoot);
   return `${history}${filesNote}User request:\n${message}\nReply with JSON only: {"steps":[{"tool":"list"|"read"|"grep"|"run"|"write"|"patch"|"delete","query":"text or /regex/","path":"relative","content":"full text for write","diff":"unified diff for patch","argv":["node","--test","relative.test.ts"]}],"done":false}. One reply is one round. After you see Tool observations, send the next round. Set "done" to true when finished. List or read before you edit. Patch a file that already exists. Write only a new file. The only command is node --test plus relative paths.`;
 }
 

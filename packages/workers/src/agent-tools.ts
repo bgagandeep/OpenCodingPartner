@@ -106,7 +106,7 @@ export async function listSandboxDir(sandboxRoot: string, relativePath: string):
   const rootPrefix = root.endsWith(path.sep) ? root : `${root}${path.sep}`;
   if (target !== root && !target.startsWith(rootPrefix)) return { ok: false, detail: "path left the sandbox" };
   try {
-    const names = await readdir(target);
+    const names = (await readdir(target)).filter((name) => name !== ".ocp" && name !== "gtm");
     return { ok: true, detail: names.join(", ") || "(empty)" };
   } catch {
     return { ok: false, detail: "directory missing" };
@@ -173,6 +173,7 @@ export async function grepSandbox(
       const abs = path.join(dir, name.name);
       const rel = path.relative(root, abs);
       if (rel === "gtm" || rel.startsWith(`gtm${path.sep}`) || rel.split(path.sep).includes("gtm")) continue;
+      if (rel === ".ocp" || rel.startsWith(`.ocp${path.sep}`) || rel.split(path.sep).includes(".ocp")) continue;
       if (name.isDirectory()) {
         await walk(abs);
         continue;

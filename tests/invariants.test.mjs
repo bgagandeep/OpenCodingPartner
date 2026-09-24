@@ -66,10 +66,15 @@ test("readme cites the real upstreams and the license", async () => {
   ]) {
     assert.equal(readme.includes(needle), true, needle);
   }
-  assert.equal(readme.includes("Cursor Cloud"), false);
+  assert.equal(/\bcursor\b/i.test(readme), false);
   const architecture = await readFile(path.join(root, "ARCHITECTURE.md"), "utf8");
+  const roadmap = await readFile(path.join(root, "ROADMAP.md"), "utf8");
+  const contributing = await readFile(path.join(root, "CONTRIBUTING.md"), "utf8");
   assert.equal(architecture.includes("System-1"), true);
   assert.equal(architecture.includes("speculativeSwarm"), true);
-  assert.equal(architecture.includes("Cursor Cloud"), false);
-  assert.equal(/cursor\[/.test(architecture), false);
+  assert.equal(architecture.includes("OpenClaw"), true);
+  assert.equal(architecture.includes("Grok Build"), true);
+  for (const text of [architecture, roadmap, contributing]) {
+    assert.equal(/\bcursor\b/i.test(text), false);
+  }
 });

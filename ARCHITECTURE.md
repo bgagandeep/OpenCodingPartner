@@ -14,11 +14,14 @@ flowchart TD
   conversation --> stop
   coding --> worker[Exactly one coding worker]
   worker --> sandbox[Local sandbox file]
-  worker --> grok[Grok Build headless or ACP]
+  worker --> grok[Grok Build]
+  worker --> plug[Pluggable ACP or MCP coding backend]
   swarm[Speculative swarm] -.-> worker
 ```
 
-The swarm edge is drawn so the place it would attach is visible. `FOUNDATION_LIMITS.speculativeSwarm` is false, and the gateway rejects a plan with any task count other than one on a dispatch turn.
+The product has two OSS integrations: an OpenClaw-class gateway as the control plane, and Grok Build as the coding worker. A further coding backend may plug in through ACP or MCP. In v1 the named backend on that plug is Grok Build. The local sandbox worker is the offline stand-in, not a third upstream.
+
+The swarm edge is drawn so the place it would attach is visible. `FOUNDATION_LIMITS.speculativeSwarm` is false, and the gateway rejects a plan with any task count other than one on a dispatch turn. The product maps the mesh as that gateway beside Grok Build.
 
 ## Roles
 
@@ -30,9 +33,7 @@ The swarm edge is drawn so the place it would attach is visible. `FOUNDATION_LIM
 | Coding manager | One `write_file` task when the operator named the path and the bytes | Invent a change, call a second worker |
 | Coding worker | Execute that task on one runtime | Choose the lane |
 
-Chat LLMs, when they arrive, are managers. Coding models reached through Grok Build are workers, along with the local sandbox worker used offline. Laya stays on the route. That split is the multi-weight design: the ~421M decision engine is System-1 only.
-
-An internal operating pattern, a Grok bot dispatching Cursor coding agents, informed how these turns are sequenced. That pattern is not a dependency and not a worker.
+Chat LLMs, when they arrive, are managers. Grok Build workers implement the plan, and the local sandbox worker does that offline. Laya stays on the route. That split is the multi-weight design: the ~421M decision engine is System-1 only.
 
 ## Ingress
 

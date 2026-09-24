@@ -4,11 +4,14 @@ import path from "node:path";
 
 export interface ComputerAction {
   id: string;
-  kind: "open-url" | "type" | "read-screen";
+  kind: "open-url" | "type" | "read-screen" | "verify";
   target: string;
   purpose: string;
   executed: boolean;
   liveBrowser: boolean;
+  passed?: boolean;
+  skipped?: boolean;
+  reason?: string;
 }
 
 export interface ScreenShot {
@@ -21,6 +24,7 @@ export interface BrowserSession {
   open(url: string): Promise<ScreenShot>;
   readScreen(): Promise<ScreenShot>;
   typeInto(selector: string, text: string): Promise<ScreenShot>;
+  selectorState?(selector: string): Promise<{ visible: boolean; value: string }>;
   close(): Promise<void>;
 }
 
@@ -31,6 +35,9 @@ export interface BrowserDriver {
 export interface ComputerStepEvidence {
   kind: ComputerAction["kind"];
   executed: boolean;
+  passed?: boolean;
+  skipped?: boolean;
+  reason?: string;
   title?: string;
   text?: string;
   selector?: string;
@@ -112,6 +119,42 @@ export function selectorDecision(selector: string): { allow: boolean; reason: st
   return { allow: true, reason: "" };
 }
 
+/** `expect title "..."` and `expect text "..."`. Both are optional. Quotes are required. */
+export function pageClaim(message: string): { title?: string; text?: string } | undefined {
+  const title = quotedClaim(message, "title");
+  const text = quotedClaim(message, "text");
+  if (title === undefined && text === undefined) return undefined;
+  return { ...(title !== undefined ? { title } : {}), ...(text !== undefined ? { text } : {}) };
+}
+
+export interface ChainStep {
+  kind: "type" | "expect-title" | "expect-text" | "expect-selector";
+  target: string;
+  text?: string;
+}
+
+/** Steps in the order they appear. A short chain can include more than one type. */
+export function computerChain(message: string): ChainStep[] {
+  const pattern = /expect title "([^"]*)"|expect text "([^"]*)"|type "([^"]*)" into (\S+)|expect selector (\S+) value "([^"]*)"|expect title '([^']*)'|expect text '([^']*)'|type '([^']*)' into (\S+)|expect selector (\S+) value '([^']*)'/gi;
+  const steps: ChainStep[] = [];
+  for (const match of message.matchAll(pattern)) {
+    if (match[1] !== undefined) steps.push({ kind: "expect-title", target: match[1] });
+    else if (match[2] !== undefined) steps.push({ kind: "expect-text", target: match[2] });
+    else if (match[3] !== undefined && match[4]) steps.push({ kind: "type", target: match[4].replace(/[.,]$/, ""), text: match[3] });
+    else if (match[5] && match[6] !== undefined) steps.push({ kind: "expect-selector", target: match[5].replace(/[.,]$/, ""), text: match[6] });
+    else if (match[7] !== undefined) steps.push({ kind: "expect-title", target: match[7] });
+    else if (match[8] !== undefined) steps.push({ kind: "expect-text", target: match[8] });
+    else if (match[9] !== undefined && match[10]) steps.push({ kind: "type", target: match[10].replace(/[.,]$/, ""), text: match[9] });
+    else if (match[11] && match[12] !== undefined) steps.push({ kind: "expect-selector", target: match[11].replace(/[.,]$/, ""), text: match[12] });
+  }
+  return steps;
+}
+
+function quotedClaim(message: string, name: "title" | "text"): string | undefined {
+  const match = message.match(new RegExp(`expect ${name} "([^"]*)"`, "i")) ?? message.match(new RegExp(`expect ${name} '([^']*)'`, "i"));
+  return match?.[1];
+}
+
 /** First http(s) URL in the message. An env URL wins when the operator set one. */
 export function namedUrl(message: string, envUrl?: string): string | undefined {
   const fromEnv = envUrl?.trim();
@@ -146,11 +189,21 @@ export function urlDecision(raw: string, allowHosts?: readonly string[]): { allo
 }
 
 export async function executeComputerVisit(input: ComputerVisitInput): Promise<GtmPlan> {
-  if (!input.execute) return planGtmActions(input.productName);
+  if (!input.execute) {
+    const plan = planGtmActions(input.productName);
+    const claim = pageClaim(input.message);
+    if (claim) {
+      plan.note = "Computer execute is off. No live browser ran. The page claim was not checked.";
+      await writeClaim(input.sandboxRoot, namedUrl(input.message, input.envUrl) ?? "", claim, "", "", "", false);
+    }
+    return plan;
+  }
   const url = namedUrl(input.message, input.envUrl);
   const plan = planGtmActions(input.productName);
+  const claim = pageClaim(input.message);
   if (!url) {
     plan.note = "Computer execute was requested. Name an http or https URL. No live browser ran.";
+    if (claim) await writeClaim(input.sandboxRoot, "", claim, "", "", "", false);
     return plan;
   }
   const decision = urlDecision(url, input.allowHosts);
@@ -158,84 +211,188 @@ export async function executeComputerVisit(input: ComputerVisitInput): Promise<G
   if (open) open.target = url;
   if (!decision.allow) {
     plan.note = `Computer execute was requested. Refused ${url}: ${decision.reason}. No live browser ran.`;
+    if (claim) await writeClaim(input.sandboxRoot, url, claim, "", "", "", false);
     return plan;
   }
   if (!input.driver) {
-    plan.note = "Computer execute was requested. No browser driver is configured. No live browser ran.";
+    plan.note = "Computer execute was requested. Playwright is missing or no browser driver is configured. No live browser ran.";
+    if (claim) await writeClaim(input.sandboxRoot, url, claim, "", "", "", false);
     return plan;
   }
-  const typing = typeInstruction(input.message);
+  const chain = computerChain(input.message);
   const steps: ComputerAction[] = [
     { id: "gtm-1", kind: "open-url", target: url, purpose: "Open the named URL", executed: false, liveBrowser: false },
     { id: "gtm-2", kind: "read-screen", target: url, purpose: "Read the page title and text", executed: false, liveBrowser: false },
   ];
-  if (typing) {
+  for (const [index, item] of chain.entries()) {
     steps.push({
-      id: "gtm-3",
-      kind: "type",
-      target: typing.selector,
-      purpose: "Type into the named selector",
+      id: `gtm-${index + 3}`,
+      kind: item.kind === "type" ? "type" : "verify",
+      target: item.target,
+      purpose: chainPurpose(item),
       executed: false,
       liveBrowser: false,
     });
   }
   plan.actions = steps;
-  const selectorGate = typing ? selectorDecision(typing.selector) : { allow: true, reason: "" };
   let session: BrowserSession | undefined;
   const recorded: ComputerStepEvidence[] = [];
+  let failed = "";
+  let screen: ScreenShot | undefined;
   try {
     session = await input.driver.start();
-    const opened = await session.open(url);
-    const openShot = `gtm/step-1.png`;
-    await writeEvidence(input.sandboxRoot, openShot, opened.screenshotPng);
-    mark(steps[0], true);
-    recorded.push({ kind: "open-url", executed: true, title: redact(opened.title), screenshot: openShot });
-    const read = await session.readScreen();
-    const readShot = `gtm/step-2.png`;
-    await writeEvidence(input.sandboxRoot, readShot, read.screenshotPng);
-    mark(steps[1], true);
-    recorded.push({
-      kind: "read-screen",
-      executed: true,
-      title: redact(read.title),
-      text: redact(read.text).slice(0, 500),
-      screenshot: readShot,
-    });
-    if (typing && selectorGate.allow && steps[2]) {
-      const typed = await session.typeInto(typing.selector, typing.text);
-      const typeShot = `gtm/step-3.png`;
-      await writeEvidence(input.sandboxRoot, typeShot, typed.screenshotPng);
-      mark(steps[2], true);
-      recorded.push({
-        kind: "type",
-        executed: true,
-        selector: typing.selector,
-        title: redact(typed.title),
-        text: redact(typing.text),
-        screenshot: typeShot,
-      });
-    } else if (typing && steps[2]) {
-      recorded.push({ kind: "type", executed: false, selector: typing.selector });
+    screen = await session.open(url);
+    await finishStep(input.sandboxRoot, steps[0], recorded, screen, true, "");
+    if (!failed) {
+      screen = await session.readScreen();
+      await finishStep(input.sandboxRoot, steps[1], recorded, screen, true, "");
+    }
+    for (let index = 0; index < chain.length; index += 1) {
+      const action = steps[index + 2];
+      const item = chain[index];
+      if (!action || !item) continue;
+      if (failed) {
+        action.executed = false;
+        action.skipped = true;
+        action.passed = false;
+        action.reason = "skipped because an earlier step failed";
+        recorded.push({ kind: action.kind, executed: false, skipped: true, passed: false, reason: action.reason, selector: item.target });
+        continue;
+      }
+      const outcome = await runChainStep(session, item, screen);
+      screen = outcome.screen ?? screen;
+      if (outcome.passed && screen) await finishStep(input.sandboxRoot, action, recorded, screen, true, "");
+      else {
+        failed = outcome.reason;
+        action.executed = true;
+        action.passed = false;
+        action.reason = outcome.reason;
+        if (screen) await finishStep(input.sandboxRoot, action, recorded, screen, false, outcome.reason);
+        else recorded.push({ kind: action.kind, executed: true, passed: false, reason: outcome.reason });
+      }
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : "browser failed";
-    plan.note = `Computer execute was requested. The browser did not finish (${redact(message)}). Finished steps stay marked.`;
+    failed = failed || redact(message);
+    plan.note = `Computer execute was requested. The browser did not finish (${failed}). Playwright or Chromium may be missing. Later steps were skipped.`;
     await session?.close().catch(() => undefined);
     await persistRun(input.sandboxRoot, url, recorded, plan);
+    if (claim) await writeClaim(input.sandboxRoot, url, claim, "", "", "", false);
     return plan;
   }
   await session.close();
-  const title = recorded.find((step) => step.kind === "read-screen")?.title ?? "";
-  const refused = typing && !selectorGate.allow ? ` Refused the type step: ${selectorGate.reason}.` : "";
-  plan.note = `Live browser opened ${url}. Title: ${title}.${refused} Evidence: gtm/last-run.json.`;
+  const title = screen?.title ?? "";
+  const held = !failed && (!claim || claimHolds(claim, title, screen?.text ?? ""));
+  if (claim) {
+    const shot = [...recorded].reverse().find((step) => step.screenshot)?.screenshot ?? "";
+    await writeClaim(input.sandboxRoot, url, claim, redact(title), redact(screen?.text ?? "").slice(0, 500), shot, true, held && !failed);
+  }
+  plan.note = failed
+    ? `Step failed: ${failed}. Later steps were skipped. Evidence: gtm/last-run.json.`
+    : `Live browser opened ${url}. Title: ${redact(title)}. ${claim ? "The page claim held. " : ""}Evidence: gtm/last-run.json.`;
   await persistRun(input.sandboxRoot, url, recorded, plan);
   return plan;
 }
 
-function mark(action: ComputerAction | undefined, ran: boolean): void {
+function chainPurpose(item: ChainStep): string {
+  if (item.kind === "type") return "Type into the named selector";
+  if (item.kind === "expect-selector") return "Check the selector value";
+  if (item.kind === "expect-text") return "Check the page text";
+  return "Check the page title";
+}
+
+async function finishStep(
+  sandboxRoot: string,
+  action: ComputerAction | undefined,
+  recorded: ComputerStepEvidence[],
+  screen: ScreenShot,
+  passed: boolean,
+  reason: string,
+): Promise<void> {
   if (!action) return;
-  action.executed = ran;
-  action.liveBrowser = ran;
+  const shot = `gtm/step-${recorded.length + 1}.png`;
+  await writeEvidence(sandboxRoot, shot, screen.screenshotPng);
+  action.executed = true;
+  action.liveBrowser = true;
+  action.passed = passed;
+  if (!passed) action.reason = reason;
+  recorded.push({
+    kind: action.kind,
+    executed: true,
+    passed,
+    reason: reason || undefined,
+    title: redact(screen.title),
+    text: redact(screen.text).slice(0, 500),
+    selector: action.kind === "type" || action.kind === "verify" ? action.target : undefined,
+    screenshot: shot,
+  });
+}
+
+async function runChainStep(
+  session: BrowserSession,
+  item: ChainStep,
+  screen: ScreenShot | undefined,
+): Promise<{ passed: boolean; reason: string; screen?: ScreenShot }> {
+  if (item.kind === "expect-title") {
+    const seen = await session.readScreen();
+    const passed = seen.title === item.target;
+    return { passed, reason: passed ? "" : `title was ${seen.title || "empty"}, expected ${item.target}`, screen: seen };
+  }
+  if (item.kind === "expect-text") {
+    const seen = await session.readScreen();
+    const passed = seen.text.includes(item.target);
+    return { passed, reason: passed ? "" : `page text did not include ${item.target}`, screen: seen };
+  }
+  if (item.kind === "type") {
+    const gate = selectorDecision(item.target);
+    if (!gate.allow) return { passed: false, reason: gate.reason, screen };
+    const typed = await session.typeInto(item.target, item.text ?? "");
+    return { passed: true, reason: "", screen: typed };
+  }
+  if (!session.selectorState) return { passed: false, reason: "browser cannot read selector state", screen };
+  const state = await session.selectorState(item.target);
+  const passed = state.visible && state.value === (item.text ?? "");
+  return {
+    passed,
+    reason: passed ? "" : `selector ${item.target} value was ${state.value || "empty"}, expected ${item.text}`,
+    screen,
+  };
+}
+
+function claimHolds(claim: { title?: string; text?: string }, actualTitle: string, actualText: string): boolean {
+  if (claim.title !== undefined && actualTitle !== claim.title) return false;
+  if (claim.text !== undefined && !actualText.includes(claim.text)) return false;
+  return true;
+}
+
+async function writeClaim(
+  sandboxRoot: string,
+  url: string,
+  claim: { title?: string; text?: string },
+  actualTitle: string,
+  actualText: string,
+  screenshot: string,
+  executed: boolean,
+  claimHeld = false,
+): Promise<void> {
+  const body = {
+    url,
+    expectedTitle: claim.title ?? "",
+    actualTitle,
+    expectedText: claim.text ?? "",
+    actualText,
+    screenshot,
+    executed,
+    claimHeld: executed && claimHeld,
+  };
+  await writeEvidence(sandboxRoot, "gtm/assertion.json", `${JSON.stringify(body, null, 2)}\n`);
+  if (!executed) {
+    await writeEvidence(
+      sandboxRoot,
+      "gtm/last-run.json",
+      `${JSON.stringify({ url, title: actualTitle, screenshot, executed: false, steps: [{ kind: "verify", executed: false }] }, null, 2)}\n`,
+    );
+  }
 }
 
 async function persistRun(
@@ -275,6 +432,12 @@ export function playwrightBrowserDriver(): BrowserDriver {
         async typeInto(selector, text) {
           await page.locator(selector).fill(text, { timeout: 5000 });
           return shot();
+        },
+        async selectorState(selector) {
+          const locator = page.locator(selector);
+          const visible = await locator.isVisible({ timeout: 5000 }).catch(() => false);
+          const value = await locator.inputValue({ timeout: 5000 }).catch(() => "");
+          return { visible, value };
         },
         async close() {
           await browser.close();

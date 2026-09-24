@@ -6,6 +6,44 @@ export interface QaResult {
   summary: string;
 }
 
+/** QA reads the computer claim. A missing browser, a missing screenshot, or a wrong title fails. */
+export async function reviewComputerClaim(sandboxRoot: string): Promise<QaResult> {
+  const assertion = await readJson(sandboxRoot, "gtm/assertion.json");
+  const run = await readJson(sandboxRoot, "gtm/last-run.json");
+  if (!assertion || !run) return { pass: false, summary: "computer evidence is missing" };
+  if (assertion.executed !== true) return { pass: false, summary: "computer did not run" };
+  const screenshot = typeof assertion.screenshot === "string" ? assertion.screenshot : "";
+  if (!screenshot) return { pass: false, summary: "screenshot is missing" };
+  const png = await readSandboxBytes(sandboxRoot, screenshot);
+  if (!png || png.length === 0) return { pass: false, summary: "screenshot is missing" };
+  if (assertion.claimHeld !== true) {
+    const expected = assertion.expectedTitle || assertion.expectedText || "the claim";
+    const actual = assertion.actualTitle || "nothing";
+    return { pass: false, summary: `page claim did not hold: expected ${expected}, saw ${actual}` };
+  }
+  return { pass: true, summary: `page claim held (${assertion.actualTitle || "text"})` };
+}
+
+async function readJson(sandboxRoot: string, relativePath: string): Promise<Record<string, unknown> | undefined> {
+  try {
+    return JSON.parse(await readFile(path.join(sandboxRoot, relativePath), "utf8")) as Record<string, unknown>;
+  } catch {
+    return undefined;
+  }
+}
+
+async function readSandboxBytes(sandboxRoot: string, relativePath: string): Promise<Buffer | undefined> {
+  const root = path.resolve(sandboxRoot);
+  const target = path.resolve(root, relativePath);
+  const rootPrefix = root.endsWith(path.sep) ? root : `${root}${path.sep}`;
+  if (!target.startsWith(rootPrefix)) return undefined;
+  try {
+    return await readFile(target);
+  } catch {
+    return undefined;
+  }
+}
+
 /** Offline QA check. Reads the sandbox file the coding agent just wrote. */
 export async function qaCheckFile(
   sandboxRoot: string,
@@ -53,6 +91,52 @@ export async function snapshotSandbox(sandboxRoot: string): Promise<Map<string, 
 export function changedSandboxFiles(before: ReadonlyMap<string, string>, after: ReadonlyMap<string, string>): string[] {
   const names = new Set([...before.keys(), ...after.keys()]);
   return [...names].filter((name) => before.get(name) !== after.get(name)).sort();
+}
+
+export interface FileExpectation {
+  path: string;
+  contains: string;
+}
+
+/** `expect file path to contain "text"`. One message can name more than one file. */
+export function fileExpectations(message: string): FileExpectation[] {
+  const found: FileExpectation[] = [];
+  const pattern = /expect file (\S+) to contain "([^"]*)"/gi;
+  for (const match of message.matchAll(pattern)) {
+    const filePath = match[1];
+    const contains = match[2];
+    if (filePath && contains !== undefined) found.push({ path: filePath, contains });
+  }
+  return found;
+}
+
+/** Check expected snippets. A missing file, an empty file, or a security removal fails. */
+export async function reviewFileExpectations(
+  sandboxRoot: string,
+  kept: readonly string[],
+  expected: readonly FileExpectation[],
+  removed: readonly string[] = [],
+): Promise<QaResult> {
+  const bad: string[] = [];
+  for (const item of expected) {
+    if (removed.includes(item.path)) {
+      bad.push(`${item.path} was removed by security before review`);
+      continue;
+    }
+    if (!kept.includes(item.path)) {
+      bad.push(`${item.path} is missing`);
+      continue;
+    }
+    const check = await qaCheckFile(sandboxRoot, item.path);
+    if (!check.pass) {
+      bad.push(`${item.path}: ${check.summary}`);
+      continue;
+    }
+    const text = await readFile(path.join(sandboxRoot, item.path), "utf8");
+    if (!text.includes(item.contains)) bad.push(`${item.path} is missing expected content`);
+  }
+  if (bad.length > 0) return { pass: false, summary: bad.join("; ") };
+  return { pass: true, summary: `checked ${expected.map((item) => item.path).join(", ")}` };
 }
 
 /** QA reads each kept file. An empty list fails when coding reported success. */

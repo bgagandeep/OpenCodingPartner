@@ -11,16 +11,20 @@ import {
   planGtmActions,
   type BrowserDriver,
   changedSandboxFiles,
+  fileExpectations,
+  pageClaim,
   qaCheckFile,
+  reviewFileExpectations,
   reviewChangedFiles,
+  reviewComputerClaim,
   runOnGrokBuild,
   securityGate,
   snapshotSandbox,
   writeSandboxFile,
   type GateDecision,
   type GtmPlan,
-  type InjectedRunner,
   type QaResult,
+  type InjectedRunner,
 } from "@opencodingpartner/workers";
 
 export const DEMO_MESSAGE = `Stand up a coding agent, a QA agent, a security agent, and a computer agent.
@@ -226,6 +230,7 @@ async function executeTurn(input: ChatTurnInput, session: SwarmSession, key: str
         }
         if (agents.some((agent) => agent.role === "qa")) {
           qa = await swarm.dispatch("qa", () => reviewChangedFiles(input.sandboxRoot, kept, grok.exitCode === 0));
+          qa = await addFileExpectations(qa, input.message, input.sandboxRoot, kept, blocked);
         }
       } finally {
         await rm(stage, { recursive: true, force: true });
@@ -255,6 +260,7 @@ async function executeTurn(input: ChatTurnInput, session: SwarmSession, key: str
       };
       if (agents.some((agent) => agent.role === "qa")) {
         qa = await swarm.dispatch("qa", () => reviewChangedFiles(input.sandboxRoot, kept, grok.exitCode === 0));
+        qa = await addFileExpectations(qa, input.message, input.sandboxRoot, kept, blocked);
       }
       if (blocked.length > 0) {
         coding.note = `Security agent removed ${blocked.join(", ")} after the edit.`;
@@ -317,12 +323,12 @@ async function executeTurn(input: ChatTurnInput, session: SwarmSession, key: str
   if (agents.some((agent) => agent.role === "computer")) {
     const execute = input.computerExecute === true;
     computer = await swarm.dispatch("computer", () =>
-      execute
+      execute || pageClaim(input.message)
         ? executeComputerVisit({
             productName: "OpenCodingPartner",
             message: input.message,
             sandboxRoot: input.sandboxRoot,
-            execute: true,
+            execute,
             envUrl: input.computerUrl,
             allowHosts: input.computerAllowHosts,
             driver: input.browserDriver,
@@ -332,6 +338,10 @@ async function executeTurn(input: ChatTurnInput, session: SwarmSession, key: str
     const planPath = path.join(input.sandboxRoot, "gtm", "action-plan.json");
     await mkdir(path.dirname(planPath), { recursive: true });
     await writeFile(planPath, `${JSON.stringify(computer, null, 2)}\n`);
+    if (pageClaim(input.message) && agents.some((agent) => agent.role === "qa")) {
+      const claimQa = await swarm.dispatch("qa", () => reviewComputerClaim(input.sandboxRoot));
+      qa = qa ? { pass: qa.pass && claimQa.pass, summary: `${qa.summary}; ${claimQa.summary}` } : claimQa;
+    }
   }
 
   const result: ChatTurnResult = {
@@ -413,10 +423,26 @@ export function formatTranscript(result: ChatTurnResult): string {
       lines.push("Computer agent recorded a GTM plan. No live browser ran.");
     }
     for (const action of result.computer.actions) {
-      lines.push(`- ${action.kind} ${action.target} (executed: ${action.executed})`);
+      const failed = action.passed === false ? `, failed: ${action.reason ?? "step failed"}` : "";
+      const skipped = action.skipped ? ", skipped" : "";
+      lines.push(`- ${action.kind} ${action.target} (executed: ${action.executed}${failed}${skipped})`);
     }
   }
   return `${lines.join("\n")}\n`;
+}
+
+async function addFileExpectations(
+  qa: QaResult | null,
+  message: string,
+  sandboxRoot: string,
+  kept: readonly string[],
+  removed: readonly string[],
+): Promise<QaResult | null> {
+  const expected = fileExpectations(message);
+  if (expected.length === 0) return qa;
+  const extra = await reviewFileExpectations(sandboxRoot, kept, expected, removed);
+  if (!qa) return extra;
+  return { pass: qa.pass && extra.pass, summary: extra.pass ? qa.summary : `${qa.summary}; ${extra.summary}` };
 }
 
 function meterLine(via: CodingVia): string {

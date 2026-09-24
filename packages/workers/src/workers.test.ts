@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { parseCreateFileInstruction, writeSandboxFile } from "./coding.js";
-import { executeComputerVisit, planGtmActions, urlDecision } from "./computer.js";
+import { executeComputerVisit, planGtmActions, selectorDecision, urlDecision } from "./computer.js";
 import { grokBuildArgv, runOnGrokBuild } from "./grok.js";
 import { openAiCompatibleRunner, parseFileEdits } from "./openai.js";
 import { qaCheckFile } from "./qa.js";
@@ -125,9 +125,9 @@ test("a blocked URL never calls the browser", async () => {
       sandboxRoot: root,
       execute: true,
       driver: {
-        async open() {
+        async start() {
           called = true;
-          return { title: "nope", screenshotPng: new Uint8Array([1, 2, 3]) };
+          throw new Error("must not start");
         },
       },
     });
@@ -148,30 +148,88 @@ test("a fake browser records the title and a screenshot inside the sandbox", asy
       sandboxRoot: root,
       execute: true,
       allowHosts: ["example.com"],
-      driver: {
-        async open(url) {
-          assert.equal(url, "https://example.com/docs");
-          return { title: "Example Domain", screenshotPng: Uint8Array.from([137, 80, 78, 71]) };
-        },
-      },
+      driver: fakeBrowser(),
     });
     assert.equal(plan.actions[0]?.executed, true);
-    assert.equal(plan.actions[0]?.liveBrowser, true);
+    assert.equal(plan.actions[1]?.kind, "read-screen");
+    assert.equal(plan.actions[1]?.executed, true);
     const evidence = JSON.parse(await readFile(path.join(root, "gtm/last-run.json"), "utf8")) as {
       url: string;
       title: string;
-      screenshot: string;
-      executed: boolean;
+      steps: { kind: string; executed: boolean }[];
     };
     assert.equal(evidence.url, "https://example.com/docs");
     assert.equal(evidence.title, "Example Domain");
-    assert.equal(evidence.executed, true);
-    const png = await readFile(path.join(root, evidence.screenshot));
+    assert.equal(evidence.steps.filter((step) => step.executed).length, 2);
+    const png = await readFile(path.join(root, "gtm/step-1.png"));
     assert.equal(png[0], 137);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("a live sequence opens, reads, and types, and a script selector does not run", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-browser-steps-"));
+  try {
+    assert.equal(selectorDecision("javascript:alert(1)").allow, false);
+    let typed = false;
+    const plan = await executeComputerVisit({
+      productName: "OpenCodingPartner",
+      message: 'Open https://example.com and type "password=hunter2" into #hero',
+      sandboxRoot: root,
+      execute: true,
+      driver: fakeBrowser(() => {
+        typed = true;
+      }),
+    });
+    assert.equal(plan.actions.map((action) => action.kind).join(","), "open-url,read-screen,type");
+    assert.equal(plan.actions.every((action) => action.executed), true);
+    assert.equal(typed, true);
+    const evidence = JSON.parse(await readFile(path.join(root, "gtm/last-run.json"), "utf8")) as {
+      steps: { kind: string; text?: string }[];
+    };
+    assert.equal(evidence.steps.find((step) => step.kind === "type")?.text, "[redacted]");
+    const blocked = await executeComputerVisit({
+      productName: "OpenCodingPartner",
+      message: 'Open https://example.com type "hi" into javascript:alert(1)',
+      sandboxRoot: root,
+      execute: true,
+      driver: fakeBrowser(() => {
+        throw new Error("type must not run");
+      }),
+    });
+    assert.equal(blocked.actions[0]?.executed, true);
+    assert.equal(blocked.actions[1]?.executed, true);
+    assert.equal(blocked.actions[2]?.executed, false);
+    assert.match(blocked.note, /Refused the type step/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+function fakeBrowser(onType?: (selector: string, text: string) => void) {
+  const png = Uint8Array.from([137, 80, 78, 71]);
+  return {
+    async start() {
+      return {
+        async open(url: string) {
+          assert.match(url, /^https:\/\/example.com/);
+          return { title: "Example Domain", text: "body", screenshotPng: png };
+        },
+        async readScreen() {
+          return { title: "Example Domain", text: "body", screenshotPng: png };
+        },
+        async typeInto(selector: string, text: string) {
+          onType?.(selector, text);
+          return { title: "Example Domain", text, screenshotPng: png };
+        },
+        async close() {
+          return undefined;
+        },
+      };
+    },
+  };
+}
 
 test("computer agent records a GTM plan that did not run", () => {
   const plan = planGtmActions("OpenCodingPartner");

@@ -334,17 +334,36 @@ test("computer execute with a fake browser saves evidence and marks the action e
       computerExecute: true,
       computerAllowHosts: ["example.com"],
       browserDriver: {
-        async open(url) {
-          assert.equal(url, "https://example.com");
-          return { title: "Example Domain", screenshotPng: Uint8Array.from([137, 80, 78, 71]) };
+        async start() {
+          const png = Uint8Array.from([137, 80, 78, 71]);
+          return {
+            async open(url: string) {
+              assert.equal(url, "https://example.com");
+              return { title: "Example Domain", text: "hello", screenshotPng: png };
+            },
+            async readScreen() {
+              return { title: "Example Domain", text: "hello", screenshotPng: png };
+            },
+            async typeInto() {
+              return { title: "Example Domain", text: "hello", screenshotPng: png };
+            },
+            async close() {
+              return undefined;
+            },
+          };
         },
       },
     });
     assert.equal(turn.computer?.actions[0]?.executed, true);
+    assert.equal(turn.computer?.actions[1]?.executed, true);
     assert.match(turn.transcript, /Live browser opened https:\/\/example.com/);
     assert.match(turn.transcript, /executed: true/);
-    const saved = JSON.parse(await readFile(path.join(root, "gtm/last-run.json"), "utf8")) as { title: string };
+    const saved = JSON.parse(await readFile(path.join(root, "gtm/last-run.json"), "utf8")) as {
+      title: string;
+      steps: { executed: boolean }[];
+    };
     assert.equal(saved.title, "Example Domain");
+    assert.equal(saved.steps.length, 2);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

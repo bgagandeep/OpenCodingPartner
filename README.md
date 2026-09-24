@@ -41,6 +41,14 @@ pnpm exec ocp prove coding
 
 That command runs one local turn in a temp sandbox. It creates `src/`, writes a small add function, globs `src/**/*.mjs`, patches the function, and runs `node --test`. Exit 0 means those files and transcript lines matched. It prints `Passed.` It does not call LiteLLM, OpenAI, or Grok, and it does not print keys. `pnpm proof:coding` is different: that one needs a meter key.
 
+Scripted computer proof, with no Playwright and no meter key:
+
+```bash
+pnpm exec ocp prove computer
+```
+
+That command opens `https://example.com` with a fake browser driver, scrolls, and checks the page text. It writes `gtm/last-run.json` with a pass and a screenshot. Exit 0 prints `Passed.` OpenClaw does not run the browser. It does not print keys.
+
 Read the transcript. `System-1: real Laya.` or `System-1: fallback.` `Write path: OpenClaw-driven.` only if the gateway accepted the plan and the write landed. Otherwise `Write path: local sandbox.` `Meter: LiteLLM`, `Meter: OpenAI-compatible`, `Meter: Grok Build`, or `Meter: none`. The offline command `pnpm exec ocp demo --sandbox .sandbox` does not pretend those live pieces ran.
 
 ## Which tool runs what

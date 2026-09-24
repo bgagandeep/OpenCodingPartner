@@ -16,6 +16,12 @@ test("a build-and-sell message routes to all four agents", () => {
   }
 });
 
+test("a plain coding ask stands up the agents without a create-file template", () => {
+  const decision = routeMessage("add a README section explaining install");
+  assert.equal(decision.route, "multi-agent");
+  assert.deepEqual(decision.roles, ["coding", "qa", "security", "computer"]);
+});
+
 test("a plain hello stays on the status route", () => {
   const decision = routeMessage("hello");
   assert.equal(decision.route, "status");

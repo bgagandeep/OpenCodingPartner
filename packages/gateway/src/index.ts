@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { StoodUpAgent, SwarmSession } from "@opencodingpartner/mesh";
 import { boardSession } from "@opencodingpartner/mesh";
@@ -7,9 +7,12 @@ import { OrchestrationSwarm } from "@opencodingpartner/swarm";
 import {
   parseCreateFileInstruction,
   planGtmActions,
+  changedSandboxFiles,
   qaCheckFile,
+  reviewChangedFiles,
   runOnGrokBuild,
   securityGate,
+  snapshotSandbox,
   writeSandboxFile,
   type GateDecision,
   type GtmPlan,
@@ -43,7 +46,7 @@ export interface ChatTurnResult {
   decision: RouteDecision;
   agents: StoodUpAgent[];
   security: GateDecision | null;
-  coding: { relativePath: string; wrote: boolean; via: "local-sandbox" | "grok-build" } | null;
+  coding: { relativePath: string; wrote: boolean; via: "local-sandbox" | "grok-build"; note?: string } | null;
   qa: QaResult | null;
   computer: GtmPlan | null;
   orchestration: string;
@@ -99,6 +102,57 @@ async function executeTurn(input: ChatTurnInput, session: SwarmSession, key: str
         sandboxRoot: input.sandboxRoot,
       }),
     );
+  }
+
+  const generalEdit = !instruction && agents.some((agent) => agent.role === "coding");
+  if (generalEdit) {
+    const messageGate = securityGate({
+      relativePath: "request.txt",
+      content: input.message,
+      sandboxRoot: input.sandboxRoot,
+    });
+    if (/(^|[\s"'`])\.\.\//.test(input.message)) messageGate.reasons.push("path escape");
+    messageGate.allow = messageGate.reasons.length === 0;
+    security = messageGate;
+    if (!messageGate.allow) {
+      coding = { relativePath: "the request", wrote: false, via: input.grokRunner ? "grok-build" : "local-sandbox" };
+    } else if (input.grokRunner) {
+      const runner = input.grokRunner;
+      const before = await snapshotSandbox(input.sandboxRoot);
+      const grok = await swarm.dispatch("coding", () => runOnGrokBuild(runner, input.message, input.sandboxRoot));
+      const after = await snapshotSandbox(input.sandboxRoot);
+      const changed = changedSandboxFiles(before, after);
+      const kept: string[] = [];
+      const blocked: string[] = [];
+      for (const relativePath of changed) {
+        const content = after.get(relativePath) ?? "";
+        const gate = securityGate({ relativePath, content, sandboxRoot: input.sandboxRoot });
+        if (gate.allow) kept.push(relativePath);
+        else {
+          blocked.push(relativePath);
+          await unlink(path.join(input.sandboxRoot, relativePath)).catch(() => undefined);
+          security = { allow: false, reasons: gate.reasons };
+        }
+      }
+      coding = {
+        relativePath: kept.length > 0 ? kept.join(", ") : "no files",
+        wrote: grok.exitCode === 0 && kept.length > 0,
+        via: "grok-build",
+      };
+      if (agents.some((agent) => agent.role === "qa")) {
+        qa = await swarm.dispatch("qa", () => reviewChangedFiles(kept));
+      }
+      if (blocked.length > 0) {
+        coding.note = `Security agent removed ${blocked.join(", ")} after the edit.`;
+      }
+    } else {
+      coding = {
+        relativePath: "general edit",
+        wrote: false,
+        via: "local-sandbox",
+        note: "Coding agent did not edit files. General edits need XAI_API_KEY and Grok Build. A simple create-file message still runs on the local sandbox.",
+      };
+    }
   }
 
   if (instruction && agents.some((agent) => agent.role === "coding")) {
@@ -189,6 +243,7 @@ export function formatTranscript(result: ChatTurnResult): string {
         ? `Coding agent wrote ${result.coding.relativePath} via ${result.coding.via}`
         : `Coding agent did not write ${result.coding.relativePath}`,
     );
+    if (result.coding.note) lines.push(result.coding.note);
   }
   if (result.qa) {
     lines.push(`QA agent: ${result.qa.pass ? "pass" : "fail"} (${result.qa.summary})`);

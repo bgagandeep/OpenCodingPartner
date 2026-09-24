@@ -79,6 +79,70 @@ test("a grok runner edits the sandbox and the transcript names each agent", asyn
   }
 });
 
+test("a general ask offline does not pretend to edit files", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-offline-ask-"));
+  try {
+    const turn = await runChatTurn({
+      message: "add a README section explaining install",
+      sandboxRoot: root,
+    });
+    assert.equal(turn.coding?.wrote, false);
+    assert.match(turn.transcript, /General edits need XAI_API_KEY/);
+    await assert.rejects(readFile(path.join(root, "README.md"), "utf8"));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a general ask on Grok Build edits files and QA reviews them", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-general-"));
+  try {
+    let prompts: string[] = [];
+    const turn = await runChatTurn({
+      message: "add a README section explaining install",
+      sandboxRoot: root,
+      grokRunner: {
+        async run(argv) {
+          prompts = [...argv];
+          await writeSandboxFile(root, "README.md", "# Install\n\npnpm install\n");
+          await writeSandboxFile(root, "docs/setup.md", "See README.\n");
+          return { exitCode: 0, stdout: "" };
+        },
+      },
+    });
+    assert.equal(turn.coding?.via, "grok-build");
+    assert.equal(turn.coding?.wrote, true);
+    assert.match(turn.qa?.summary ?? "", /README.md/);
+    assert.match(turn.qa?.summary ?? "", /docs\/setup.md/);
+    assert.equal(turn.qa?.pass, true);
+    assert.ok(prompts.includes("add a README section explaining install"));
+    assert.equal(await readFile(path.join(root, "README.md"), "utf8"), "# Install\n\npnpm install\n");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("security removes a secret file after a general edit", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-secret-after-"));
+  try {
+    const turn = await runChatTurn({
+      message: "refactor the notes",
+      sandboxRoot: root,
+      grokRunner: {
+        async run() {
+          await writeSandboxFile(root, "notes.txt", "password=hunter2\n");
+          return { exitCode: 0, stdout: "" };
+        },
+      },
+    });
+    assert.equal(turn.security?.allow, false);
+    assert.match(turn.transcript, /removed notes.txt/);
+    await assert.rejects(readFile(path.join(root, "notes.txt"), "utf8"));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("demo command path writes the product file and blocks the secret", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "ocp-demo-"));
   try {

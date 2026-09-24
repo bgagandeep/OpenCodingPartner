@@ -43,6 +43,9 @@ importers:
       '@opencodingpartner/policy':
         specifier: workspace:*
         version: link:../policy
+      '@opencodingpartner/workers':
+        specifier: workspace:*
+        version: link:../workers
     devDependencies:
       '@types/node':
         specifier: ^22.14.0

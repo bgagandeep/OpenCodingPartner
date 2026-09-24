@@ -67,7 +67,17 @@ Use Grok Build to create hello.txt with content:
 hello
 ```
 
-The security agent blocks a path that escapes the sandbox, and it blocks secrets. The QA agent checks the file that was written. The computer agent writes `gtm/action-plan.json`. Every computer action stays `executed: false`. `--computer-execute` records that you asked to run those actions. It still does not claim a live browser ran.
+The security agent blocks a path that escapes the sandbox, and it blocks secrets. The QA agent checks the file that was written. The computer agent writes `gtm/action-plan.json`. Without `--computer-execute`, every computer action stays `executed: false` and no browser runs.
+
+With `--computer-execute` (or `OCP_COMPUTER_EXECUTE=1`), the computer agent opens the http or https URL you name, using headless Chromium through Playwright. It writes `gtm/last-run.json` (URL and title) and `gtm/last-screenshot.png` inside the sandbox, and that open action is `executed: true`. Local hosts, private addresses, metadata hosts, and URLs with a username or password are refused. Set `OCP_COMPUTER_ALLOW_HOSTS` to a comma-separated host list when you want a tighter allow list. Evidence stays under the sandbox `gtm/` directory.
+
+```bash
+pnpm add playwright
+pnpm exec playwright install chromium
+pnpm exec ocp chat --sandbox .sandbox --computer-execute "Open https://example.com"
+```
+
+If Playwright or Chromium is missing, the turn says the browser did not finish and leaves the actions `executed: false`.
 
 You can also send one message and return:
 

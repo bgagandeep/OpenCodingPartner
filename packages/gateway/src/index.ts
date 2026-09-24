@@ -6,7 +6,9 @@ import { routeMessage, type ManagerPlan, type RouteDecision } from "@opencodingp
 import { OrchestrationSwarm } from "@opencodingpartner/swarm";
 import {
   parseCreateFileInstruction,
+  executeComputerVisit,
   planGtmActions,
+  type BrowserDriver,
   changedSandboxFiles,
   qaCheckFile,
   reviewChangedFiles,
@@ -45,8 +47,14 @@ export interface ChatTurnInput {
   codingVia?: "grok-build" | "openai-compatible";
   /** Real Laya route. When omitted, the turn uses the fallback router and says so. */
   layaPredict?: (message: string) => Promise<RouteDecision>;
-  /** Ask the computer agent to run. The stub still records executed: false. */
+  /** Ask the computer agent to open a named URL. Without a driver, actions stay executed: false. */
   computerExecute?: boolean;
+  /** Live browser. Tests inject a fake. The CLI uses Playwright when execute is on. */
+  browserDriver?: BrowserDriver;
+  /** Operator URL. Wins over a URL in the message. */
+  computerUrl?: string;
+  /** When set, only these hosts (and their subdomains) may be opened. */
+  computerAllowHosts?: readonly string[];
 }
 
 export interface ChatTurnResult {
@@ -69,7 +77,8 @@ const completed = new Map<string, ChatTurnResult>();
 
 function idempotencyKey(input: ChatTurnInput, sessionKey: string): string {
   const mode = input.codingVia ?? (input.grokRunner ? "grok-build" : "local-sandbox");
-  return `${sessionKey}\n${path.resolve(input.sandboxRoot)}\n${mode}\n${input.message}`;
+  const computer = input.computerExecute === true ? "computer-live" : "computer-plan";
+  return `${sessionKey}\n${path.resolve(input.sandboxRoot)}\n${mode}\n${computer}\n${input.message}`;
 }
 
 export function runChatTurn(input: ChatTurnInput): Promise<ChatTurnResult> {
@@ -241,7 +250,20 @@ async function executeTurn(input: ChatTurnInput, session: SwarmSession, key: str
   }
 
   if (agents.some((agent) => agent.role === "computer")) {
-    computer = swarm.dispatch("computer", () => planGtmActions("OpenCodingPartner"));
+    const execute = input.computerExecute === true;
+    computer = await swarm.dispatch("computer", () =>
+      execute
+        ? executeComputerVisit({
+            productName: "OpenCodingPartner",
+            message: input.message,
+            sandboxRoot: input.sandboxRoot,
+            execute: true,
+            envUrl: input.computerUrl,
+            allowHosts: input.computerAllowHosts,
+            driver: input.browserDriver,
+          })
+        : Promise.resolve(planGtmActions("OpenCodingPartner")),
+    );
     const planPath = path.join(input.sandboxRoot, "gtm", "action-plan.json");
     await mkdir(path.dirname(planPath), { recursive: true });
     await writeFile(planPath, `${JSON.stringify(computer, null, 2)}\n`);
@@ -315,12 +337,16 @@ export function formatTranscript(result: ChatTurnResult): string {
     lines.push(`QA agent: ${result.qa.pass ? "pass" : "fail"} (${result.qa.summary})`);
   }
   if (result.computer) {
-    if (result.computerExecuteRequested) {
-      lines.push("Computer execute was requested. No live browser ran. Actions stay executed: false.");
+    const ran = result.computer.actions.some((action) => action.executed);
+    if (ran) {
+      lines.push(result.computer.note);
+    } else if (result.computerExecuteRequested) {
+      lines.push(result.computer.note);
+    } else {
+      lines.push("Computer agent recorded a GTM plan. No live browser ran.");
     }
-    lines.push("Computer agent recorded a GTM plan. No live browser ran.");
     for (const action of result.computer.actions) {
-      lines.push(`- ${action.kind} ${action.target} (executed: false)`);
+      lines.push(`- ${action.kind} ${action.target} (executed: ${action.executed})`);
     }
   }
   return `${lines.join("\n")}\n`;

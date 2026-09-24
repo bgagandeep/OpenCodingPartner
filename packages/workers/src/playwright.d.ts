@@ -15,6 +15,7 @@ declare module "playwright" {
     locator(selector: string): PlaywrightLocator;
     getByText(text: string, options?: { exact?: boolean }): PlaywrightLocator;
     mouse: { wheel(deltaX: number, deltaY: number): Promise<void> };
+    keyboard: { press(key: string): Promise<void> };
   }
   interface PlaywrightBrowser {
     newPage(): Promise<PlaywrightPage>;

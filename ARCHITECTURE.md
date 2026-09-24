@@ -40,7 +40,14 @@ pnpm bundle:install
         +-- docker compose     ghcr.io/openclaw/openclaw:2026.9.6
 ```
 
-The chat agent reads `.bundle/stack.json` or `OCP_OPENCLAW_BIN`, `OCP_GROK_BIN`, and `OCP_LAYA_PYTHON`. `ocp demo --live` runs `openclaw --version` and `grok --version`. When both answer, the stack is connected. The probe does not send a model prompt. If a binary is missing, the command skips and the offline sandbox demo still runs.
+The chat agent reads `.bundle/stack.json` or `OCP_OPENCLAW_BIN`, `OCP_GROK_BIN`, and `OCP_LAYA_PYTHON`.
+
+`pnpm demo:connected` (`ocp demo --live`) does two real steps:
+
+1. It checks `GET /healthz` on the OpenClaw gateway (`http://127.0.0.1:18789`, or `OPENCLAW_GATEWAY_URL`). If the gateway answers, the chat agent sends a turn with `openclaw gateway call sessions.send` on session `agent:board:main`. If the `openclaw` binary is missing but HTTP is up, it uses `POST /v1/chat/completions`. If nothing answers `/healthz`, the chat turn is skipped.
+2. Coding and QA agents call the bundled `grok` binary through the Grok Build runner (`grok -p ... --cwd ... --output-format streaming-json`). That call runs only when `XAI_API_KEY` is set. The key stays in the operator environment. This repo does not store it. If the key or the binary is missing, that step is skipped.
+
+The report says what ran and what was skipped. The offline sandbox demo does not use this path. Optional gateway auth is `OPENCLAW_GATEWAY_TOKEN`. Do not put that token in the repo.
 
 ## Packages
 

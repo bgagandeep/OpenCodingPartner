@@ -1,3 +1,4 @@
+export { runConnectedPath, type ConnectedReport } from "./connected.js";
 export { discoverStack, type StackBins } from "./discover.js";
 export { installBundle, installPlan } from "./install.js";
 export { probeLiveStack, type LiveProbe } from "./live.js";

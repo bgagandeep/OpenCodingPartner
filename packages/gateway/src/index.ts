@@ -95,7 +95,8 @@ function stepsFor(decision: RouteDecision): string[] {
   if (decision.roles.length === 0) return ["No agents stand up. This turn stays on the status route."];
   return [
     "Stand up the roles in this plan. Do not add a second plan.",
-    "Coding and QA edit the sandbox with Grok Build or the OpenAI-compatible meter.",
+    "OpenClaw does not write sandbox files.",
+    "Coding and QA edit the sandbox from this process with Grok Build or the OpenAI-compatible meter.",
     "Security gates path escape and secrets.",
     "The computer agent records a GTM plan and does not run a browser.",
   ];
@@ -128,7 +129,7 @@ async function executeTurn(input: ChatTurnInput, session: SwarmSession, key: str
   if (openclawDrove) plan = { ...plan, source: "openclaw" };
   const agents = openclawFailed ? [] : swarm.standUp(plan.roles);
   const orchestration = openclawDrove
-    ? `ran: OpenClaw drove this turn. ${notice.detail} File edits still run here because the gateway blocks remote fs_write and sessions_spawn.`
+    ? `ran: OpenClaw accepted the session plan. ${notice.detail} OpenClaw does not write sandbox files. Coding workers in this process write them after the plan is accepted. The gateway blocks remote fs_write and sessions_spawn.`
     : openclawFailed
       ? `failed: OpenClaw gateway was up but did not accept the session plan. ${notice.detail} The local swarm did not take over.`
       : `${notice.state}: ${notice.detail}`;

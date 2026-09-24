@@ -5,6 +5,7 @@ export interface StackBins {
   openclawBin?: string;
   grokBin?: string;
   layaPython?: string;
+  layaHfHome?: string;
 }
 
 export interface DiscoverInput {
@@ -40,5 +41,9 @@ export async function discoverStack(input: DiscoverInput): Promise<StackBins> {
     (await exists(input.env.OCP_LAYA_PYTHON)) ??
     (await exists(input.stack?.layaPython)) ??
     (await exists(path.join(input.repoRoot, ".bundle/laya/bin/python")));
-  return { openclawBin: openclaw, grokBin: grok, layaPython: laya };
+  const layaHfHome =
+    (await exists(input.env.OCP_LAYA_HF_HOME)) ??
+    (await exists(input.stack?.layaHfHome)) ??
+    (await exists(path.join(input.repoRoot, ".bundle/laya/hf")));
+  return { openclawBin: openclaw, grokBin: grok, layaPython: laya, layaHfHome };
 }

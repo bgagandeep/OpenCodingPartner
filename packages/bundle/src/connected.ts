@@ -53,7 +53,8 @@ function sessionPlan(message: string, plan?: SessionPlanInput): string {
   return [
     `Session plan for ${BOARD_SESSION_KEY}.`,
     "Stand up a coding agent, a QA agent, a security agent, and a computer agent.",
-    "Coding and QA edit the sandbox with Grok Build.",
+    "OpenClaw does not write sandbox files.",
+    "Coding and QA edit the sandbox from this process with Grok Build.",
     "Security gates path escape and secrets.",
     "The computer agent records a GTM plan and does not run a browser.",
     "User request:",

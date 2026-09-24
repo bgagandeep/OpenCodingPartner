@@ -21,6 +21,8 @@
     "license": "Apache-2.0",
     "credit": "Convai Innovations",
     "url": "https://pypi.org/project/laya/",
-    "weights": "https://huggingface.co/convaiinnovations/laya"
+    "weights": "https://huggingface.co/convaiinnovations/laya",
+    "checkpoint": "english",
+    "weightNote": "English checkpoint only, about 800 MB. First download often takes several minutes. Weights stay in .bundle/laya/hf and are not committed."
   }
 }

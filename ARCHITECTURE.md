@@ -24,7 +24,7 @@ The transcript is one block: session, route, which System-1 path ran, the manage
 
 1. You send a message to the chat agent (`ocp` or `opencodingpartner`).
 2. The orchestration agent swarm opens a session. The session shape follows OpenClaw: a binding of channel, account, and agent, and a session key like `agent:board:main`.
-3. System-1 picks the route and does not write code. The real bridge is `integrations/laya/predict.py`. The chat turn runs it when Laya is installed. Otherwise the transcript says the fallback ran. The offline demo does not download weights.
+3. System-1 picks the route and does not write code. The real bridge is `integrations/laya/predict.py`. The chat turn runs it when `pnpm bundle:install` has created `.bundle/laya`, with `HF_HOME` pointed at `.bundle/laya/hf`. Otherwise the transcript says the fallback ran. The offline demo does not download weights.
 4. The swarm stands up the agents the route needs. A build-and-sell request stands up all four roles.
 5. The security agent checks the path and the file contents before any write. It blocks path escape and secrets.
 6. The coding agent writes files. Offline, a local sandbox worker does the write. The Grok Build seam builds `grok -p "<prompt>" --cwd <dir> --output-format streaming-json` and calls an injected runner. The demo does not spawn `grok`.
@@ -43,7 +43,7 @@ Turns on the same session run one after another. The same message on the same sa
 | Computer agents (GTM) | Computer-use worker seam. Offline, it only records the plan. |
 | Security agents | Policy/security worker seam. It runs in the coding path, before the write. |
 
-Laya is System-1: it only picks the route. Package: [laya on PyPI](https://pypi.org/project/laya/) (Apache-2.0, pinned at 0.3.13). Weights: [convaiinnovations/laya](https://huggingface.co/convaiinnovations/laya). The call shape is `router.predict(state, questions, model=model)`. Question types are choice, score, and noul. We do not ship the weights.
+Laya is System-1: it only picks the route. Package: [laya on PyPI](https://pypi.org/project/laya/) (Apache-2.0, pinned at 0.3.13). Weights: [convaiinnovations/laya](https://huggingface.co/convaiinnovations/laya), English checkpoint only. `pnpm bundle:install` downloads about 800 MB into `.bundle/laya/hf`. That directory is not committed. The call shape is `router.predict(state, questions, model="english")`. Question types are choice, score, and noul.
 
 ## Packaging
 
@@ -79,4 +79,4 @@ The report says what ran and what was skipped. The offline sandbox demo does not
 
 ## Independence
 
-`pnpm bundle:install` fetches the pinned packages into `.bundle/`. This repo does not include their source or their weights. We are not affiliated with those projects. Credits are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+`pnpm bundle:install` fetches the pinned packages into `.bundle/` and downloads the Laya English weights there. This repo does not commit their source or their weights. OpenClaw owns the session plan. Coding workers in this process write sandbox files. We are not affiliated with those projects. Credits are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

@@ -26,6 +26,8 @@ export interface StackPins {
     credit: string;
     url: string;
     weights: string;
+    checkpoint: string;
+    weightNote: string;
   };
 }
 

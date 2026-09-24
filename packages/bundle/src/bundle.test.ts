@@ -17,6 +17,7 @@ test("system python is not treated as an installed Laya", async () => {
       pathLookup: (name) => (name === "python3" ? "/usr/bin/python3" : undefined),
     });
     assert.equal(found.layaPython, undefined);
+    assert.equal(found.layaHfHome, undefined);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -35,6 +36,11 @@ test("pins name the upstream packages and licenses", () => {
   assert.match(plan.join("\n"), /openclaw@2026\.9\.6/);
   assert.match(plan.join("\n"), /@xai-official\/grok@1\.0\.41/);
   assert.match(plan.join("\n"), /laya==0\.3\.13/);
+  assert.match(plan.join("\n"), /HF_HOME=.*\.bundle\/laya\/hf/);
+  assert.match(plan.join("\n"), /model='english'/);
+  const layaOnly = installPlan("/work", true);
+  assert.equal(layaOnly.some((line) => line.includes("openclaw")), false);
+  assert.match(layaOnly.join("\n"), /HF_HOME=.*\.bundle\/laya\/hf/);
 });
 
 test("a missing stack skips the connected demo", async () => {

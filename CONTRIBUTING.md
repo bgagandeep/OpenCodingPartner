@@ -10,7 +10,7 @@ pnpm bundle:plan
 pnpm demo:connected
 ```
 
-`pnpm bundle:install` downloads OpenClaw, Grok Build, and Laya into `.bundle/`. Do not commit that directory. Do not paste their source into this repo. Keep their names and licenses in `THIRD_PARTY_NOTICES.md`.
+`pnpm bundle:install` downloads OpenClaw, Grok Build, Laya, and the Laya English weights into `.bundle/`. Do not commit that directory. Do not paste their source or weights into this repo. Keep their names and licenses in `THIRD_PARTY_NOTICES.md`.
 
 You need Node 22.14 or newer.
 

@@ -3,6 +3,7 @@ import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { routeWithPredict, type ManagerPlan } from "@opencodingpartner/policy";
 import { writeSandboxFile } from "@opencodingpartner/workers";
 import { DEMO_MESSAGE, runChatTurn, runDemo } from "./index.js";
 
@@ -203,6 +204,91 @@ test("QA fails when Grok Build reports success and keeps no files", async () => 
     assert.equal(turn.coding?.wrote, false);
     assert.equal(turn.qa?.pass, false);
     assert.match(turn.qa?.summary ?? "", /kept no files/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Grok Build adds a function and a test across two files", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-math-"));
+  try {
+    const message = "Add an add function in src/math.ts and a test in src/math.test.ts";
+    let argv: string[] = [];
+    const turn = await runChatTurn({
+      message,
+      sandboxRoot: root,
+      grokRunner: {
+        async run(next) {
+          argv = [...next];
+          await writeSandboxFile(
+            root,
+            "src/math.ts",
+            "export function add(left: number, right: number): number {\n  return left + right;\n}\n",
+          );
+          await writeSandboxFile(
+            root,
+            "src/math.test.ts",
+            "import assert from \"node:assert/strict\";\nimport { add } from \"./math.js\";\nassert.equal(add(2, 3), 5);\n",
+          );
+          return { exitCode: 0, stdout: "" };
+        },
+      },
+    });
+    assert.equal(argv[0], "grok");
+    assert.ok(argv.includes(message));
+    assert.ok(argv.includes("--cwd"));
+    assert.ok(argv.includes(root));
+    assert.ok(argv.includes("--output-format"));
+    assert.ok(argv.includes("streaming-json"));
+    assert.equal(turn.coding?.wrote, true);
+    assert.equal(turn.coding?.via, "grok-build");
+    assert.equal(turn.qa?.pass, true);
+    assert.match(await readFile(path.join(root, "src/math.ts"), "utf8"), /function add/);
+    assert.match(await readFile(path.join(root, "src/math.test.ts"), "utf8"), /add\(2, 3\)/);
+    const planAt = turn.transcript.indexOf("Manager plan (local-manager):");
+    const stoodAt = turn.transcript.indexOf("Stood up:");
+    assert.ok(planAt >= 0 && planAt < stoodAt);
+    assert.match(turn.transcript, /System-1: fallback/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a real Laya status choice is the only plan OpenClaw stands up", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-laya-"));
+  try {
+    let sent: ManagerPlan | undefined;
+    const turn = await runChatTurn({
+      message: "add a README section explaining install",
+      sandboxRoot: root,
+      layaPredict: (message) =>
+        routeWithPredict(message, async () => ({
+          answers: {
+            route: { choice: "status", probabilities: { status: 0.99, "multi-agent": 0.01 }, confidence: 0.99, rl_agent: "laya" },
+            stand_up_computer: { noul: 0.01 },
+            write_risk: { score: 0.1, legend: "none" },
+          },
+          routing: { model: "english" },
+        })),
+      orchestration: async (plan) => {
+        sent = plan;
+        return { state: "ran", driver: "openclaw", detail: "Session agent:board:main accepted the plan." };
+      },
+      grokRunner: {
+        async run() {
+          await writeSandboxFile(root, "README.md", "should-not\n");
+          return { exitCode: 0, stdout: "" };
+        },
+      },
+    });
+    assert.equal(sent?.source, "local-manager");
+    assert.deepEqual(sent?.roles, []);
+    assert.equal(sent?.sessionKey, "agent:board:main");
+    assert.deepEqual(turn.agents, []);
+    assert.equal(turn.coding, null);
+    assert.match(turn.transcript, /System-1: real Laya/);
+    assert.match(turn.transcript, /Manager plan \(openclaw\)/);
+    await assert.rejects(readFile(path.join(root, "README.md"), "utf8"));
   } finally {
     await rm(root, { recursive: true, force: true });
   }

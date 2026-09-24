@@ -39,7 +39,6 @@ export async function discoverStack(input: DiscoverInput): Promise<StackBins> {
   const laya =
     (await exists(input.env.OCP_LAYA_PYTHON)) ??
     (await exists(input.stack?.layaPython)) ??
-    (await exists(path.join(input.repoRoot, ".bundle/laya/bin/python"))) ??
-    input.pathLookup?.("python3");
+    (await exists(path.join(input.repoRoot, ".bundle/laya/bin/python")));
   return { openclawBin: openclaw, grokBin: grok, layaPython: laya };
 }

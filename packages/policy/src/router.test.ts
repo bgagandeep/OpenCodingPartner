@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mockPredict, routeMessage } from "./index.js";
+import { mockPredict, parseLayaAnswers, routeMessage, routeWithPredict } from "./index.js";
 
 test("a build-and-sell message routes to all four agents", () => {
   const decision = routeMessage(
@@ -26,6 +26,34 @@ test("a plain hello stays on the status route", () => {
   const decision = routeMessage("hello");
   assert.equal(decision.route, "status");
   assert.deepEqual(decision.roles, []);
+});
+
+test("a real Laya choice wins over the fallback router", async () => {
+  const message = "add a README section explaining install";
+  assert.equal(routeMessage(message).route, "multi-agent");
+  const decision = await routeWithPredict(message, async () => ({
+    answers: {
+      route: { choice: "status", probabilities: { status: 0.97, "multi-agent": 0.03 }, confidence: 0.97, rl_agent: "laya" },
+      stand_up_computer: { noul: 0.05 },
+      write_risk: { score: 0.2, legend: "low" },
+    },
+    routing: { model: "english" },
+  }));
+  assert.equal(decision.route, "status");
+  assert.deepEqual(decision.roles, []);
+  assert.equal(decision.note, "System-1: real Laya.");
+  const parsed = parseLayaAnswers({
+    answers: { route: { choice: "multi-agent", confidence: 0.9 } },
+  });
+  assert.equal(parsed[0]?.type, "choice");
+});
+
+test("a failed Laya call says fallback", async () => {
+  const decision = await routeWithPredict("add a function", async () => {
+    throw new Error("laya missing");
+  });
+  assert.match(decision.note, /System-1: fallback/);
+  assert.equal(decision.route, "multi-agent");
 });
 
 test("mock predict returns choice, noul, and score", () => {

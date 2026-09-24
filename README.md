@@ -46,9 +46,11 @@ pnpm exec ocp chat --sandbox .sandbox
 
 Type a message, then type `exit`. One turn stands up a coding agent, a QA agent, a security agent, and a computer agent. The transcript says what each one did.
 
-A general request, such as "add a README section explaining install", is sent to Grok Build with the sandbox as the working directory. The QA agent then reviews the files that changed. The security agent checks the request first, and checks the written files after. A file that escapes the sandbox or contains a secret is removed.
+A general request, such as "Add an add function in src/math.ts and a test in src/math.test.ts", is sent to the coding agent with the sandbox as the working directory. The QA agent then reviews the files that changed. The security agent checks the request first, and checks the written files after. A file that escapes the sandbox or contains a secret is removed.
 
-That general path needs `XAI_API_KEY` and the `grok` binary. Without them, the chat agent says so. It does not pretend the offline sandbox can do open-ended edits.
+That general path needs a meter. Use native Grok with `XAI_API_KEY` and the `grok` binary, or an OpenAI-compatible meter with `OPENAI_API_KEY` and `OPENAI_BASE_URL` (LiteLLM or OpenRouter). Without a key, the chat agent says so. It does not pretend the offline sandbox can do open-ended edits.
+
+When Laya is installed (`pnpm bundle:install`, or `OCP_LAYA_PYTHON`), the chat turn calls `integrations/laya/predict.py` and the transcript says `System-1: real Laya.` A machine that only has system Python is not treated as Laya. The transcript then says `System-1: fallback. Laya is not installed.`
 
 This simple message still writes a file on the local sandbox worker:
 
@@ -67,13 +69,23 @@ hello
 "
 ```
 
-When the OpenClaw gateway is up, it drives the turn. The chat agent sends a session plan to `agent:board:main` and checks `skills.status` on that session. The local swarm does not run a second plan. If the gateway rejects the plan, the turn stops. The local swarm is the fallback only when the gateway is down. OpenClaw does not edit the sandbox itself. The gateway blocks remote file writes and remote agent spawn. Grok Build still does the file edit after the session accepts the plan. If the key is missing, only a simple create-file message is written locally. Do not commit `XAI_API_KEY` or `OPENCLAW_GATEWAY_TOKEN`.
+When the OpenClaw gateway is up, the session plan on `agent:board:main` is the only list of agents that stand up. The chat agent sends that plan with `sessions.send` and checks `skills.status` on that session. The local swarm does not run a second plan. If the gateway rejects the plan, the turn stops and no worker writes files. When the gateway is down, the transcript prints a manager plan from the local manager before any worker runs. OpenClaw still cannot edit the sandbox itself. The gateway blocks remote `fs_write` and `sessions_spawn`. After the session accepts the plan, Grok Build or the OpenAI-compatible meter does the file edit from this process. If no key is set, only a simple create-file message is written locally. Do not commit `XAI_API_KEY`, `OPENAI_API_KEY`, or `OPENCLAW_GATEWAY_TOKEN`.
+
+Native Grok:
 
 ```bash
 pnpm bundle:install
 export OPENCLAW_GATEWAY_TOKEN="the gateway token"
 export XAI_API_KEY="the operator key"
 docker compose up -d openclaw-gateway
+pnpm exec ocp chat --sandbox .sandbox
+```
+
+OpenAI-compatible meter (LiteLLM or OpenRouter). `OPENAI_MODEL` is optional and defaults to `gpt-4o-mini`:
+
+```bash
+export OPENAI_API_KEY="the operator key"
+export OPENAI_BASE_URL="https://your-litellm-or-openrouter/v1"
 pnpm exec ocp chat --sandbox .sandbox
 ```
 
@@ -98,7 +110,14 @@ docker compose up -d openclaw-gateway
 pnpm demo:connected
 ```
 
-If the gateway is down, the chat turn is skipped. If `XAI_API_KEY` is unset, the Grok Build call is skipped. The offline demo still works without the bundle.
+Or point the coding meter at LiteLLM or OpenRouter:
+
+```bash
+export OPENAI_API_KEY="the operator key"
+export OPENAI_BASE_URL="https://your-litellm-or-openrouter/v1"
+```
+
+If the gateway is down, the chat turn is skipped. If neither `XAI_API_KEY` nor the OpenAI pair is set, the Grok Build call is skipped. The offline demo still works without the bundle.
 
 The demo stands up a coding agent, a QA agent, a security agent, and a computer agent. The coding agent writes `PRODUCT.md` in the sandbox. The QA agent checks that file. The security agent blocks a path escape and a secret. The computer agent writes `gtm/action-plan.json`. Every computer action is marked not executed. No live browser ran.
 
@@ -119,4 +138,4 @@ Apache-2.0. See [LICENSE](LICENSE).
 
 ## Independence
 
-We package and connect these tools for the operator. We are not affiliated with OpenClaw, xAI, SpaceXAI, or Convai Innovations. The offline demo still uses a local sandbox and a mock System-1 router when those tools are not installed.
+We package and connect these tools for the operator. We are not affiliated with OpenClaw, xAI, SpaceXAI, or Convai Innovations. The offline demo still uses a local sandbox. System-1 uses the installed Laya package when `pnpm bundle:install` (or `OCP_LAYA_PYTHON`) provides it, and a fallback router when it does not. The computer agent does not run a browser. OpenClaw cannot remote-write the sandbox. Laya weights are not bundled.

@@ -2,7 +2,7 @@ import { mkdir, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { StoodUpAgent, SwarmSession } from "@opencodingpartner/mesh";
 import { boardSession } from "@opencodingpartner/mesh";
-import { routeMessage, type RouteDecision } from "@opencodingpartner/policy";
+import { routeMessage, type ManagerPlan, type RouteDecision } from "@opencodingpartner/policy";
 import { OrchestrationSwarm } from "@opencodingpartner/swarm";
 import {
   parseCreateFileInstruction,
@@ -33,14 +33,18 @@ password=hunter2
 export interface ChatTurnInput {
   message: string;
   sandboxRoot: string;
-  /** When set, the turn also notifies a live OpenClaw gateway. */
-  orchestration?: () => Promise<{
+  /** When set, the turn sends this manager plan to OpenClaw. The plan is the only standup list. */
+  orchestration?: (plan: ManagerPlan) => Promise<{
     state: "ran" | "skipped" | "failed";
     detail: string;
     driver?: "openclaw" | "local-swarm";
   }>;
-  /** When set, the coding agent edits the sandbox through Grok Build. */
+  /** When set, the coding agent edits the sandbox through Grok Build or an OpenAI-compatible meter. */
   grokRunner?: InjectedRunner;
+  /** Which meter the runner uses. Defaults to grok-build when a runner is set. */
+  codingVia?: "grok-build" | "openai-compatible";
+  /** Real Laya route. When omitted, the turn uses the fallback router and says so. */
+  layaPredict?: (message: string) => Promise<RouteDecision>;
   /** Ask the computer agent to run. The stub still records executed: false. */
   computerExecute?: boolean;
 }
@@ -50,7 +54,8 @@ export interface ChatTurnResult {
   decision: RouteDecision;
   agents: StoodUpAgent[];
   security: GateDecision | null;
-  coding: { relativePath: string; wrote: boolean; via: "local-sandbox" | "grok-build"; note?: string } | null;
+  coding: { relativePath: string; wrote: boolean; via: "local-sandbox" | "grok-build" | "openai-compatible"; note?: string } | null;
+  plan: ManagerPlan;
   qa: QaResult | null;
   computer: GtmPlan | null;
   orchestration: string;
@@ -63,7 +68,7 @@ const lanes = new Map<string, Promise<void>>();
 const completed = new Map<string, ChatTurnResult>();
 
 function idempotencyKey(input: ChatTurnInput, sessionKey: string): string {
-  const mode = input.grokRunner ? "grok-build" : "local-sandbox";
+  const mode = input.codingVia ?? (input.grokRunner ? "grok-build" : "local-sandbox");
   return `${sessionKey}\n${path.resolve(input.sandboxRoot)}\n${mode}\n${input.message}`;
 }
 
@@ -86,27 +91,42 @@ export function runChatTurn(input: ChatTurnInput): Promise<ChatTurnResult> {
   return run;
 }
 
+function stepsFor(decision: RouteDecision): string[] {
+  if (decision.roles.length === 0) return ["No agents stand up. This turn stays on the status route."];
+  return [
+    "Stand up the roles in this plan. Do not add a second plan.",
+    "Coding and QA edit the sandbox with Grok Build or the OpenAI-compatible meter.",
+    "Security gates path escape and secrets.",
+    "The computer agent records a GTM plan and does not run a browser.",
+  ];
+}
+
+function codingVia(input: ChatTurnInput): "local-sandbox" | "grok-build" | "openai-compatible" {
+  if (!input.grokRunner) return "local-sandbox";
+  return input.codingVia ?? "grok-build";
+}
+
 async function executeTurn(input: ChatTurnInput, session: SwarmSession, key: string): Promise<ChatTurnResult> {
-  const decision = routeMessage(input.message);
+  const decision = input.layaPredict ? await input.layaPredict(input.message) : routeMessage(input.message);
   const swarm = new OrchestrationSwarm(session);
-  const agents = swarm.standUp(decision.roles);
   const instruction = parseCreateFileInstruction(input.message);
   let security: GateDecision | null = null;
   let coding: ChatTurnResult["coding"] = null;
   let qa: QaResult | null = null;
   let computer: GtmPlan | null = null;
+  let plan: ManagerPlan = {
+    sessionKey: session.key,
+    source: "local-manager",
+    roles: [...decision.roles],
+    steps: stepsFor(decision),
+  };
   const notice = input.orchestration
-    ? await input.orchestration()
+    ? await input.orchestration(plan)
     : { state: "skipped" as const, detail: "OpenClaw gateway was not used. The local swarm ran this turn.", driver: "local-swarm" as const };
   const openclawDrove = notice.driver === "openclaw" && notice.state === "ran";
   const openclawFailed = notice.driver === "openclaw" && notice.state === "failed";
-  if (openclawDrove) {
-    decision.route = "multi-agent";
-    decision.roles = ["coding", "qa", "security", "computer"];
-    decision.note = "OpenClaw session plan stood up the agents.";
-    swarm.standUp(decision.roles);
-    agents.splice(0, agents.length, ...swarm.list());
-  }
+  if (openclawDrove) plan = { ...plan, source: "openclaw" };
+  const agents = openclawFailed ? [] : swarm.standUp(plan.roles);
   const orchestration = openclawDrove
     ? `ran: OpenClaw drove this turn. ${notice.detail} File edits still run here because the gateway blocks remote fs_write and sessions_spawn.`
     : openclawFailed
@@ -118,6 +138,7 @@ async function executeTurn(input: ChatTurnInput, session: SwarmSession, key: str
       session,
       decision,
       agents,
+      plan,
       security,
       coding,
       qa,
@@ -142,6 +163,7 @@ async function executeTurn(input: ChatTurnInput, session: SwarmSession, key: str
     );
   }
 
+  const via = codingVia(input);
   const generalEdit = !instruction && agents.some((agent) => agent.role === "coding");
   if (generalEdit) {
     const messageGate = securityGate({
@@ -153,7 +175,7 @@ async function executeTurn(input: ChatTurnInput, session: SwarmSession, key: str
     messageGate.allow = messageGate.reasons.length === 0;
     security = messageGate;
     if (!messageGate.allow) {
-      coding = { relativePath: "the request", wrote: false, via: input.grokRunner ? "grok-build" : "local-sandbox" };
+      coding = { relativePath: "the request", wrote: false, via };
     } else if (input.grokRunner) {
       const runner = input.grokRunner;
       const before = await snapshotSandbox(input.sandboxRoot);
@@ -175,7 +197,7 @@ async function executeTurn(input: ChatTurnInput, session: SwarmSession, key: str
       coding = {
         relativePath: kept.length > 0 ? kept.join(", ") : "no files",
         wrote: grok.exitCode === 0 && kept.length > 0,
-        via: "grok-build",
+        via,
       };
       if (agents.some((agent) => agent.role === "qa")) {
         qa = await swarm.dispatch("qa", () => reviewChangedFiles(input.sandboxRoot, kept, grok.exitCode === 0));
@@ -188,7 +210,7 @@ async function executeTurn(input: ChatTurnInput, session: SwarmSession, key: str
         relativePath: "general edit",
         wrote: false,
         via: "local-sandbox",
-        note: "Coding agent did not edit files. General edits need XAI_API_KEY and Grok Build. A simple create-file message still runs on the local sandbox.",
+        note: "Coding agent did not edit files. General edits need XAI_API_KEY and Grok Build, or OPENAI_API_KEY and OPENAI_BASE_URL. A simple create-file message still runs on the local sandbox.",
       };
     }
   }
@@ -198,7 +220,7 @@ async function executeTurn(input: ChatTurnInput, session: SwarmSession, key: str
       const runner = input.grokRunner;
       const prompt = `Coding agent: write ${instruction.relativePath} with this exact content and nothing else:\n${instruction.content}`;
       const grok = await swarm.dispatch("coding", () => runOnGrokBuild(runner, prompt, input.sandboxRoot));
-      coding = { relativePath: instruction.relativePath, wrote: grok.exitCode === 0, via: "grok-build" };
+      coding = { relativePath: instruction.relativePath, wrote: grok.exitCode === 0, via };
       if (agents.some((agent) => agent.role === "qa")) {
         qa = await swarm.dispatch("qa", () => qaCheckFile(input.sandboxRoot, instruction.relativePath, instruction.content));
       }
@@ -213,7 +235,7 @@ async function executeTurn(input: ChatTurnInput, session: SwarmSession, key: str
         );
       }
     } else {
-      coding = { relativePath: instruction.relativePath, wrote: false, via: input.grokRunner ? "grok-build" : "local-sandbox" };
+      coding = { relativePath: instruction.relativePath, wrote: false, via };
     }
   }
 
@@ -228,6 +250,7 @@ async function executeTurn(input: ChatTurnInput, session: SwarmSession, key: str
     session,
     decision,
     agents,
+    plan,
     security,
     coding,
     qa,
@@ -239,6 +262,7 @@ async function executeTurn(input: ChatTurnInput, session: SwarmSession, key: str
       session,
       decision,
       agents,
+      plan,
       security,
       coding,
       qa,
@@ -259,6 +283,9 @@ export function formatTranscript(result: ChatTurnResult): string {
     `Session: ${result.session.key}`,
     `Binding: channel=${result.session.binding.channel} account=${result.session.binding.accountId} agent=${result.session.binding.agentId}`,
     `Route: ${result.decision.route}`,
+    result.decision.note,
+    `Manager plan (${result.plan.source}):`,
+    JSON.stringify(result.plan),
     `Orchestration: ${result.orchestration}`,
     "Stood up:",
   ];

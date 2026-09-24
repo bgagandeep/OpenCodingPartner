@@ -8,6 +8,20 @@ import { installPlan } from "./install.js";
 import { probeLiveStack } from "./live.js";
 import { loadPins } from "./pins.js";
 
+test("system python is not treated as an installed Laya", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-no-laya-"));
+  try {
+    const found = await discoverStack({
+      env: {},
+      repoRoot: root,
+      pathLookup: (name) => (name === "python3" ? "/usr/bin/python3" : undefined),
+    });
+    assert.equal(found.layaPython, undefined);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("pins name the upstream packages and licenses", () => {
   const pins = loadPins();
   assert.equal(pins.openclaw.npm, "openclaw");

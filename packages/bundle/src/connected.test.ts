@@ -2,7 +2,30 @@ import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import test from "node:test";
+import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { routeWithPredict } from "@opencodingpartner/policy";
 import { runConnectedPath } from "./connected.js";
+import { predictWithLaya } from "./laya.js";
+
+test("predict.py is selected when the Laya python is present", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-laya-py-"));
+  const python = path.join(root, "python");
+  try {
+    await writeFile(
+      python,
+      "#!/bin/sh\ncat >/dev/null\nprintf '%s\\n' '{\"answers\":{\"route\":{\"choice\":\"status\",\"probabilities\":{\"status\":0.9,\"multi-agent\":0.1},\"confidence\":0.9,\"rl_agent\":\"laya\"},\"stand_up_computer\":{\"noul\":0.1},\"write_risk\":{\"score\":0.2,\"legend\":\"low\"}},\"routing\":{\"model\":\"english\"}}'\n",
+    );
+    await chmod(python, 0o755);
+    const raw = await predictWithLaya(python, path.join(root, "predict.py"), "add a function", []);
+    const decision = await routeWithPredict("add a function and a test", async () => raw);
+    assert.equal(decision.note, "System-1: real Laya.");
+    assert.equal(decision.route, "status");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 test("gateway down and missing grok are both skipped", async () => {
   const report = await runConnectedPath({

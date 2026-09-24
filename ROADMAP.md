@@ -11,7 +11,7 @@ The offline core runs without OpenClaw, Grok Build, or Laya installed.
 - Coding agent and QA agent on a Grok Build seam, with a local sandbox for real file writes and a QA check.
 - Security agent gate before writes.
 - Computer agent seam that records a go-to-market plan and does not claim a live browser ran.
-- Laya-class System-1 mock. The bridge script is `integrations/laya/predict.py`.
+- System-1 uses installed Laya through `integrations/laya/predict.py`. The transcript says real or fallback.
 
 A temporary early-test cap of 8 agents is in the code. It is temporary. The demo stands up four agents in one turn.
 
@@ -24,7 +24,7 @@ Ads are off. Payments are off in the core.
 - Start the OpenClaw gateway with `docker compose up -d openclaw-gateway` and send session traffic through it.
 - Send a real coding prompt through Grok Build when the operator has a key.
 - Replace the computer-use stub with a real computer-use worker. Keep the record of what ran honest.
-- Run `integrations/laya/predict.py` against the installed Laya package. Keep it on route and policy only.
+- Keep Laya on route and policy only. Weights stay on the operator machine.
 
 ## Later
 

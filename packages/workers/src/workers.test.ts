@@ -6,6 +6,7 @@ import test from "node:test";
 import { parseCreateFileInstruction, writeSandboxFile } from "./coding.js";
 import { planGtmActions } from "./computer.js";
 import { grokBuildArgv, runOnGrokBuild } from "./grok.js";
+import { openAiCompatibleRunner, parseFileEdits } from "./openai.js";
 import { qaCheckFile } from "./qa.js";
 import { securityGate } from "./security.js";
 
@@ -66,6 +67,48 @@ test("Grok Build argv is headless and the runner is injected", async () => {
   assert.equal(result.exitCode, 0);
   assert.equal(seen.length, 1);
   assert.equal(seen[0]?.[0], "grok");
+});
+
+test("an OpenAI-compatible meter writes the files the model returns", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-openai-"));
+  try {
+    const runner = openAiCompatibleRunner({
+      apiKey: "sk-test",
+      baseUrl: "https://litellm.example/v1/",
+      fetchImpl: async (url, init) => {
+        assert.equal(url, "https://litellm.example/v1/chat/completions");
+        const body = JSON.parse(String(init?.body)) as { messages: { content: string }[] };
+        assert.match(body.messages[0]?.content ?? "", /src\/math.ts/);
+        assert.equal((init?.headers as Record<string, string>).authorization, "Bearer sk-test");
+        return new Response(
+          JSON.stringify({
+            choices: [
+              {
+                message: {
+                  content:
+                    '```json\n{"files":[{"path":"src/math.ts","content":"export function add(a: number, b: number): number {\\n  return a + b;\\n}\\n"},{"path":"src/math.test.ts","content":"import { add } from \\"./math.js\\";\\nimport assert from \\"node:assert/strict\\";\\nassert.equal(add(1, 2), 3);\\n"}]}\n```',
+                },
+              },
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      },
+    });
+    const result = await runOnGrokBuild(
+      runner,
+      "Add an add function in src/math.ts and a test in src/math.test.ts",
+      root,
+    );
+    assert.equal(result.exitCode, 0);
+    const math = await readFile(path.join(root, "src/math.ts"), "utf8");
+    const spec = await readFile(path.join(root, "src/math.test.ts"), "utf8");
+    assert.match(math, /function add/);
+    assert.match(spec, /add\(1, 2\)/);
+    assert.equal(parseFileEdits("not json").length, 0);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("computer agent records a GTM plan that did not run", () => {

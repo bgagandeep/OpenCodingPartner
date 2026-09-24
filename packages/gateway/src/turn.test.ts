@@ -657,6 +657,44 @@ test("a failed page claim is checked again and stops when the budget is used", a
   }
 });
 
+test("a follow-up turn sees the files from the previous turn", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-multi-"));
+  try {
+    const prompts: string[] = [];
+    const runner = {
+      async run(argv: readonly string[]) {
+        const prompt = argv[argv.indexOf("-p") + 1] ?? "";
+        prompts.push(prompt);
+        if (prompt.includes("create the add function")) {
+          await writeSandboxFile(root, "src/math.ts", "export function add(left: number, right: number): number {\n  return left + right;\n}\n");
+        } else if (prompt.includes("add tests")) {
+          assert.match(prompt, /export function add/);
+          await writeSandboxFile(root, "src/math.test.ts", "import { add } from \"./math.js\";\nimport assert from \"node:assert/strict\";\nassert.equal(add(2, 3), 4);\n");
+        } else if (prompt.includes("fix the failing assert")) {
+          assert.match(prompt, /assert.equal\(add\(2, 3\), 4\)/);
+          await writeSandboxFile(root, "src/math.test.ts", "import { add } from \"./math.js\";\nimport assert from \"node:assert/strict\";\nassert.equal(add(2, 3), 5);\n");
+        }
+        return { exitCode: 0, stdout: "" };
+      },
+    };
+    const first = await runChatTurn({ message: "create the add function in src/math.ts", sandboxRoot: root, grokRunner: runner });
+    await writeSandboxFile(root, "notes.txt", "password=hunter2\n");
+    const second = await runChatTurn({ message: "add tests in src/math.test.ts that import from math", sandboxRoot: root, grokRunner: runner });
+    const third = await runChatTurn({ message: "fix the failing assert", sandboxRoot: root, grokRunner: runner });
+    assert.equal(first.session.key, second.session.key);
+    assert.match(first.transcript, /Meter: Grok Build/);
+    assert.match(second.transcript, /Meter: Grok Build/);
+    assert.match(third.transcript, /Meter: Grok Build/);
+    assert.match(prompts[1] ?? "", /Sandbox files already on disk/);
+    assert.match(prompts[1] ?? "", /src\/math.ts/);
+    assert.doesNotMatch(prompts[1] ?? "", /hunter2/);
+    assert.equal(await readFile(path.join(root, "src/math.ts"), "utf8"), "export function add(left: number, right: number): number {\n  return left + right;\n}\n");
+    assert.match(await readFile(path.join(root, "src/math.test.ts"), "utf8"), /add\(2, 3\), 5\)/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("demo command path writes the product file and blocks the secret", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "ocp-demo-"));
   try {

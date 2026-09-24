@@ -5,7 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { applyUnifiedDiff, commandDecision, deleteSandboxFile, grepSandbox, parseCodingReply } from "./agent-tools.js";
 import { parseCreateFileInstruction, writeSandboxFile } from "./coding.js";
-import { computerChain, executeComputerVisit, pageClaim, planGtmActions, selectorDecision, urlDecision } from "./computer.js";
+import { COMPUTER_WAIT_CAP_MS, computerChain, executeComputerVisit, pageClaim, planGtmActions, selectorDecision, urlDecision } from "./computer.js";
 import { grokBuildArgv, runOnGrokBuild } from "./grok.js";
 import { openAiCompatibleRunner, parseFileEdits } from "./openai.js";
 import { fileExpectations, qaCheckFile, reviewComputerClaim, reviewFileExpectations } from "./qa.js";
@@ -509,6 +509,124 @@ test("click then expect text, and navigate stays on the opened host", async () =
     assert.equal(refused.actions.find((action) => action.kind === "navigate")?.passed, false);
     assert.match(refused.actions.find((action) => action.kind === "navigate")?.reason ?? "", /opened host/);
     await rm(blocked, { recursive: true, force: true });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("wait for a selector after click, and a long sleep is refused", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-wait-"));
+  try {
+    const png = Uint8Array.from([137, 80, 78, 71]);
+    let details = false;
+    const plan = await executeComputerVisit({
+      productName: "OpenCodingPartner",
+      message: 'Open https://example.com then click #more then wait #details then expect text "Details"',
+      sandboxRoot: root,
+      execute: true,
+      driver: {
+        async start() {
+          return {
+            async open() {
+              return { title: "Example", text: "body", screenshotPng: png };
+            },
+            async readScreen() {
+              return { title: "Example", text: details ? "Details are here" : "body", screenshotPng: png };
+            },
+            async typeInto() {
+              return { title: "Example", text: "body", screenshotPng: png };
+            },
+            async click() {
+              details = true;
+              return { title: "Example", text: "Details are here", screenshotPng: png };
+            },
+            async navigate() {
+              return { title: "Example", text: "body", screenshotPng: png };
+            },
+            async waitFor(selector: string) {
+              if (!details || selector !== "#details") throw new Error("timed out");
+              return { title: "Example", text: "Details are here", screenshotPng: png };
+            },
+            async close() {
+              return undefined;
+            },
+          };
+        },
+      },
+    });
+    assert.equal(plan.actions.find((action) => action.kind === "wait")?.passed, true);
+    assert.equal(plan.actions.find((action) => action.purpose === "Check the page text")?.passed, true);
+    const saved = JSON.parse(await readFile(path.join(root, "gtm/last-run.json"), "utf8")) as {
+      steps: { kind: string; passed?: boolean; screenshot?: string }[];
+    };
+    assert.ok(saved.steps.some((step) => step.kind === "wait" && step.passed === true && step.screenshot));
+
+    const slow = await mkdtemp(path.join(tmpdir(), "ocp-wait-cap-"));
+    const started = Date.now();
+    const refused = await executeComputerVisit({
+      productName: "OpenCodingPartner",
+      message: "Open https://example.com then wait 60000 then expect text \"later\"",
+      sandboxRoot: slow,
+      execute: true,
+      driver: {
+        async start() {
+          return {
+            async open() {
+              return { title: "Example", text: "body", screenshotPng: png };
+            },
+            async readScreen() {
+              return { title: "Example", text: "body", screenshotPng: png };
+            },
+            async typeInto() {
+              return { title: "Example", text: "body", screenshotPng: png };
+            },
+            async close() {
+              return undefined;
+            },
+          };
+        },
+      },
+    });
+    assert.ok(Date.now() - started < 2000);
+    assert.equal(COMPUTER_WAIT_CAP_MS, 30000);
+    const wait = refused.actions.find((action) => action.kind === "wait");
+    assert.equal(wait?.passed, false);
+    assert.match(wait?.reason ?? "", /30000/);
+    assert.equal(refused.actions.find((action) => action.purpose === "Check the page text")?.skipped, true);
+    await rm(slow, { recursive: true, force: true });
+
+    const missed = await mkdtemp(path.join(tmpdir(), "ocp-wait-miss-"));
+    const timed = await executeComputerVisit({
+      productName: "OpenCodingPartner",
+      message: 'Open https://example.com then wait #missing then expect text "gone"',
+      sandboxRoot: missed,
+      execute: true,
+      driver: {
+        async start() {
+          return {
+            async open() {
+              return { title: "Example", text: "body", screenshotPng: png };
+            },
+            async readScreen() {
+              return { title: "Example", text: "body", screenshotPng: png };
+            },
+            async typeInto() {
+              return { title: "Example", text: "body", screenshotPng: png };
+            },
+            async waitFor() {
+              throw new Error("timed out");
+            },
+            async close() {
+              return undefined;
+            },
+          };
+        },
+      },
+    });
+    assert.equal(timed.actions.find((action) => action.kind === "wait")?.passed, false);
+    assert.match(timed.actions.find((action) => action.kind === "wait")?.reason ?? "", /timed out/);
+    assert.equal(timed.actions.find((action) => action.purpose === "Check the page text")?.executed, false);
+    await rm(missed, { recursive: true, force: true });
   } finally {
     await rm(root, { recursive: true, force: true });
   }

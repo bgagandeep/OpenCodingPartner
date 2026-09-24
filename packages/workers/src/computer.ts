@@ -4,7 +4,7 @@ import path from "node:path";
 
 export interface ComputerAction {
   id: string;
-  kind: "open-url" | "type" | "read-screen" | "verify" | "click" | "navigate";
+  kind: "open-url" | "type" | "read-screen" | "verify" | "click" | "navigate" | "wait";
   target: string;
   purpose: string;
   executed: boolean;
@@ -26,6 +26,7 @@ export interface BrowserSession {
   typeInto(selector: string, text: string): Promise<ScreenShot>;
   click?(target: string, by: "selector" | "text"): Promise<ScreenShot>;
   navigate?(url: string): Promise<ScreenShot>;
+  waitFor?(selector: string, timeoutMs: number): Promise<ScreenShot>;
   selectorState?(selector: string): Promise<{ visible: boolean; value: string }>;
   close(): Promise<void>;
 }
@@ -130,14 +131,17 @@ export function pageClaim(message: string): { title?: string; text?: string } | 
 }
 
 export interface ChainStep {
-  kind: "type" | "expect-title" | "expect-text" | "expect-selector" | "click" | "navigate";
+  kind: "type" | "expect-title" | "expect-text" | "expect-selector" | "click" | "navigate" | "wait";
   target: string;
   text?: string;
 }
 
+/** Longest `wait N` or `wait Nms` sleep. Longer values fail the step. */
+export const COMPUTER_WAIT_CAP_MS = 30_000;
+
 /** Steps in the order they appear. A short chain can include more than one type. */
 export function computerChain(message: string): ChainStep[] {
-  const pattern = /expect title "([^"]*)"|expect text "([^"]*)"|type "([^"]*)" into (\S+)|expect selector (\S+) value "([^"]*)"|click "([^"]*)"|click '([^']*)'|click (\S+)|navigate (https?:\/\/[^\s)]+)|expect title '([^']*)'|expect text '([^']*)'|type '([^']*)' into (\S+)|expect selector (\S+) value '([^']*)'/gi;
+  const pattern = /expect title "([^"]*)"|expect text "([^"]*)"|type "([^"]*)" into (\S+)|expect selector (\S+) value "([^"]*)"|click "([^"]*)"|click '([^']*)'|click (\S+)|navigate (https?:\/\/[^\s)]+)|expect title '([^']*)'|expect text '([^']*)'|type '([^']*)' into (\S+)|expect selector (\S+) value '([^']*)'|wait (\d+)ms|wait (\d+)|wait (\S+)/gi;
   const steps: ChainStep[] = [];
   for (const match of message.matchAll(pattern)) {
     if (match[1] !== undefined) steps.push({ kind: "expect-title", target: match[1] });
@@ -152,6 +156,9 @@ export function computerChain(message: string): ChainStep[] {
     else if (match[12] !== undefined) steps.push({ kind: "expect-text", target: match[12] });
     else if (match[13] !== undefined && match[14]) steps.push({ kind: "type", target: match[14].replace(/[.,]$/, ""), text: match[13] });
     else if (match[15] && match[16] !== undefined) steps.push({ kind: "expect-selector", target: match[15].replace(/[.,]$/, ""), text: match[16] });
+    else if (match[17]) steps.push({ kind: "wait", target: match[17], text: "sleep" });
+    else if (match[18]) steps.push({ kind: "wait", target: match[18], text: "sleep" });
+    else if (match[19]) steps.push({ kind: "wait", target: match[19].replace(/[.,]$/, "") });
   }
   return steps;
 }
@@ -233,7 +240,7 @@ export async function executeComputerVisit(input: ComputerVisitInput): Promise<G
   for (const [index, item] of chain.entries()) {
     steps.push({
       id: `gtm-${index + 3}`,
-      kind: item.kind === "type" ? "type" : item.kind === "click" ? "click" : item.kind === "navigate" ? "navigate" : "verify",
+      kind: item.kind === "type" ? "type" : item.kind === "click" ? "click" : item.kind === "navigate" ? "navigate" : item.kind === "wait" ? "wait" : "verify",
       target: item.target,
       purpose: chainPurpose(item),
       executed: false,
@@ -304,6 +311,7 @@ function chainPurpose(item: ChainStep): string {
   if (item.kind === "type") return "Type into the named selector";
   if (item.kind === "click") return item.text === "text" ? "Click the named text" : "Click the named selector";
   if (item.kind === "navigate") return "Open a URL on the same host";
+  if (item.kind === "wait") return item.text === "sleep" ? "Wait a short time" : "Wait until the selector is visible";
   if (item.kind === "expect-selector") return "Check the selector value";
   if (item.kind === "expect-text") return "Check the page text";
   return "Check the page title";
@@ -378,6 +386,27 @@ async function runChainStep(
     if (!session.navigate) return { passed: false, reason: "browser cannot navigate", screen };
     const next = await session.navigate(item.target);
     return { passed: true, reason: "", screen: next };
+  }
+  if (item.kind === "wait") {
+    if (item.text === "sleep") {
+      const ms = Number(item.target);
+      if (!Number.isInteger(ms) || ms < 0 || ms > COMPUTER_WAIT_CAP_MS) {
+        return { passed: false, reason: `wait is capped at ${COMPUTER_WAIT_CAP_MS} ms`, screen };
+      }
+      await new Promise((resolve) => setTimeout(resolve, ms));
+      const seen = await session.readScreen();
+      return { passed: true, reason: "", screen: seen };
+    }
+    const gate = selectorDecision(item.target);
+    if (!gate.allow) return { passed: false, reason: gate.reason, screen };
+    if (!session.waitFor) return { passed: false, reason: "browser cannot wait", screen };
+    try {
+      const next = await session.waitFor(item.target, 5000);
+      return { passed: true, reason: "", screen: next };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "wait timed out";
+      return { passed: false, reason: redact(message), screen };
+    }
   }
   if (!session.selectorState) return { passed: false, reason: "browser cannot read selector state", screen };
   const state = await session.selectorState(item.target);
@@ -470,6 +499,10 @@ export function playwrightBrowserDriver(): BrowserDriver {
         },
         async navigate(nextUrl) {
           await page.goto(nextUrl, { waitUntil: "domcontentloaded", timeout: 20000 });
+          return shot();
+        },
+        async waitFor(selector, timeoutMs) {
+          await page.locator(selector).waitFor({ state: "visible", timeout: timeoutMs });
           return shot();
         },
         async selectorState(selector) {

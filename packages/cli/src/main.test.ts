@@ -462,6 +462,48 @@ test("ocp todo list shows the checklist and does not change it", async () => {
   }
 });
 
+test("ocp todo add and complete change the checklist and refuse a secret", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "ocp-todo-change-"));
+  let captured = "";
+  const original = process.stdout.write.bind(process.stdout);
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    captured += String(chunk);
+    return true;
+  }) as typeof process.stdout.write;
+  try {
+    const { readFileSync } = await import("node:fs");
+    const missing = await main(["todo", "add", "--sandbox", root]);
+    assert.equal(missing, 2);
+    assert.match(captured, /Usage: ocp todo add/);
+    captured = "";
+    assert.equal(await main(["todo", "add", "--sandbox", root, "--text", "write the test"]), 0);
+    assert.match(captured, /add write the test/);
+    captured = "";
+    assert.equal(await main(["todo", "add", "--sandbox", root, "--partner", "coding", "--text", "check the partner"]), 0);
+    assert.match(captured, /coding/);
+    const partnerFile = JSON.parse(readFileSync(path.join(root, ".ocp/fleet/coding/.ocp/todos.json"), "utf8")) as { todos: { text: string }[] };
+    assert.equal(partnerFile.todos[0]?.text, "check the partner");
+    captured = "";
+    const secret = await main(["todo", "add", "--sandbox", root, "--text", "password=hunter2"]);
+    assert.equal(secret, 1);
+    assert.match(captured, /blocked/);
+    assert.doesNotMatch(captured, /hunter2/);
+    assert.doesNotMatch(readFileSync(path.join(root, ".ocp/todos.json"), "utf8"), /hunter2/);
+    captured = "";
+    assert.equal(await main(["todo", "complete", "--sandbox", root, "--text", "1"]), 0);
+    assert.match(captured, /complete 1/);
+    const saved = JSON.parse(readFileSync(path.join(root, ".ocp/todos.json"), "utf8")) as { todos: { done: boolean }[] };
+    assert.equal(saved.todos[0]?.done, true);
+    captured = "";
+    const listed = await main(["todo", "list", "--sandbox", root]);
+    assert.equal(listed, 0);
+    assert.match(listed === 0 ? captured : "", /does not add or complete/);
+  } finally {
+    process.stdout.write = original;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("ocp fleet status lists a partner and can print json", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "ocp-fleet-cli-"));
   let captured = "";

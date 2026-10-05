@@ -768,6 +768,54 @@ test("ocp git status shows sandbox changes and does not commit", async () => {
   }
 });
 
+test("ocp git log shows short commits and does not commit", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "ocp-git-log-"));
+  let captured = "";
+  const original = process.stdout.write.bind(process.stdout);
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    captured += String(chunk);
+    return true;
+  }) as typeof process.stdout.write;
+  const git = (cwd: string, args: string[]) => spawnSync("git", args, { cwd, encoding: "utf8" });
+  try {
+    const { existsSync, writeFileSync, mkdirSync } = await import("node:fs");
+    const wide = await main(["git", "log", "--sandbox", root, "--n", "21"]);
+    assert.equal(wide, 2);
+    assert.match(captured, /ocp git log/);
+    assert.equal(git(root, ["init"]).status, 0);
+    assert.equal(git(root, ["config", "user.email", "test@example.com"]).status, 0);
+    assert.equal(git(root, ["config", "user.name", "test"]).status, 0);
+    writeFileSync(path.join(root, "hello.txt"), "hello\n");
+    assert.equal(git(root, ["add", "hello.txt"]).status, 0);
+    assert.equal(git(root, ["commit", "-m", "add hello"]).status, 0);
+    writeFileSync(path.join(root, "secret.txt"), "hidden\n");
+    assert.equal(git(root, ["add", "secret.txt"]).status, 0);
+    assert.equal(git(root, ["commit", "-m", "password=hunter2"]).status, 0);
+    captured = "";
+    assert.equal(await main(["git", "log", "--sandbox", root, "--n", "2"]), 0);
+    assert.match(captured, /add hello/);
+    assert.match(captured, /\[redacted\]/);
+    assert.doesNotMatch(captured, /hunter2/);
+    assert.equal(existsSync(path.join(root, ".ocp/last-check.json")), false);
+    mkdirSync(path.join(root, ".ocp/fleet/coding"), { recursive: true });
+    const partnerRoot = path.join(root, ".ocp/fleet/coding");
+    assert.equal(git(partnerRoot, ["init"]).status, 0);
+    assert.equal(git(partnerRoot, ["config", "user.email", "test@example.com"]).status, 0);
+    assert.equal(git(partnerRoot, ["config", "user.name", "test"]).status, 0);
+    writeFileSync(path.join(partnerRoot, "note.txt"), "partner body\n");
+    assert.equal(git(partnerRoot, ["add", "note.txt"]).status, 0);
+    assert.equal(git(partnerRoot, ["commit", "-m", "partner note"]).status, 0);
+    captured = "";
+    assert.equal(await main(["git", "log", "--sandbox", root, "--partner", "coding"]), 0);
+    assert.match(captured, /partner note/);
+    assert.doesNotMatch(captured, /partner body/);
+    assert.doesNotMatch(captured, /add hello/);
+  } finally {
+    process.stdout.write = original;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("ocp fleet status lists a partner and can print json", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "ocp-fleet-cli-"));
   let captured = "";

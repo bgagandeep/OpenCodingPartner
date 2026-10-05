@@ -2690,9 +2690,11 @@ test("approve list shows pending cards and the doctor line does not print the re
     assert.deepEqual(items.map((item) => `${item.partner} ${item.id}`), ["session plan-1", "coding computer-1"]);
     assert.match(formatApproveQueue(items), /session \. plan-1 plan pending/);
     assert.match(formatApproveQueue(items), /coding \.ocp\/fleet\/coding computer-1 computer pending/);
-    const doctor = approveDoctorLine(items.length);
-    assert.match(doctor, /yellow Approvals: 2 pending/);
+    const doctor = approveDoctorLine(items.length, items);
+    assert.match(doctor, /yellow Approvals: 2 pending\. session 1 plan\. coding 1 computer/);
     assert.doesNotMatch(doctor, /password=hunter2/);
+    assert.doesNotMatch(doctor, /open the page/);
+    assert.doesNotMatch(doctor, /helper/);
     assert.match(doctor, /does not decide a card/);
   } finally {
     await rm(root, { recursive: true, force: true });

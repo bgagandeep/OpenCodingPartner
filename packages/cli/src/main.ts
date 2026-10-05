@@ -304,7 +304,7 @@ export async function main(argv: readonly string[]): Promise<number> {
       playwrightPresent = false;
     }
     const fleetLine = fleetDoctorLine(await readFleetStatus(sandbox));
-    const pending = (await listApproveQueue(sandbox)).length;
+    const pendingItems = await listApproveQueue(sandbox);
     const frameLine = await doctorComputerFrameLine(sandbox);
     const runLine = await doctorComputerRunLine(sandbox);
     const controlLine = await doctorComputerControlLine(sandbox);
@@ -318,7 +318,7 @@ export async function main(argv: readonly string[]): Promise<number> {
       repoRoot,
       playwrightPresent,
       fleetLine,
-      approveLine: approveDoctorLine(pending),
+      approveLine: approveDoctorLine(pendingItems.length, pendingItems),
       frameLine,
       runLine,
       controlLine,

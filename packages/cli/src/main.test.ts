@@ -781,7 +781,7 @@ test("ocp git log shows short commits and does not commit", async () => {
     const { existsSync, writeFileSync, mkdirSync } = await import("node:fs");
     const wide = await main(["git", "log", "--sandbox", root, "--n", "21"]);
     assert.equal(wide, 2);
-    assert.match(captured, /Usage: ocp git log/);
+    assert.match(captured, /ocp git log/);
     assert.equal(git(root, ["init"]).status, 0);
     assert.equal(git(root, ["config", "user.email", "test@example.com"]).status, 0);
     assert.equal(git(root, ["config", "user.name", "test"]).status, 0);

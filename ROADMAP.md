@@ -9,7 +9,7 @@ The offline core runs without the orchestration gateway, the coding worker, or S
 - Chat agent CLI: `ocp` and `opencodingpartner`.
 - Orchestration agent swarm with a session key like `agent:board:main`.
 - Coding agent and QA agent on the coding worker, or on the operator's meter proxy, with a local sandbox for real file writes and a QA check.
-- Security agent gate before writes.
+- Security agent gate before writes. `ocp doctor` says whether the last gate allowed the write and does not print the path or the file contents.
 - Computer agent seam. It records a plan with `executed: false` until you pass `--computer-execute` and name a URL. Then Playwright opens that URL, reads the screen, and types into one selector when the message asks.
 - System-1 uses the installed route model through `integrations/laya/predict.py`. `pnpm bundle:install` downloads the English weights into `.bundle/laya/hf`. The transcript says real or fallback.
 

@@ -11,6 +11,7 @@ import { allowComputerUse, captureComputerFrame, checkComputerFrame, computerTab
 import { doctorSharedMountLine } from "./fleet.js";
 import { doctorLastCheckLine } from "./last-check.js";
 import { doctorLastQaLine } from "./last-qa.js";
+import { doctorLastSecurityLine } from "./last-security.js";
 import { REVIEW_HOLD_CODING_CAP, rolesUnderReviewHold } from "./sdlc.js";
 
 test("chat stands up agents, writes, checks QA, gates security, and records GTM", async () => {
@@ -2776,6 +2777,58 @@ test("fleet start dry-run and a missing Docker do not claim a running container"
     });
     assert.equal(stopped.ok, true);
     assert.match(await computerTabText(path.join(root, ".ocp/fleet/coding")), /Container: stopped/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a blocked write records the security gate and doctor does not print the path", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-last-security-"));
+  try {
+    assert.match(await doctorLastSecurityLine(root), /green Last security: none/);
+    const blocked = await runChatTurn({
+      message: "Stand up a security agent and a coding agent.\nUse Grok Build to create ../secret.txt with content:\npassword=hunter2\n",
+      sandboxRoot: root,
+    });
+    assert.equal(blocked.security?.allow, false);
+    const saved = JSON.parse(await readFile(path.join(root, ".ocp/last-security.json"), "utf8")) as { allow: boolean; reasons: string[] };
+    assert.equal(saved.allow, false);
+    assert.ok(saved.reasons.includes("secret pattern"));
+    assert.doesNotMatch(JSON.stringify(saved), /hunter2/);
+    assert.doesNotMatch(JSON.stringify(saved), /secret\.txt/);
+    const blockedLine = await doctorLastSecurityLine(root);
+    assert.match(blockedLine, /yellow Last security: session blocked/);
+    assert.match(blockedLine, /secret pattern/);
+    assert.match(blockedLine, /does not print a path/);
+    assert.doesNotMatch(blockedLine, /hunter2/);
+    assert.doesNotMatch(blockedLine, /secret\.txt/);
+    await runChatTurn({ message: "hello", sandboxRoot: root });
+    assert.equal(JSON.parse(await readFile(path.join(root, ".ocp/last-security.json"), "utf8")).allow, false);
+    await runChatTurn({
+      message: "Use the coding worker to create hello.txt with content:\nhello\n",
+      sandboxRoot: root,
+      partnerId: "coding",
+    });
+    assert.deepEqual(JSON.parse(await readFile(path.join(root, ".ocp/fleet/coding/.ocp/last-security.json"), "utf8")), {
+      allow: true,
+      reasons: [],
+    });
+    const mixed = await doctorLastSecurityLine(root);
+    assert.match(mixed, /yellow Last security: session blocked/);
+    assert.match(mixed, /coding allowed/);
+    assert.doesNotMatch(mixed, /hunter2/);
+    assert.doesNotMatch(mixed, /hello/);
+    await runChatTurn({
+      message: "Use the coding worker to create note.txt with content:\nnote\n",
+      sandboxRoot: root,
+    });
+    const ready = await doctorLastSecurityLine(root);
+    assert.match(ready, /green Last security: session allowed\. coding allowed/);
+    assert.doesNotMatch(ready, /note\.txt/);
+    await writeFile(path.join(root, ".ocp/fleet/coding/.ocp/last-security.json"), `${JSON.stringify({ allow: false, reasons: ["password=hunter2"] })}\n`);
+    const broken = await doctorLastSecurityLine(root);
+    assert.match(broken, /yellow Last security: coding file could not be read/);
+    assert.doesNotMatch(broken, /hunter2/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

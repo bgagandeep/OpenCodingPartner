@@ -1,4 +1,4 @@
-import { copyFile, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 const ID = /^[a-z0-9][a-z0-9-]{0,31}$/;
@@ -45,6 +45,71 @@ export async function readPartnerIdentity(workspace: string): Promise<PartnerIde
   } catch {
     return undefined;
   }
+}
+
+export interface FleetStatusRow {
+  id: string;
+  workspace: string;
+  container: "running" | "stopped" | "not started";
+  frame: string;
+  frameTime: string;
+}
+
+/** Partners under .ocp/fleet. This does not start containers and does not send telemetry. */
+export async function readFleetStatus(sessionRoot: string): Promise<FleetStatusRow[]> {
+  let names: string[] = [];
+  try {
+    names = await readdir(path.join(sessionRoot, ".ocp", "fleet"));
+  } catch {
+    return [];
+  }
+  const rows: FleetStatusRow[] = [];
+  for (const name of names) {
+    const workspace = path.join(sessionRoot, ".ocp", "fleet", name);
+    const identity = await readPartnerIdentity(workspace);
+    if (!identity) continue;
+    const rel = `.ocp/fleet/${identity.id}`;
+    let container: FleetStatusRow["container"] = "not started";
+    try {
+      const body = JSON.parse(await readFile(path.join(workspace, ".ocp", "container.json"), "utf8")) as { state?: string };
+      if (body.state === "running" || body.state === "stopped") container = body.state;
+    } catch {
+      container = "not started";
+    }
+    const frameRel = `${rel}/gtm/last-frame.png`;
+    let frame = "none";
+    let frameTime = "none";
+    try {
+      const info = await stat(path.join(sessionRoot, frameRel));
+      frame = frameRel;
+      frameTime = info.mtime.toISOString();
+    } catch {
+      frame = "none";
+      frameTime = "none";
+    }
+    rows.push({ id: identity.id, workspace: rel, container, frame, frameTime });
+  }
+  return rows.sort((left, right) => left.id.localeCompare(right.id));
+}
+
+export function formatFleetStatus(rows: readonly FleetStatusRow[]): string {
+  if (rows.length === 0) return "Fleet: no partners\nNo telemetry is sent.\n";
+  const lines = ["Fleet"];
+  for (const row of rows) {
+    lines.push(`${row.id} workspace ${row.workspace} container ${row.container} frame ${row.frame} frame time ${row.frameTime}`);
+  }
+  lines.push("No telemetry is sent.");
+  return `${lines.join("\n")}\n`;
+}
+
+export function formatFleetStatusJson(rows: readonly FleetStatusRow[]): string {
+  return `${JSON.stringify(rows, null, 2)}\n`;
+}
+
+export function fleetDoctorLine(rows: readonly FleetStatusRow[]): string {
+  if (rows.length === 0) return "yellow Fleet: no partners. This check does not start containers. No telemetry is sent.";
+  const bits = rows.map((row) => `${row.id} ${row.container}`);
+  return `green Fleet: ${bits.join(", ")}. This check does not start containers. No telemetry is sent.`;
 }
 
 /** Other partners next to this workspace. A thin fleet list, not a grid. */

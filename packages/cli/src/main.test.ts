@@ -226,6 +226,40 @@ test("ocp channel slack stays offline without credentials and posts when they ar
   }
 });
 
+test("ocp fleet status lists a partner and can print json", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "ocp-fleet-cli-"));
+  let captured = "";
+  const original = process.stdout.write.bind(process.stdout);
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    captured += String(chunk);
+    return true;
+  }) as typeof process.stdout.write;
+  try {
+    const empty = await main(["fleet", "status", "--sandbox", root]);
+    assert.equal(empty, 0);
+    assert.match(captured, /Fleet: no partners/);
+    assert.match(captured, /No telemetry is sent/);
+    captured = "";
+    const { mkdirSync, writeFileSync } = await import("node:fs");
+    mkdirSync(path.join(root, ".ocp/fleet/coding/.ocp"), { recursive: true });
+    writeFileSync(path.join(root, ".ocp/fleet/coding/.ocp/identity.json"), `${JSON.stringify({ id: "coding", role: "coding", desktop: "partner-sandbox" })}\n`);
+    writeFileSync(path.join(root, ".ocp/fleet/coding/.ocp/container.json"), `${JSON.stringify({ state: "stopped", name: "ocp-coding" })}\n`);
+    const listed = await main(["fleet", "status", "--sandbox", root]);
+    assert.equal(listed, 0);
+    assert.match(captured, /coding workspace \.ocp\/fleet\/coding container stopped frame none/);
+    captured = "";
+    const jsonCode = await main(["fleet", "status", "--sandbox", root, "--json"]);
+    assert.equal(jsonCode, 0);
+    const body = JSON.parse(captured) as { id: string; container: string; frame: string }[];
+    assert.equal(body[0]?.id, "coding");
+    assert.equal(body[0]?.container, "stopped");
+    assert.equal(body[0]?.frame, "none");
+  } finally {
+    process.stdout.write = original;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("ocp channel telegram stays offline without credentials and posts when they are set", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "ocp-telegram-cli-"));
   let captured = "";

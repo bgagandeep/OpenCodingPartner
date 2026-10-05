@@ -6,8 +6,8 @@ import path from "node:path";
 import test from "node:test";
 import { routeWithPredict, type ManagerPlan } from "@opencodingpartner/policy";
 import { grepSandbox, listSandboxDir, writeSandboxFile } from "@opencodingpartner/workers";
-import { DEMO_MESSAGE, applySwarmManifest, clearSessionMemory, coreIsOpen, createRoutine, fireDueRoutines, fireEvent, isolatePartner, listRoutines, parseSwarmManifest, partnerContainerArgv, pauseRoutine, readPackaging, runChatTurn, runDemo, slackTurn } from "./index.js";
-import { computerTabText } from "./computer-tab.js";
+import { DEMO_MESSAGE, applySwarmManifest, clearSessionMemory, coreIsOpen, createRoutine, fireDueRoutines, fireEvent, isolatePartner, listRoutines, parseSwarmManifest, partnerContainerArgv, pauseRoutine, readPackaging, runChatTurn, runDemo, slackTurn, startPartnerContainer, stopPartnerContainer } from "./index.js";
+import { allowComputerUse, computerTabText } from "./computer-tab.js";
 import { REVIEW_HOLD_CODING_CAP, rolesUnderReviewHold } from "./sdlc.js";
 
 test("chat stands up agents, writes, checks QA, gates security, and records GTM", async () => {
@@ -2148,6 +2148,61 @@ test("a swarm manifest validates, dry-runs, and applies partner workspaces", asy
     const refused = await applySwarmManifest(root, bad, { dryRun: true });
     assert.equal(refused.ok, false);
     assert.match(refused.text, /at least 1000 ms/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("fleet start dry-run and a missing Docker do not claim a running container", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-fleet-run-"));
+  try {
+    let calls = 0;
+    const dry = await startPartnerContainer(root, "coding", {
+      dryRun: true,
+      exec: async () => {
+        calls += 1;
+        return { code: 0, stdout: "", stderr: "" };
+      },
+    });
+    assert.equal(dry.ok, true);
+    assert.equal(calls, 0);
+    assert.match(dry.text, /dry-run: docker run -d/);
+    assert.match(dry.text, /:\/workspace/);
+    assert.match(dry.text, /:\/shared:ro/);
+    const missing = await startPartnerContainer(root, "coding", {
+      exec: async () => ({ code: 127, stdout: "", stderr: "docker not found" }),
+    });
+    assert.equal(missing.ok, false);
+    assert.match(missing.text, /Docker is not available/);
+    assert.match(missing.text, /ocp doctor does not start containers/);
+    assert.match(await computerTabText(path.join(root, ".ocp/fleet/coding")), /Container: not started/);
+
+    await writeFile(path.join(root, "PARTNER.md"), "partner\n");
+    const gated = await startPartnerContainer(root, "coding", {
+      exec: async () => {
+        calls += 1;
+        return { code: 0, stdout: "1\n", stderr: "" };
+      },
+    });
+    assert.equal(gated.ok, false);
+    assert.match(gated.text, /Approve the card first/);
+    assert.equal(calls, 0);
+
+    await allowComputerUse(path.join(root, ".ocp/fleet/coding"));
+    const started = await startPartnerContainer(root, "coding", {
+      exec: async (argv) => {
+        calls += 1;
+        if (argv[1] === "version") return { code: 0, stdout: "27\n", stderr: "" };
+        return { code: 0, stdout: "abc\n", stderr: "" };
+      },
+    });
+    assert.equal(started.ok, true);
+    assert.match(await computerTabText(path.join(root, ".ocp/fleet/coding")), /Container: running/);
+    const stopped = await stopPartnerContainer(root, "coding", {
+      exec: async (argv) => (argv[1] === "version" ? { code: 0, stdout: "27\n", stderr: "" } : { code: 0, stdout: "", stderr: "" }),
+    });
+    assert.equal(stopped.ok, true);
+    assert.match(await computerTabText(path.join(root, ".ocp/fleet/coding")), /Container: stopped/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

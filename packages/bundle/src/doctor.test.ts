@@ -45,6 +45,8 @@ test("doctor marks missing pieces and does not print a key", async () => {
     assert.match(missing.transcript, /does not print its message/);
     assert.match(missing.transcript, /green Last write: none/);
     assert.match(missing.transcript, /does not print a path/);
+    assert.match(missing.transcript, /green Swarm: none/);
+    assert.match(missing.transcript, /does not apply a manifest/);
     assert.match(missing.transcript, /green Review hold: none/);
     assert.match(missing.transcript, /green Plan: none/);
     assert.match(missing.transcript, /does not print it/);

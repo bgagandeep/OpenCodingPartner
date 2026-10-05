@@ -20,8 +20,30 @@ export async function partnerAgreementOn(sandboxRoot: string): Promise<boolean> 
   }
 }
 
+export interface ApproveCard {
+  id: string;
+  kind: "plan";
+  title: string;
+  detail: string;
+  status: "pending" | "approved" | "denied" | "redirected";
+  redirect?: string;
+}
+
 export function acceptsPlan(message: string): boolean {
-  return /accept the plan/i.test(message);
+  return approveVerb(message) === "approve";
+}
+
+/** `approve` and `accept the plan` approve. `deny` and `redirect:` decide the card. */
+export function approveVerb(message: string): "approve" | "deny" | "redirect" | undefined {
+  const text = message.trim();
+  if (/^deny\b/i.test(text)) return "deny";
+  if (/^redirect\b/i.test(text)) return "redirect";
+  if (/^approve\b/i.test(text) || /accept the plan/i.test(text)) return "approve";
+  return undefined;
+}
+
+export function redirectNote(message: string): string {
+  return message.replace(/^redirect:?\s*/i, "").trim().slice(0, 2000);
 }
 
 export async function planIsAccepted(sandboxRoot: string): Promise<boolean> {
@@ -64,6 +86,97 @@ export async function writePlanChain(sandboxRoot: string, message: string): Prom
     "1. Read the sandbox.\n2. Edit only after this plan is accepted.\n3. Run node --test in the sandbox.\n4. QA reviews the files and the check. A human reviews intent and risk.\n",
   );
   await writeFile(path.join(dir, "plan.json"), `${JSON.stringify({ accepted: false, check: ["node", "--test"] }, null, 2)}\n`);
+  await queuePlanCard(sandboxRoot, intent);
+}
+
+function approvalsFile(sandboxRoot: string): string {
+  return path.join(sandboxRoot, ".ocp", "approvals.json");
+}
+
+async function readCards(sandboxRoot: string): Promise<ApproveCard[]> {
+  try {
+    const body = JSON.parse(await readFile(approvalsFile(sandboxRoot), "utf8")) as { cards?: ApproveCard[] };
+    return Array.isArray(body.cards) ? body.cards : [];
+  } catch {
+    return [];
+  }
+}
+
+async function writeCards(sandboxRoot: string, cards: ApproveCard[]): Promise<void> {
+  await mkdir(path.join(sandboxRoot, ".ocp"), { recursive: true });
+  await writeFile(approvalsFile(sandboxRoot), `${JSON.stringify({ cards }, null, 2)}\n`);
+}
+
+/** One pending plan card. A new plan updates that card instead of stacking duplicates. */
+export async function queuePlanCard(sandboxRoot: string, detail: string): Promise<ApproveCard> {
+  const cards = await readCards(sandboxRoot);
+  const pending = cards.find((card) => card.kind === "plan" && card.status === "pending");
+  if (pending) {
+    pending.detail = detail;
+    await writeCards(sandboxRoot, cards);
+    return pending;
+  }
+  const card: ApproveCard = {
+    id: `plan-${cards.length + 1}`,
+    kind: "plan",
+    title: "Edit after this plan",
+    detail,
+    status: "pending",
+  };
+  cards.push(card);
+  await writeCards(sandboxRoot, cards);
+  return card;
+}
+
+export async function pendingPlanCard(sandboxRoot: string): Promise<ApproveCard | undefined> {
+  const cards = await readCards(sandboxRoot);
+  return cards.find((card) => card.kind === "plan" && card.status === "pending");
+}
+
+export async function decidePlanCard(
+  sandboxRoot: string,
+  status: "approved" | "denied" | "redirected",
+  redirect?: string,
+): Promise<ApproveCard | undefined> {
+  const cards = await readCards(sandboxRoot);
+  const pending = cards.find((card) => card.kind === "plan" && card.status === "pending");
+  if (!pending) return undefined;
+  pending.status = status;
+  if (redirect) pending.redirect = redirect;
+  await writeCards(sandboxRoot, cards);
+  return pending;
+}
+
+export async function formatApproveCards(sandboxRoot: string): Promise<string> {
+  const cards = await readCards(sandboxRoot);
+  if (cards.length === 0) return "";
+  return cards
+    .map((card) => `Approve card ${card.id} ${card.status}\n${card.title}\n${card.detail}${card.redirect ? `\nRedirect: ${card.redirect}` : ""}`)
+    .join("\n");
+}
+
+/** `PARTNER.rules` at the sandbox root, then `.ocp/rules`. Both apply. */
+export async function loadPartnerRules(sandboxRoot: string): Promise<string> {
+  const parts: string[] = [];
+  for (const relative of ["PARTNER.rules", path.join(".ocp", "rules")]) {
+    try {
+      const text = (await readFile(path.join(sandboxRoot, relative), "utf8")).trim();
+      if (text) parts.push(text);
+    } catch {
+      // That rules file is optional.
+    }
+  }
+  return parts.join("\n");
+}
+
+/** A `block:` line stops the request when the message contains that text. */
+export function partnerRuleBlock(rules: string, message: string): string | undefined {
+  for (const line of rules.split("\n")) {
+    const match = line.match(/^block:\s*(.+)$/i);
+    const text = match?.[1]?.trim();
+    if (text && message.includes(text)) return text;
+  }
+  return undefined;
 }
 
 export async function acceptPlan(sandboxRoot: string): Promise<boolean> {
@@ -106,7 +219,7 @@ export async function writeReviewSplit(sandboxRoot: string, mechanical: string):
   await mkdir(dir, { recursive: true });
   await writeFile(
     path.join(dir, "review.md"),
-    `Mechanical review: ${mechanical}\nHuman intent and risk: not decided. There is no approve card yet.\n`,
+    `Mechanical review: ${mechanical}\nHuman intent and risk: decided on the Approve card before the edit. QA does not decide intent.\n`,
   );
 }
 

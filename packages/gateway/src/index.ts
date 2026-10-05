@@ -9,8 +9,14 @@ import { OrchestrationSwarm } from "@opencodingpartner/swarm";
 import {
   acceptPlan,
   acceptedPlanText,
-  acceptsPlan,
+  approveVerb,
+  decidePlanCard,
+  formatApproveCards,
+  loadPartnerRules,
   partnerAgreementOn,
+  partnerRuleBlock,
+  pendingPlanCard,
+  redirectNote,
   planIsAccepted,
   returnToIntent,
   reviewHoldOn,
@@ -190,9 +196,14 @@ async function executeTurn(input: ChatTurnInput, session: SwarmSession, key: str
   const openclawDrove = notice.driver === "openclaw" && notice.state === "ran";
   const openclawFailed = notice.driver === "openclaw" && notice.state === "failed";
   if (openclawDrove) plan = { ...plan, source: "openclaw" };
-  if ((await partnerAgreementOn(input.sandboxRoot)) && acceptsPlan(input.message) && (await acceptPlan(input.sandboxRoot))) {
-    if (!plan.roles.includes("coding")) {
-      plan = { ...plan, roles: ["coding", "qa", "security", "computer"] };
+  if (await partnerAgreementOn(input.sandboxRoot)) {
+    const verb = approveVerb(input.message);
+    if (verb === "approve") await decidePlanCard(input.sandboxRoot, "approved");
+    const pending = verb === "deny" || verb === "redirect" ? await pendingPlanCard(input.sandboxRoot) : undefined;
+    if ((verb === "approve" && (await acceptPlan(input.sandboxRoot))) || pending) {
+      if (!plan.roles.includes("coding")) {
+        plan = { ...plan, roles: ["coding", "qa", "security", "computer"] };
+      }
     }
   }
   if (await reviewHoldOn(input.sandboxRoot)) {
@@ -247,15 +258,38 @@ async function executeTurn(input: ChatTurnInput, session: SwarmSession, key: str
     if (/(^|[\s"'`])\.\.\//.test(input.message)) messageGate.reasons.push("path escape");
     messageGate.allow = messageGate.reasons.length === 0;
     security = messageGate;
+    const partnerOn = await partnerAgreementOn(input.sandboxRoot);
+    const ruleHit = partnerOn ? partnerRuleBlock(await loadPartnerRules(input.sandboxRoot), input.message) : undefined;
+    const verb = approveVerb(input.message);
     if (!messageGate.allow) {
       coding = { relativePath: "the request", wrote: false, via };
-    } else if (await partnerAgreementOn(input.sandboxRoot) && !(await planIsAccepted(input.sandboxRoot))) {
+    } else if (ruleHit) {
+      coding = { relativePath: "the request", wrote: false, via, note: `Partner rule blocked this request (${ruleHit}).` };
+    } else if (partnerOn && verb === "deny") {
+      await decidePlanCard(input.sandboxRoot, "denied");
+      coding = {
+        relativePath: "plan",
+        wrote: false,
+        via,
+        note: `Approve denied. No edit.\n${await formatApproveCards(input.sandboxRoot)}`,
+      };
+    } else if (partnerOn && verb === "redirect") {
+      const note = redirectNote(input.message);
+      await decidePlanCard(input.sandboxRoot, "redirected", note);
+      await writePlanChain(input.sandboxRoot, note || input.message);
+      coding = {
+        relativePath: "plan",
+        wrote: false,
+        via,
+        note: `Approve redirected. Plan is waiting.\n${await formatApproveCards(input.sandboxRoot)}`,
+      };
+    } else if (partnerOn && !(await planIsAccepted(input.sandboxRoot))) {
       await writePlanChain(input.sandboxRoot, input.message);
       coding = {
         relativePath: "plan",
         wrote: false,
         via,
-        note: "Plan is waiting. Say accept the plan before edits. SDLC: .ocp/sdlc/intent.md, .ocp/sdlc/spec.md, .ocp/sdlc/plan.md",
+        note: `Plan is waiting. Say approve, deny, or redirect.\n${await formatApproveCards(input.sandboxRoot)}\nSDLC: .ocp/sdlc/intent.md, .ocp/sdlc/spec.md, .ocp/sdlc/plan.md`,
       };
     } else if (input.grokRunner && openclawDrove && (input.openclawWrite || input.openclawDelete || input.openclawRename || input.openclawMkdir || input.openclawRmdir || input.openclawCopy)) {
       const runner = input.grokRunner;
@@ -1066,6 +1100,7 @@ async function codingPrompt(sandboxRoot: string, message: string): Promise<strin
   const blocks: string[] = [];
   let used = 0;
   for (const relativePath of [...files.keys()].sort()) {
+    if (relativePath === "PARTNER.rules" || relativePath === "PARTNER.md") continue;
     if (relativePath.startsWith("gtm/") || relativePath.startsWith(`gtm${path.sep}`)) continue;
     if (relativePath === ".ocp" || relativePath.startsWith(`.ocp${path.sep}`)) continue;
     const content = files.get(relativePath) ?? "";
@@ -1081,7 +1116,9 @@ async function codingPrompt(sandboxRoot: string, message: string): Promise<strin
   const history = await priorTurns(sandboxRoot);
   const planText = (await planIsAccepted(sandboxRoot)) ? await acceptedPlanText(sandboxRoot) : "";
   const planNote = planText ? `Accepted plan:\n${planText}\n` : "";
-  return `${history}${filesNote}${planNote}User request:\n${message}\nReply with JSON only: {"steps":[{"tool":"list"|"read"|"grep"|"glob"|"run"|"write"|"patch"|"delete"|"rename"|"copy"|"append"|"mkdir"|"rmdir"|"todo","action":"add or complete","to":"relative destination","query":"text or /regex/","path":"relative","content":"full text for write, or todo text, or a 1-based todo index","diff":"unified diff for patch","argv":["node","--test","relative.test.ts"]}],"done":false}. One reply is one round. After you see Tool observations, send the next round. Set "done" to true when finished. List or read before you edit. Patch a file that already exists. Write only a new file. Append adds text to one existing file and does not create a file. Copy copies one existing file to a new relative path and leaves the source. The orchestration gateway does not append. A todo step uses action add with the task text, or action complete with a 1-based index or id. At most 12 todos. Allowed commands are node --test plus relative paths, pnpm test with no extra arguments, tsc --noEmit plus relative paths, git status, git status -sb, git status --short --branch, git diff plus relative paths, and git log --oneline -n N with N from 1 to 20, and git show HEAD: plus one relative path.`;
+  const rules = await loadPartnerRules(sandboxRoot);
+  const rulesNote = rules ? `Partner rules:\n${rules}\n` : "";
+  return `${history}${filesNote}${planNote}${rulesNote}User request:\n${message}\nReply with JSON only: {"steps":[{"tool":"list"|"read"|"grep"|"glob"|"run"|"write"|"patch"|"delete"|"rename"|"copy"|"append"|"mkdir"|"rmdir"|"todo","action":"add or complete","to":"relative destination","query":"text or /regex/","path":"relative","content":"full text for write, or todo text, or a 1-based todo index","diff":"unified diff for patch","argv":["node","--test","relative.test.ts"]}],"done":false}. One reply is one round. After you see Tool observations, send the next round. Set "done" to true when finished. List or read before you edit. Patch a file that already exists. Write only a new file. Append adds text to one existing file and does not create a file. Copy copies one existing file to a new relative path and leaves the source. The orchestration gateway does not append. A todo step uses action add with the task text, or action complete with a 1-based index or id. At most 12 todos. Allowed commands are node --test plus relative paths, pnpm test with no extra arguments, tsc --noEmit plus relative paths, git status, git status -sb, git status --short --branch, git diff plus relative paths, and git log --oneline -n N with N from 1 to 20, and git show HEAD: plus one relative path.`;
 }
 
 async function mkdirThroughTurn(

@@ -28,6 +28,8 @@ test("doctor marks missing pieces and does not print a key", async () => {
     assert.doesNotMatch(missing.transcript, /Computer QA computer-frame/);
     assert.match(missing.transcript, /yellow Slack: missing SLACK_BOT_TOKEN, SLACK_SIGNING_SECRET/);
     assert.match(missing.transcript, /yellow Telegram: missing TELEGRAM_BOT_TOKEN, TELEGRAM_WEBHOOK_SECRET/);
+    assert.match(missing.transcript, /yellow Discord: not in this build/);
+    assert.match(missing.transcript, /does not post a message/);
     assert.match(missing.transcript, /green Approvals: none pending/);
     assert.match(missing.transcript, /does not decide a card/);
     assert.match(missing.transcript, /yellow Computer frame: none at gtm\/last-frame.png/);
@@ -86,7 +88,7 @@ test("doctor marks missing pieces and does not print a key", async () => {
     assert.match(ready.transcript, /yellow Slack: missing SLACK_BOT_TOKEN, SLACK_SIGNING_SECRET/);
     assert.match(ready.transcript, /System-1: fallback/);
     const slack = await runDoctor({
-      env: { SLACK_BOT_TOKEN: "xoxb-secret-value", SLACK_SIGNING_SECRET: "signing-secret-value" },
+      env: { SLACK_BOT_TOKEN: "xoxb-secret-value", SLACK_SIGNING_SECRET: "signing-secret-value", DISCORD_BOT_TOKEN: "discord-secret-value" },
       bins: { layaPython: "/tmp/python", layaHfHome: "/tmp/hf" },
       repoRoot: root,
       fetchImpl: async () => new Response("ok", { status: 200 }),
@@ -96,6 +98,9 @@ test("doctor marks missing pieces and does not print a key", async () => {
     assert.doesNotMatch(slack.transcript, /xoxb-secret-value/);
     assert.doesNotMatch(slack.transcript, /signing-secret-value/);
     assert.match(slack.transcript, /yellow Telegram: missing TELEGRAM_BOT_TOKEN, TELEGRAM_WEBHOOK_SECRET/);
+    assert.match(slack.transcript, /yellow Discord: not in this build/);
+    assert.match(slack.transcript, /A token is set and is not printed/);
+    assert.doesNotMatch(slack.transcript, /discord-secret-value/);
     const telegram = await runDoctor({
       env: { TELEGRAM_BOT_TOKEN: "123:telegram-secret", TELEGRAM_WEBHOOK_SECRET: "webhook-secret-value" },
       bins: { layaPython: "/tmp/python", layaHfHome: "/tmp/hf" },

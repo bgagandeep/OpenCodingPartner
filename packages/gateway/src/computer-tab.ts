@@ -150,6 +150,30 @@ async function playwrightCapture(url: string): Promise<Uint8Array> {
   }
 }
 
+function isPng(png: Uint8Array): boolean {
+  return png.length >= PNG_SIGNATURE.length && PNG_SIGNATURE.every((byte, index) => png[index] === byte);
+}
+
+async function landFrame(
+  sandboxRoot: string,
+  png: Uint8Array,
+  url: string,
+  body: Record<string, unknown>,
+): Promise<{ ok: boolean; text: string }> {
+  if (!isPng(png)) {
+    return { ok: false, text: "Computer QA computer-frame: fail. The frame is not a PNG. No frame was written." };
+  }
+  const before = await frameMtimeMs(sandboxRoot);
+  await mkdir(path.join(sandboxRoot, "gtm"), { recursive: true });
+  await writeFile(path.join(sandboxRoot, FRAME_FILE), png);
+  const next = { ...body, url, screenshot: FRAME_FILE };
+  await writeFile(path.join(sandboxRoot, "gtm", "last-run.json"), `${JSON.stringify(next, null, 2)}\n`);
+  const check = await checkComputerFrame(sandboxRoot, before);
+  if (!check.pass) return { ok: false, text: check.summary };
+  const when = await frameTime(sandboxRoot, FRAME_FILE);
+  return { ok: true, text: `${check.summary}\nLast frame: ${FRAME_FILE}\nFrame time: ${when}` };
+}
+
 /** Write gtm/last-frame.png from the open page. A missing browser is an error, not a blank image. */
 export async function captureComputerFrame(
   sandboxRoot: string,
@@ -167,34 +191,34 @@ export async function captureComputerFrame(
     const message = error instanceof Error ? error.message : "browser missing";
     return { ok: false, text: `Browser is missing. No frame was written. ${message}` };
   }
-  if (png.length < PNG_SIGNATURE.length || !PNG_SIGNATURE.every((byte, index) => png[index] === byte)) {
-    return { ok: false, text: "Computer QA computer-frame: fail. The frame is not a PNG. No frame was written." };
-  }
-  const before = await frameMtimeMs(sandboxRoot);
-  await mkdir(path.join(sandboxRoot, "gtm"), { recursive: true });
-  await writeFile(path.join(sandboxRoot, "gtm", "last-frame.png"), png);
-  const next = { ...(run?.body ?? {}), url, screenshot: "gtm/last-frame.png" };
-  await writeFile(path.join(sandboxRoot, "gtm", "last-run.json"), `${JSON.stringify(next, null, 2)}\n`);
-  const check = await checkComputerFrame(sandboxRoot, before);
-  if (!check.pass) return { ok: false, text: check.summary };
-  const when = await frameTime(sandboxRoot, "gtm/last-frame.png");
-  return { ok: true, text: `${check.summary}\nLast frame: gtm/last-frame.png\nFrame time: ${when}` };
+  return landFrame(sandboxRoot, png, url, run?.body ?? {});
 }
 
-/** Point the Computer tab at gtm/last-frame.png when a step screenshot already exists. */
-export async function publishLastFrame(sandboxRoot: string): Promise<void> {
+/**
+ * After computer-execute, copy the step screenshot into gtm/last-frame.png and run computer-frame.
+ * This does not open a second browser. A missing or bad screenshot fails in the returned text.
+ */
+export async function captureExecutedFrame(sandboxRoot: string): Promise<{ ok: boolean; text: string }> {
   const run = await lastRun(sandboxRoot);
-  const rel = run?.screenshot ?? "";
-  if (!rel || rel === "gtm/last-frame.png") return;
-  try {
-    const bytes = await readFile(path.join(sandboxRoot, rel));
-    await mkdir(path.join(sandboxRoot, "gtm"), { recursive: true });
-    await writeFile(path.join(sandboxRoot, "gtm", "last-frame.png"), bytes);
-    const next = { ...(run?.body ?? {}), screenshot: "gtm/last-frame.png" };
-    await writeFile(path.join(sandboxRoot, "gtm", "last-run.json"), `${JSON.stringify(next, null, 2)}\n`);
-  } catch {
-    // Keep the step path already recorded.
+  const url = run?.url ?? "";
+  if (!url.startsWith("http://") && !url.startsWith("https://")) {
+    return { ok: false, text: "Computer QA computer-frame: fail. Capture found no open page. No frame was written." };
   }
+  const rel = run?.screenshot ?? "";
+  if (!rel) {
+    return { ok: false, text: "Computer QA computer-frame: fail. Capture found no step screenshot. No frame was written." };
+  }
+  if (rel === FRAME_FILE) {
+    const check = await checkComputerFrame(sandboxRoot);
+    return { ok: check.pass, text: check.summary };
+  }
+  let bytes: Buffer;
+  try {
+    bytes = await readFile(path.join(sandboxRoot, rel));
+  } catch {
+    return { ok: false, text: "Computer QA computer-frame: fail. Capture could not read the step screenshot. No frame was written." };
+  }
+  return landFrame(sandboxRoot, bytes, url, run?.body ?? {});
 }
 
 /** Computer tab text. There is no live pixel stream in this build. */

@@ -2152,6 +2152,114 @@ test("a partner computer waits for Approve, then a takeover blocks the browser",
   }
 });
 
+test("a partner computer keeps the frame in its workspace, and takeover blocks that workspace", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-partner-frame-"));
+  const png = Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10, 1, 2, 3, 4]);
+  const workspace = path.join(root, ".ocp/fleet/coding");
+  try {
+    await writeFile(path.join(root, "PARTNER.md"), "partner\n");
+    let opened = 0;
+    const driver = {
+      async start() {
+        opened += 1;
+        return {
+          async open() {
+            return { title: "Example", text: "page", screenshotPng: png };
+          },
+          async readScreen() {
+            return { title: "Example", text: "page", screenshotPng: png };
+          },
+          async typeInto() {
+            return { title: "Example", text: "page", screenshotPng: png };
+          },
+          async close() {
+            return undefined;
+          },
+        };
+      },
+    };
+    const held = await runChatTurn({
+      message: "sell this page. Open https://example.com/partner",
+      sandboxRoot: root,
+      partnerId: "coding",
+      computerExecute: true,
+      computerAllowHosts: ["example.com"],
+      browserDriver: driver,
+    });
+    assert.equal(opened, 0);
+    assert.match(held.transcript, /Approve card computer-/);
+    assert.match(held.transcript, /waiting for Approve/);
+    await assert.rejects(readFile(path.join(workspace, "gtm/last-frame.png")));
+
+    await runChatTurn({ message: "approve", sandboxRoot: root, partnerId: "coding" });
+    await runChatTurn({ message: "approve the browser", sandboxRoot: root, partnerId: "coding" });
+    const ran = await runChatTurn({
+      message: "sell this page. Open https://example.com/partner-live",
+      sandboxRoot: root,
+      partnerId: "coding",
+      computerExecute: true,
+      computerAllowHosts: ["example.com"],
+      browserDriver: driver,
+    });
+    assert.equal(opened, 1);
+    assert.equal(ran.qa?.pass, true);
+    assert.match(ran.transcript, /Computer QA computer-frame: pass/);
+    assert.match(ran.transcript, /Last frame: gtm\/last-frame.png/);
+    const frame = await readFile(path.join(workspace, "gtm/last-frame.png"));
+    assert.equal(frame[0], 0x89);
+    await assert.rejects(readFile(path.join(root, "gtm/last-frame.png")));
+
+    const { returnComputer, takeoverComputer } = await import("./computer-tab.js");
+    await takeoverComputer(workspace);
+    const blocked = await runChatTurn({
+      message: "sell this page. Open https://example.com/partner-held",
+      sandboxRoot: root,
+      partnerId: "coding",
+      computerExecute: true,
+      computerAllowHosts: ["example.com"],
+      browserDriver: driver,
+    });
+    assert.equal(opened, 1);
+    assert.match(blocked.transcript, /human has control/);
+    assert.equal(blocked.computer?.actions.every((action) => action.executed === false), true);
+    await returnComputer(workspace);
+    const handed = await runChatTurn({
+      message: "sell this page. Open https://example.com/partner-back",
+      sandboxRoot: root,
+      partnerId: "coding",
+      computerExecute: true,
+      computerAllowHosts: ["example.com"],
+      browserDriver: driver,
+    });
+    assert.equal(opened, 2);
+    assert.equal(handed.qa?.pass, true);
+    assert.match(handed.transcript, /Computer QA computer-frame: pass/);
+    assert.equal((await readFile(path.join(workspace, "gtm/last-frame.png")))[0], 0x89);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a missing browser fails capture and computer-frame in the transcript", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-browser-missing-"));
+  try {
+    const turn = await runChatTurn({
+      message: "Stand up a computer agent and open https://example.com",
+      sandboxRoot: root,
+      computerExecute: true,
+      computerAllowHosts: ["example.com"],
+    });
+    assert.equal(turn.qa?.pass, false);
+    assert.match(turn.transcript, /Playwright is missing/);
+    assert.match(turn.transcript, /Computer QA computer-frame: fail/);
+    assert.match(turn.transcript, /Capture found no open page/);
+    assert.match(turn.transcript, /No frame was written/);
+    await assert.rejects(readFile(path.join(root, "gtm/last-frame.png")));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("a partner turn writes in its own workspace, not the shared session root", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "ocp-fleet-"));
   try {

@@ -25,8 +25,8 @@ import {
   writePlanChain,
   writeReviewSplit,
 } from "./sdlc.js";
-import { allowComputerUse, checkComputerFrame, computerTabText, frameMtimeMs, markComputerLive, publishLastFrame, readComputerTab } from "./computer-tab.js";
-export { captureComputerFrame, checkComputerFrame, computerTabText, returnComputer, takeoverComputer } from "./computer-tab.js";
+import { allowComputerUse, captureExecutedFrame, computerTabText, markComputerLive, readComputerTab } from "./computer-tab.js";
+export { captureComputerFrame, captureExecutedFrame, checkComputerFrame, computerTabText, returnComputer, takeoverComputer } from "./computer-tab.js";
 export { fleetIds, isolatePartner, partnerContainerArgv, partnerWorkspace, readPartnerIdentity } from "./fleet.js";
 export { startPartnerContainer, stopPartnerContainer } from "./fleet-run.js";
 export { createRoutine, fireDueRoutines, fireEvent, formatRoutineList, listRoutines, pauseRoutine, resumeRoutine } from "./routines.js";
@@ -571,15 +571,16 @@ async function executeTurn(input: ChatTurnInput, session: SwarmSession, key: str
       claimQa = finishFixLoop(claimQa, retries);
       qa = qa ? { pass: qa.pass && claimQa.pass, summary: `${qa.summary}; ${claimQa.summary}` } : claimQa;
     }
+    let captureText = "";
     if (execute) {
-      const beforeFrame = await frameMtimeMs(input.sandboxRoot);
       await markComputerLive(input.sandboxRoot);
-      await publishLastFrame(input.sandboxRoot);
-      const frameQa = await checkComputerFrame(input.sandboxRoot, beforeFrame);
+      const shot = await captureExecutedFrame(input.sandboxRoot);
+      captureText = shot.text;
+      const frameQa = { pass: shot.ok, summary: shot.text.split("\n")[0] ?? shot.text };
       qa = qa ? { pass: qa.pass && frameQa.pass, summary: `${qa.summary}; ${frameQa.summary}` } : frameQa;
     }
     const tabLine = await computerTabText(input.sandboxRoot);
-    computer.note = [computer.note, gateNote, tabLine].filter((line) => line && line.length > 0).join("\n");
+    computer.note = [computer.note, captureText, gateNote, tabLine].filter((line) => line && line.length > 0).join("\n");
   }
 
   const result: ChatTurnResult = {

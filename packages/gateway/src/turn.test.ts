@@ -6,7 +6,7 @@ import path from "node:path";
 import test from "node:test";
 import { routeWithPredict, type ManagerPlan } from "@opencodingpartner/policy";
 import { applySandboxTodo, grepSandbox, listSandboxDir, writeSandboxFile } from "@opencodingpartner/workers";
-import { DEMO_MESSAGE, applySwarmManifest, approveDoctorLine, clearSessionMemory, coreIsOpen, createRoutine, deliverSlackEvent, deliverTelegramUpdate, fireDueRoutines, fireEvent, formatApproveQueue, formatFleetStatus, formatFleetStatusJson, isolatePartner, listApproveQueue, listRoutines, parseSwarmManifest, partnerContainerArgv, pauseRoutine, readFleetStatus, readPackaging, runChatTurn, runDemo, slackSignature, slackTurn, startPartnerContainer, stopPartnerContainer, verifySlackRequest, verifyTelegramRequest } from "./index.js";
+import { DEMO_MESSAGE, applySwarmManifest, approveDoctorLine, clearSessionMemory, coreIsOpen, createRoutine, deliverSlackEvent, deliverTelegramUpdate, fireDueRoutines, fireEvent, formatApproveQueue, formatFleetStatus, formatFleetStatusJson, formatReviewHolds, isolatePartner, listApproveQueue, listReviewHolds, listRoutines, parseSwarmManifest, partnerContainerArgv, pauseRoutine, readFleetStatus, readPackaging, reviewHoldDoctorLine, runChatTurn, runDemo, slackSignature, slackTurn, startPartnerContainer, stopPartnerContainer, verifySlackRequest, verifyTelegramRequest } from "./index.js";
 import { allowComputerUse, captureComputerFrame, checkComputerFrame, computerTabText } from "./computer-tab.js";
 import { REVIEW_HOLD_CODING_CAP, rolesUnderReviewHold } from "./sdlc.js";
 
@@ -2476,6 +2476,27 @@ test("a swarm manifest validates, dry-runs, and applies partner workspaces", asy
     const refused = await applySwarmManifest(root, bad, { dryRun: true });
     assert.equal(refused.ok, false);
     assert.match(refused.text, /at least 1000 ms/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a review hold is listed and the doctor line does not print the reason", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-review-hold-"));
+  try {
+    assert.match(formatReviewHolds(await listReviewHolds(root)), /Review hold: none/);
+    await mkdir(path.join(root, ".ocp/fleet/coding/.ocp/sdlc"), { recursive: true });
+    await writeFile(path.join(root, ".ocp/fleet/coding/.ocp/identity.json"), `${JSON.stringify({ id: "coding" })}\n`);
+    await writeFile(path.join(root, ".ocp/fleet/coding/.ocp/sdlc/review-hold"), "node --test exit 1 password=hunter2\n");
+    const holds = await listReviewHolds(root);
+    assert.equal(holds.length, 1);
+    assert.equal(holds[0]?.partner, "coding");
+    assert.match(formatReviewHolds(holds), /coding \.ocp\/fleet\/coding node --test exit 1/);
+    const doctor = reviewHoldDoctorLine(holds.length);
+    assert.match(doctor, /yellow Review hold: 1/);
+    assert.doesNotMatch(doctor, /password=hunter2/);
+    assert.match(doctor, /does not accept the plan/);
+    assert.match(await readFile(path.join(root, ".ocp/fleet/coding/.ocp/sdlc/review-hold"), "utf8"), /password=hunter2/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

@@ -36,7 +36,7 @@ import { isolatePartner as openPartnerWorkspace } from "./fleet.js";
 import { noopAcpBackend, type AcpBackend } from "./acp.js";
 export { acpOptIn, formatSettings, noopAcpBackend } from "./acp.js";
 export { coreIsOpen, readPackaging } from "./packaging.js";
-export { approveDoctorLine, formatApproveQueue, formatApproveQueueJson, listApproveQueue } from "./sdlc.js";
+export { approveDoctorLine, formatApproveQueue, formatApproveQueueJson, formatReviewHolds, listApproveQueue, listReviewHolds, reviewHoldDoctorLine } from "./sdlc.js";
 import {
   applyUnifiedDiff,
   commandDecision,

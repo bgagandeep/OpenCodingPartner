@@ -1,10 +1,11 @@
 #!/usr/bin/env node
+import { spawn } from "node:child_process";
 import { realpathSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
-import { codingRunnerForEnv, appendViaOpenClaw, computerFrameLine, copyViaOpenClaw, deleteViaOpenClaw, discoverStack, mkdirViaOpenClaw, predictWithLaya, renameViaOpenClaw, rmdirViaOpenClaw, runConnectedPath, runDoctor, sendOrchestrationTurn, startSandboxWriteBridge, writeViaOpenClaw } from "@opencodingpartner/bundle";
+import { codingRunnerForEnv, appendViaOpenClaw, computerFrameLine, copyViaOpenClaw, deleteViaOpenClaw, discoverStack, dockerLine, mkdirViaOpenClaw, predictWithLaya, renameViaOpenClaw, rmdirViaOpenClaw, runConnectedPath, runDoctor, sendOrchestrationTurn, startSandboxWriteBridge, writeViaOpenClaw } from "@opencodingpartner/bundle";
 import { access, copyFile, mkdir, readFile } from "node:fs/promises";
 import { acpOptIn, applySwarmManifest, approveDoctorLine, captureComputerFrame, checkComputerFrame, computerTabText, createRoutine, fireDueRoutines, fireEvent, formatApproveQueue, formatApproveQueueJson, formatRoutineList, formatSettings, fleetDoctorLine, formatFleetStatus, formatFleetStatusJson, isolatePartner, listApproveQueue, listRoutines, parseSwarmManifest, pauseRoutine, postSlackReply, postTelegramReply, readFleetStatus, readPackaging, resumeRoutine, returnComputer, runChatTurn, runDemo, slackCredentialStatus, slackTurn, startPartnerContainer, stopPartnerContainer, takeoverComputer, telegramCredentialStatus, telegramTurn, deliverSlackEvent, deliverTelegramUpdate, validateSwarmManifest, type ChatTurnInput } from "@opencodingpartner/gateway";
 import { playwrightBrowserDriver } from "@opencodingpartner/workers";
@@ -294,6 +295,7 @@ export async function main(argv: readonly string[]): Promise<number> {
       fleetLine,
       approveLine: approveDoctorLine(pending),
       frameLine,
+      dockerLine: dockerLine(await dockerAnswers()),
     });
     process.stdout.write(report.transcript);
     return report.code;
@@ -395,6 +397,29 @@ async function runProductTurn(message: string, sandbox: string, computerExecute:
   } finally {
     await bridge.close();
   }
+}
+
+function dockerAnswers(): Promise<boolean> {
+  return new Promise((resolve) => {
+    const child = spawn("docker", ["version", "--format", "{{.Server.Version}}"], { shell: false, stdio: ["ignore", "pipe", "pipe"] });
+    let stdout = "";
+    const timer = setTimeout(() => {
+      child.kill();
+      resolve(false);
+    }, 1500);
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => {
+      stdout += chunk;
+    });
+    child.on("error", () => {
+      clearTimeout(timer);
+      resolve(false);
+    });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      resolve(code === 0 && stdout.trim().length > 0);
+    });
+  });
 }
 
 async function receiveChannel(kind: "slack" | "telegram", argv: readonly string[]): Promise<number> {

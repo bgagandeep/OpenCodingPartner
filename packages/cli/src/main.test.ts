@@ -63,6 +63,8 @@ test("ocp doctor --sandbox checks that sandbox frame, fleet, and approvals", asy
     assert.match(captured, /green Fleet: coding not started/);
     assert.match(captured, /yellow Approvals: 1 pending/);
     assert.match(captured, /does not decide a card/);
+    assert.match(captured, /Docker:/);
+    assert.match(captured, /This check does not start containers/);
     assert.doesNotMatch(captured, /password=hunter2/);
     captured = "";
     const empty = await main(["doctor", "--sandbox", other]);

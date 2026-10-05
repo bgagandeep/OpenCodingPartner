@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { runDoctor } from "./doctor.js";
+import { dockerLine, runDoctor } from "./doctor.js";
 
 test("doctor marks missing pieces and does not print a key", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "ocp-doctor-"));
@@ -31,6 +31,8 @@ test("doctor marks missing pieces and does not print a key", async () => {
     assert.match(missing.transcript, /green Approvals: none pending/);
     assert.match(missing.transcript, /does not decide a card/);
     assert.match(missing.transcript, /yellow Computer frame: none at gtm\/last-frame.png/);
+    assert.match(missing.transcript, /yellow Docker: docker is not available/);
+    assert.match(missing.transcript, /does not start containers/);
     assert.match(missing.transcript, /yellow Fleet: no partners/);
     assert.match(missing.transcript, /No telemetry is sent/);
     assert.doesNotMatch(missing.transcript, /Prometheus/);
@@ -45,8 +47,11 @@ test("doctor marks missing pieces and does not print a key", async () => {
       gatewayHttp: "http://127.0.0.1:18789",
       fetchImpl: async () => new Response("ok", { status: 200 }),
       playwrightPresent: true,
+      dockerLine: dockerLine(true),
     });
     assert.equal(ready.code, 0);
+    assert.match(ready.transcript, /green Docker: the docker command answered/);
+    assert.match(ready.transcript, /This check does not start containers/);
     assert.match(ready.transcript, /green System-1:/);
     assert.match(ready.transcript, /yellow Meter: none/);
     assert.match(ready.transcript, /green orchestration \/healthz/);

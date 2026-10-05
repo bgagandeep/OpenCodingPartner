@@ -11,7 +11,7 @@ Open Coding Partner (OCP) uses this file as the partner agreement for a repo or 
 5. Review. The QA agent does the mechanical review (files and the check). Human intent and risk are the Approve card before the edit. The split is written at `.ocp/sdlc/review.md`.
 6. Fail. A failed check or a failed mechanical review goes back to intent. `.ocp/sdlc/review-hold` stays until the plan is accepted again.
 
-An explicit create-file message still writes that one file. It is not an open edit.
+An explicit create-file message still writes that one file. It is not an open edit. When the orchestration gateway drives that write for a partner, the file lands in that partner workspace, not the session root.
 
 ## Review hold
 

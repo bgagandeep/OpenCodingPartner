@@ -72,10 +72,6 @@ function runGitArgv(cwd: string, argv: readonly string[]): Promise<{ code: numbe
   });
 }
 
-function runGitLog(cwd: string, count: number): Promise<{ code: number; output: string; missing: boolean }> {
-  return runGitArgv(cwd, ["git", "log", "--oneline", "-n", String(count)]);
-}
-
 function redactListName(name: string): string {
   const gate = securityGate({ relativePath: "name.txt", content: name, sandboxRoot: "." });
   return gate.reasons.includes("secret pattern") ? "[redacted]" : name;

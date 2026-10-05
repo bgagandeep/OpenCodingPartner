@@ -35,6 +35,8 @@ test("doctor marks missing pieces and does not print a key", async () => {
     assert.match(missing.transcript, /does not open a page/);
     assert.match(missing.transcript, /green Computer control: partner/);
     assert.match(missing.transcript, /does not take or return the browser/);
+    assert.match(missing.transcript, /green Computer approval: not required/);
+    assert.match(missing.transcript, /does not decide a card/);
     assert.match(missing.transcript, /green Shared mount: no partners/);
     assert.match(missing.transcript, /does not copy files/);
     assert.match(missing.transcript, /green Last check: none/);

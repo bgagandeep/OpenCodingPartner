@@ -20,6 +20,7 @@ export interface DoctorDeps {
   todoLine?: string;
   runLine?: string;
   controlLine?: string;
+  approvalLine?: string;
   mountLine?: string;
   checkLine?: string;
   qaLine?: string;
@@ -50,6 +51,7 @@ export async function runDoctor(deps: DoctorDeps): Promise<DoctorReport> {
   lines.push(deps.todoLine ?? "green Todos: none open. This check does not change the list.");
   lines.push(deps.runLine ?? "yellow Computer run: none. This check does not open a page.");
   lines.push(deps.controlLine ?? "green Computer control: partner. This check does not take or return the browser.");
+  lines.push(deps.approvalLine ?? "green Computer approval: not required. This check does not start the browser and does not decide a card.");
   lines.push(deps.mountLine ?? "green Shared mount: no partners. This check does not copy files.");
   lines.push(deps.checkLine ?? "green Last check: none. This check does not run a command and does not print its output.");
   lines.push(deps.qaLine ?? "green Last QA: none. This check does not review files and does not print the QA summary.");

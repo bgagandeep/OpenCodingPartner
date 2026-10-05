@@ -312,6 +312,58 @@ export async function doctorComputerRunLine(sessionRoot: string): Promise<string
   return `yellow Computer run: ${sessionDetail} ${extra} ${tail}`;
 }
 
+async function agreementOn(sandboxRoot: string): Promise<boolean> {
+  try {
+    await readFile(path.join(sandboxRoot, "PARTNER.md"), "utf8");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+type ApprovalRead = "approved" | "waiting" | "unreadable" | "not-required";
+
+async function approvalState(sandboxRoot: string): Promise<ApprovalRead> {
+  if (!(await agreementOn(sandboxRoot))) return "not-required";
+  let raw: string;
+  try {
+    raw = await readFile(statePath(sandboxRoot), "utf8");
+  } catch {
+    return "waiting";
+  }
+  try {
+    const parsed = JSON.parse(raw) as { approved?: unknown };
+    if (parsed.approved === true) return "approved";
+    if (parsed.approved === undefined || parsed.approved === false) return "waiting";
+    return "unreadable";
+  } catch {
+    return "unreadable";
+  }
+}
+
+/** Doctor line for browser approval. This does not start the browser and does not decide a card. */
+export async function doctorComputerApprovalLine(sessionRoot: string): Promise<string> {
+  const tail = "This check does not start the browser and does not decide a card.";
+  const waiting: string[] = [];
+  let sawApproved = false;
+  const session = await approvalState(sessionRoot);
+  if (session === "unreadable") return `yellow Computer approval: this session file could not be read. ${tail}`;
+  if (session === "waiting") waiting.push("the session");
+  if (session === "approved") sawApproved = true;
+  for (const partner of await partnerWorkspaces(sessionRoot)) {
+    const state = await approvalState(partner.workspace);
+    if (state === "unreadable") return `yellow Computer approval: ${partner.id} file could not be read. ${tail}`;
+    if (state === "waiting") waiting.push(partner.id);
+    if (state === "approved") sawApproved = true;
+  }
+  if (waiting.length > 0) {
+    const who = waiting.map((name) => (name === "the session" ? "the session is not approved" : `${name} is not approved`)).join(". ");
+    return `yellow Computer approval: ${who}. ${tail}`;
+  }
+  if (sawApproved) return `green Computer approval: approved. ${tail}`;
+  return `green Computer approval: not required. ${tail}`;
+}
+
 /** Doctor line for who holds the browser. This does not take or return it. */
 export async function doctorComputerControlLine(sessionRoot: string): Promise<string> {
   const tail = "This check does not take or return the browser.";

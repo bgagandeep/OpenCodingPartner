@@ -7,7 +7,7 @@ import test from "node:test";
 import { routeWithPredict, type ManagerPlan } from "@opencodingpartner/policy";
 import { applySandboxTodo, grepSandbox, listSandboxDir, writeSandboxFile } from "@opencodingpartner/workers";
 import { DEMO_MESSAGE, applySwarmManifest, approveDoctorLine, clearSessionMemory, coreIsOpen, createRoutine, deliverSlackEvent, deliverTelegramUpdate, fireDueRoutines, fireEvent, formatApproveQueue, formatFleetStatus, formatFleetStatusJson, formatReviewHolds, formatTodoQueue, isolatePartner, listApproveQueue, listReviewHolds, listRoutines, listTodoQueue, parseSwarmManifest, partnerAgreementDoctorLine, partnerAgreementStatus, partnerContainerArgv, pauseRoutine, readFleetStatus, readPackaging, reviewHoldDoctorLine, runChatTurn, todoDoctorLine, runDemo, slackSignature, slackTurn, startPartnerContainer, stopPartnerContainer, verifySlackRequest, verifyTelegramRequest } from "./index.js";
-import { allowComputerUse, captureComputerFrame, checkComputerFrame, computerTabText, doctorComputerControlLine, doctorComputerFrameLine, doctorComputerRunLine } from "./computer-tab.js";
+import { allowComputerUse, captureComputerFrame, checkComputerFrame, computerTabText, doctorComputerApprovalLine, doctorComputerControlLine, doctorComputerFrameLine, doctorComputerRunLine } from "./computer-tab.js";
 import { doctorSharedMountLine } from "./fleet.js";
 import { doctorLastCheckLine } from "./last-check.js";
 import { doctorLastQaLine } from "./last-qa.js";
@@ -2922,6 +2922,41 @@ test("doctor names a shared mount that does not point at this session", async ()
     assert.match(wrong, /yellow Shared mount: coding does not point at this session/);
     assert.match(wrong, /does not copy files/);
     assert.doesNotMatch(wrong, /elsewhere-secret/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("doctor names a browser that is not approved and does not start it", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-doctor-approval-"));
+  try {
+    const open = await doctorComputerApprovalLine(root);
+    assert.match(open, /green Computer approval: not required/);
+    assert.match(open, /does not start the browser/);
+    assert.match(open, /does not decide a card/);
+    await writeFile(path.join(root, "PARTNER.md"), "partner\n");
+    const waiting = await doctorComputerApprovalLine(root);
+    assert.match(waiting, /yellow Computer approval: the session is not approved/);
+    await assert.rejects(readFile(path.join(root, ".ocp/computer.json"), "utf8"));
+    await mkdir(path.join(root, ".ocp"), { recursive: true });
+    await writeFile(
+      path.join(root, ".ocp/computer.json"),
+      `${JSON.stringify({ desktop: "sandbox", control: "partner", approved: true, status: "idle" })}\n`,
+    );
+    assert.match(await doctorComputerApprovalLine(root), /green Computer approval: approved/);
+    await isolatePartner(root, "coding");
+    const partner = await doctorComputerApprovalLine(root);
+    assert.match(partner, /yellow Computer approval: coding is not approved/);
+    assert.doesNotMatch(partner, /the session is not approved/);
+    const before = await readFile(path.join(root, ".ocp/fleet/coding/.ocp/computer.json"), "utf8").catch(() => "");
+    await writeFile(path.join(root, ".ocp/fleet/coding/.ocp/computer.json"), "{\"approved\":\"password=hunter2\"}\n");
+    const broken = await doctorComputerApprovalLine(root);
+    assert.match(broken, /yellow Computer approval: coding file could not be read/);
+    assert.doesNotMatch(broken, /hunter2/);
+    const saved = JSON.parse(await readFile(path.join(root, ".ocp/computer.json"), "utf8")) as { approved?: boolean; control?: string };
+    assert.equal(saved.approved, true);
+    assert.equal(saved.control, "partner");
+    assert.equal(before, "");
   } finally {
     await rm(root, { recursive: true, force: true });
   }

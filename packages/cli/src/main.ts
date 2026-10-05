@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
-import { codingRunnerForEnv, appendViaOpenClaw, copyViaOpenClaw, deleteViaOpenClaw, discoverStack, mkdirViaOpenClaw, predictWithLaya, renameViaOpenClaw, rmdirViaOpenClaw, runConnectedPath, runDoctor, sendOrchestrationTurn, startSandboxWriteBridge, writeViaOpenClaw } from "@opencodingpartner/bundle";
+import { codingRunnerForEnv, appendViaOpenClaw, computerFrameLine, copyViaOpenClaw, deleteViaOpenClaw, discoverStack, mkdirViaOpenClaw, predictWithLaya, renameViaOpenClaw, rmdirViaOpenClaw, runConnectedPath, runDoctor, sendOrchestrationTurn, startSandboxWriteBridge, writeViaOpenClaw } from "@opencodingpartner/bundle";
 import { access, copyFile, mkdir, readFile } from "node:fs/promises";
 import { acpOptIn, applySwarmManifest, approveDoctorLine, captureComputerFrame, checkComputerFrame, computerTabText, createRoutine, fireDueRoutines, fireEvent, formatApproveQueue, formatApproveQueueJson, formatRoutineList, formatSettings, fleetDoctorLine, formatFleetStatus, formatFleetStatusJson, isolatePartner, listApproveQueue, listRoutines, parseSwarmManifest, pauseRoutine, postSlackReply, postTelegramReply, readFleetStatus, readPackaging, resumeRoutine, returnComputer, runChatTurn, runDemo, slackCredentialStatus, slackTurn, startPartnerContainer, stopPartnerContainer, takeoverComputer, telegramCredentialStatus, telegramTurn, deliverSlackEvent, deliverTelegramUpdate, validateSwarmManifest, type ChatTurnInput } from "@opencodingpartner/gateway";
 import { playwrightBrowserDriver } from "@opencodingpartner/workers";
@@ -261,6 +261,8 @@ export async function main(argv: readonly string[]): Promise<number> {
     return 0;
   }
   if (command === "doctor") {
+    const sand = takeFlag(tail, "--sandbox");
+    const sandbox = sand.value ?? ".sandbox";
     const repoRoot = path.resolve(fileURLToPath(new URL("../../../", import.meta.url)));
     let stack: { openclawBin?: string; grokBin?: string; layaPython?: string; layaHfHome?: string } | undefined;
     try {
@@ -281,9 +283,18 @@ export async function main(argv: readonly string[]): Promise<number> {
     } catch {
       playwrightPresent = false;
     }
-    const fleetLine = fleetDoctorLine(await readFleetStatus(".sandbox"));
-    const pending = (await listApproveQueue(".sandbox")).length;
-    const report = await runDoctor({ env: process.env, bins, repoRoot, playwrightPresent, fleetLine, approveLine: approveDoctorLine(pending) });
+    const fleetLine = fleetDoctorLine(await readFleetStatus(sandbox));
+    const pending = (await listApproveQueue(sandbox)).length;
+    const frameLine = await computerFrameLine(sandbox);
+    const report = await runDoctor({
+      env: process.env,
+      bins,
+      repoRoot,
+      playwrightPresent,
+      fleetLine,
+      approveLine: approveDoctorLine(pending),
+      frameLine,
+    });
     process.stdout.write(report.transcript);
     return report.code;
   }

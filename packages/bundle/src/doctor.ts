@@ -1,4 +1,4 @@
-import { access } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 import path from "node:path";
 import { resolveCodingMeter } from "./connected.js";
 import type { StackBins } from "./discover.js";
@@ -12,6 +12,7 @@ export interface DoctorDeps {
   playwrightPresent?: boolean;
   fleetLine?: string;
   approveLine?: string;
+  frameLine?: string;
 }
 
 export interface DoctorReport {
@@ -31,6 +32,7 @@ export async function runDoctor(deps: DoctorDeps): Promise<DoctorReport> {
   lines.push(telegramLine(deps.env));
   lines.push(deps.fleetLine ?? "yellow Fleet: no partners. This check does not start containers. No telemetry is sent.");
   lines.push(deps.approveLine ?? "green Approvals: none pending. This check does not decide a card.");
+  lines.push(deps.frameLine ?? "yellow Computer frame: none at gtm/last-frame.png. This check does not start the browser.");
   lines.push("Prove-it: pnpm exec ocp chat --sandbox .sandbox \"Use the coding worker to create hello.txt with content:");
   lines.push("hello");
   lines.push("\"");
@@ -93,6 +95,21 @@ function telegramLine(env: NodeJS.ProcessEnv): string {
   const missing = [env.TELEGRAM_BOT_TOKEN ? "" : "TELEGRAM_BOT_TOKEN", env.TELEGRAM_WEBHOOK_SECRET ? "" : "TELEGRAM_WEBHOOK_SECRET"].filter((name) => name.length > 0);
   if (missing.length === 0) return "green Telegram: bot token and webhook secret are set. The values are not printed.";
   return `yellow Telegram: missing ${missing.join(", ")}. The offline channel path still runs.`;
+}
+
+const PNG_SIGNATURE = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
+/** Read one frame file. This does not start a browser. */
+export async function computerFrameLine(sandboxRoot: string): Promise<string> {
+  const where = "gtm/last-frame.png";
+  try {
+    const bytes = await readFile(path.join(sandboxRoot, where));
+    const png = bytes.length >= PNG_SIGNATURE.length && PNG_SIGNATURE.every((byte, index) => bytes[index] === byte);
+    if (!png) return `yellow Computer frame: ${where} is not a PNG. This check does not start the browser.`;
+    return `green Computer frame: a PNG is at ${where}. This check does not start the browser.`;
+  } catch {
+    return `yellow Computer frame: none at ${where}. This check does not start the browser.`;
+  }
 }
 
 function slackLine(env: NodeJS.ProcessEnv): string {

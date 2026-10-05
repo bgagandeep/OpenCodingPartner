@@ -30,6 +30,7 @@ test("doctor marks missing pieces and does not print a key", async () => {
     assert.match(missing.transcript, /yellow Telegram: missing TELEGRAM_BOT_TOKEN, TELEGRAM_WEBHOOK_SECRET/);
     assert.match(missing.transcript, /green Approvals: none pending/);
     assert.match(missing.transcript, /does not decide a card/);
+    assert.match(missing.transcript, /yellow Computer frame: none at gtm\/last-frame.png/);
     assert.match(missing.transcript, /yellow Fleet: no partners/);
     assert.match(missing.transcript, /No telemetry is sent/);
     assert.doesNotMatch(missing.transcript, /Prometheus/);

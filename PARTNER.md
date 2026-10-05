@@ -23,7 +23,7 @@ While `.ocp/sdlc/review-hold` exists, orchestration stands up one coding worker.
 
 ## Routines and channels
 
-A routine in `.ocp/routines.json` can wake a partner on an interval or an event name while you are away. `ocp routine run` fires the ones that are due. Slack or Telegram text arrives as a partner turn. `approve` and `deny` in that text decide the Approve card. This build does not call those networks.
+A routine in `.ocp/routines.json` can wake a partner on an interval or an event name while you are away. `ocp routine run` fires the ones that are due. Slack or Telegram text arrives as a partner turn. `approve`, `deny`, and `redirect:` in that text decide the Approve card. Slack posts a reply when `SLACK_BOT_TOKEN` and `SLACK_SIGNING_SECRET` are set. Inbound Slack events are checked with the signing secret. Without those values the offline turn still runs, and the values are not printed. Telegram does not call Telegram. WhatsApp is later.
 
 ## Swarm manifest
 

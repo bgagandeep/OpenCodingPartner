@@ -31,7 +31,7 @@ export { fleetIds, isolatePartner, partnerContainerArgv, partnerWorkspace, readP
 export { startPartnerContainer, stopPartnerContainer } from "./fleet-run.js";
 export { createRoutine, fireDueRoutines, fireEvent, formatRoutineList, listRoutines, pauseRoutine, resumeRoutine } from "./routines.js";
 export { applySwarmManifest, parseSwarmManifest, validateSwarmManifest } from "./swarm-manifest.js";
-export { channelPartnerId, discordTurn, slackTurn, telegramTurn } from "./channels.js";
+export { channelPartnerId, deliverSlackEvent, discordTurn, postSlackReply, slackCredentialStatus, slackSignature, slackTurn, telegramTurn, verifySlackRequest } from "./channels.js";
 import { isolatePartner as openPartnerWorkspace } from "./fleet.js";
 import { noopAcpBackend, type AcpBackend } from "./acp.js";
 export { acpOptIn, formatSettings, noopAcpBackend } from "./acp.js";

@@ -178,6 +178,53 @@ test("ocp settings shows advanced ACP off and does not name the backend", async 
   }
 });
 
+test("ocp channel slack stays offline without credentials and posts when they are set", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "ocp-slack-cli-"));
+  let captured = "";
+  const original = process.stdout.write.bind(process.stdout);
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    captured += String(chunk);
+    return true;
+  }) as typeof process.stdout.write;
+  const token = process.env.SLACK_BOT_TOKEN;
+  const signing = process.env.SLACK_SIGNING_SECRET;
+  delete process.env.SLACK_BOT_TOKEN;
+  delete process.env.SLACK_SIGNING_SECRET;
+  const originalFetch = globalThis.fetch;
+  try {
+    const missing = await main(["channel", "slack", "--sandbox", root, "--text", "hello", "--channel", "dev"]);
+    assert.equal(missing, 0);
+    assert.match(captured, /Slack live: missing SLACK_BOT_TOKEN, SLACK_SIGNING_SECRET/);
+    assert.match(captured, /The offline turn still ran/);
+    captured = "";
+    process.env.SLACK_BOT_TOKEN = "xoxb-cli-secret";
+    process.env.SLACK_SIGNING_SECRET = "signing-cli-secret";
+    let bearer = "";
+    let body = "";
+    globalThis.fetch = (async (_url: string | URL | Request, init?: RequestInit) => {
+      const headers = init?.headers as { authorization?: string } | undefined;
+      bearer = headers?.authorization ?? "";
+      body = String(init?.body ?? "");
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    }) as typeof fetch;
+    const posted = await main(["channel", "slack", "--sandbox", root, "--text", "hello again", "--channel", "dev"]);
+    assert.equal(posted, 0);
+    assert.equal(bearer, "Bearer xoxb-cli-secret");
+    assert.match(body, /"channel":"dev"/);
+    assert.doesNotMatch(captured, /xoxb-cli-secret/);
+    assert.doesNotMatch(captured, /signing-cli-secret/);
+    assert.doesNotMatch(captured, /Slack live: missing/);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (token === undefined) delete process.env.SLACK_BOT_TOKEN;
+    else process.env.SLACK_BOT_TOKEN = token;
+    if (signing === undefined) delete process.env.SLACK_SIGNING_SECRET;
+    else process.env.SLACK_SIGNING_SECRET = signing;
+    process.stdout.write = original;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("the cli file is the ocp entry when spawned", () => {
   const root = mkdtempSync(path.join(tmpdir(), "ocp-spawn-"));
   try {

@@ -6,7 +6,7 @@ import path from "node:path";
 import test from "node:test";
 import { routeWithPredict, type ManagerPlan } from "@opencodingpartner/policy";
 import { grepSandbox, listSandboxDir, writeSandboxFile } from "@opencodingpartner/workers";
-import { DEMO_MESSAGE, applySwarmManifest, clearSessionMemory, coreIsOpen, createRoutine, fireDueRoutines, fireEvent, isolatePartner, listRoutines, parseSwarmManifest, partnerContainerArgv, pauseRoutine, readPackaging, runChatTurn, runDemo, slackTurn, startPartnerContainer, stopPartnerContainer } from "./index.js";
+import { DEMO_MESSAGE, applySwarmManifest, clearSessionMemory, coreIsOpen, createRoutine, deliverSlackEvent, fireDueRoutines, fireEvent, isolatePartner, listRoutines, parseSwarmManifest, partnerContainerArgv, pauseRoutine, readPackaging, runChatTurn, runDemo, slackSignature, slackTurn, startPartnerContainer, stopPartnerContainer, verifySlackRequest } from "./index.js";
 import { allowComputerUse, captureComputerFrame, computerTabText } from "./computer-tab.js";
 import { REVIEW_HOLD_CODING_CAP, rolesUnderReviewHold } from "./sdlc.js";
 
@@ -2230,6 +2230,139 @@ test("computer capture writes a PNG frame and reports its time", async () => {
     assert.match(none.text, /No page is open/);
     await assert.rejects(readFile(path.join(empty, "gtm", "last-frame.png")));
     await rm(empty, { recursive: true, force: true });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Slack delivery verifies a signature and posts the partner reply", async () => {
+  const now = 1_700_000_000_000;
+  const timestamp = String(Math.floor(now / 1000));
+  const secret = "signing-secret";
+  const raw = JSON.stringify({ type: "event_callback", event: { text: "deny", channel: "dev", ts: "1.2" } });
+  const signature = slackSignature(secret, timestamp, raw);
+  assert.equal(verifySlackRequest({ secret, timestamp, signature, rawBody: raw, nowMs: now }).ok, true);
+  assert.equal(verifySlackRequest({ secret, timestamp, signature: "v0=nope", rawBody: raw, nowMs: now }).reason, "bad signature");
+  assert.equal(verifySlackRequest({ secret, timestamp, signature, rawBody: raw, nowMs: now + 6 * 60 * 1000 }).reason, "stale timestamp");
+  let posted = "";
+  let bearer = "";
+  const delivered = await deliverSlackEvent(
+    {
+      rawBody: raw,
+      timestamp,
+      signature,
+      signingSecret: secret,
+      botToken: "xoxb-test",
+      nowMs: now,
+      fetchImpl: async (_url, init) => {
+        bearer = String((init?.headers as { authorization?: string } | undefined)?.authorization ?? "");
+        posted = String(init?.body ?? "");
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      },
+    },
+    async (message) => `turn:${message}`,
+  );
+  assert.equal(delivered.ok, true);
+  assert.equal(delivered.posted, true);
+  assert.equal(delivered.reply, "turn:deny");
+  assert.equal(bearer, "Bearer xoxb-test");
+  assert.match(posted, /"channel":"dev"/);
+  assert.match(posted, /"thread_ts":"1.2"/);
+  assert.doesNotMatch(posted, /signing-secret/);
+  assert.equal(verifySlackRequest({ secret, timestamp: "", signature: "", rawBody: raw, nowMs: now }).reason, "missing signature");
+
+  let runs = 0;
+  const challengeBody = JSON.stringify({ type: "url_verification", challenge: "abc123" });
+  const challenge = await deliverSlackEvent(
+    {
+      rawBody: challengeBody,
+      timestamp,
+      signature: slackSignature(secret, timestamp, challengeBody),
+      signingSecret: secret,
+      botToken: "xoxb-test",
+      nowMs: now,
+      fetchImpl: async () => {
+        throw new Error("challenge must not post");
+      },
+    },
+    async () => {
+      runs += 1;
+      return "ran";
+    },
+  );
+  assert.equal(challenge.ok, true);
+  assert.equal(challenge.reply, "abc123");
+  assert.equal(challenge.posted, false);
+  assert.equal(runs, 0);
+
+  const rejected = await deliverSlackEvent(
+    {
+      rawBody: raw,
+      timestamp,
+      signature: "v0=nope",
+      signingSecret: secret,
+      botToken: "xoxb-test",
+      nowMs: now,
+    },
+    async () => {
+      runs += 1;
+      return "ran";
+    },
+  );
+  assert.equal(rejected.ok, false);
+  assert.equal(rejected.reply, "bad signature");
+  assert.equal(rejected.posted, false);
+  assert.equal(runs, 0);
+
+  const offline = await deliverSlackEvent(
+    {
+      rawBody: raw,
+      timestamp,
+      signature,
+      signingSecret: secret,
+      botToken: "xoxb-test",
+      nowMs: now,
+      fetchImpl: async () => {
+        throw new Error("offline");
+      },
+    },
+    async (message) => `turn:${message}`,
+  );
+  assert.equal(offline.ok, false);
+  assert.equal(offline.posted, false);
+  assert.equal(offline.reply, "turn:deny");
+});
+
+test("a signed Slack deny still decides the Approve card", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-slack-card-"));
+  try {
+    await writeFile(path.join(root, "PARTNER.md"), "partner\n");
+    const asked = await runChatTurn({ message: "add a helper", sandboxRoot: root, partnerId: "slack-dev" });
+    assert.match(asked.transcript, /Approve card/);
+    const now = 1_700_000_000_000;
+    const timestamp = String(Math.floor(now / 1000));
+    const secret = "signing-secret";
+    const raw = JSON.stringify({ type: "event_callback", event: { text: "deny", channel: "dev", ts: "9.9" } });
+    const delivered = await deliverSlackEvent(
+      {
+        rawBody: raw,
+        timestamp,
+        signature: slackSignature(secret, timestamp, raw),
+        signingSecret: secret,
+        botToken: "xoxb-test",
+        nowMs: now,
+        fetchImpl: async () => new Response(JSON.stringify({ ok: true }), { status: 200 }),
+      },
+      async (message, partnerId) => {
+        const turn = await runChatTurn({ message, sandboxRoot: root, partnerId });
+        return turn.transcript;
+      },
+    );
+    assert.equal(delivered.ok, true);
+    assert.equal(delivered.posted, true);
+    assert.match(delivered.reply, /Approve denied/);
+    assert.doesNotMatch(delivered.reply, /xoxb-test/);
+    assert.doesNotMatch(delivered.reply, /signing-secret/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

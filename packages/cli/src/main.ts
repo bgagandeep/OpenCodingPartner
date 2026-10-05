@@ -6,7 +6,7 @@ import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 import { codingRunnerForEnv, copyViaOpenClaw, deleteViaOpenClaw, discoverStack, mkdirViaOpenClaw, predictWithLaya, renameViaOpenClaw, rmdirViaOpenClaw, runConnectedPath, runDoctor, sendOrchestrationTurn, startSandboxWriteBridge, writeViaOpenClaw } from "@opencodingpartner/bundle";
 import { access, copyFile, mkdir, readFile } from "node:fs/promises";
-import { acpOptIn, applySwarmManifest, captureComputerFrame, computerTabText, createRoutine, fireDueRoutines, fireEvent, formatRoutineList, formatSettings, isolatePartner, listRoutines, parseSwarmManifest, pauseRoutine, readPackaging, resumeRoutine, returnComputer, runChatTurn, runDemo, slackTurn, startPartnerContainer, stopPartnerContainer, takeoverComputer, telegramTurn, validateSwarmManifest, type ChatTurnInput } from "@opencodingpartner/gateway";
+import { acpOptIn, applySwarmManifest, captureComputerFrame, computerTabText, createRoutine, fireDueRoutines, fireEvent, formatRoutineList, formatSettings, isolatePartner, listRoutines, parseSwarmManifest, pauseRoutine, postSlackReply, readPackaging, resumeRoutine, returnComputer, runChatTurn, runDemo, slackCredentialStatus, slackTurn, startPartnerContainer, stopPartnerContainer, takeoverComputer, telegramTurn, validateSwarmManifest, type ChatTurnInput } from "@opencodingpartner/gateway";
 import { playwrightBrowserDriver } from "@opencodingpartner/workers";
 import { routeWithPredict } from "@opencodingpartner/policy";
 import { proveCoding, proveComputer } from "./prove.js";
@@ -204,6 +204,15 @@ export async function main(argv: readonly string[]): Promise<number> {
       const turn = await runProductTurn(message, sandbox, false, partnerId);
       return turn.transcript;
     });
+    if (kind === "slack") {
+      const creds = slackCredentialStatus(process.env);
+      if (!creds.ready) {
+        process.stdout.write(`Slack live: missing ${creds.missing.join(", ")}. The offline turn still ran.\n`);
+      } else {
+        const posted = await postSlackReply(process.env.SLACK_BOT_TOKEN ?? "", channel.value, result.reply, "");
+        if (!posted.ok) process.stdout.write(`${posted.detail}\n`);
+      }
+    }
     process.stdout.write(result.reply);
     return 0;
   }

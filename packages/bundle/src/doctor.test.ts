@@ -23,6 +23,7 @@ test("doctor marks missing pieces and does not print a key", async () => {
     assert.match(missing.transcript, /yellow orchestration \/healthz:/);
     assert.match(missing.transcript, /red Write bridge plugin/);
     assert.match(missing.transcript, /yellow Playwright: not installed/);
+    assert.match(missing.transcript, /yellow Slack: missing SLACK_BOT_TOKEN, SLACK_SIGNING_SECRET/);
     assert.doesNotMatch(missing.transcript, /super-secret-value/);
 
     await mkdir(path.join(root, "integrations/openclaw-sandbox-write"), { recursive: true });
@@ -41,7 +42,18 @@ test("doctor marks missing pieces and does not print a key", async () => {
     assert.match(ready.transcript, /green orchestration \/healthz/);
     assert.match(ready.transcript, /green Write bridge plugin/);
     assert.match(ready.transcript, /green Playwright/);
+    assert.match(ready.transcript, /yellow Slack: missing SLACK_BOT_TOKEN, SLACK_SIGNING_SECRET/);
     assert.match(ready.transcript, /System-1: fallback/);
+    const slack = await runDoctor({
+      env: { SLACK_BOT_TOKEN: "xoxb-secret-value", SLACK_SIGNING_SECRET: "signing-secret-value" },
+      bins: { layaPython: "/tmp/python", layaHfHome: "/tmp/hf" },
+      repoRoot: root,
+      fetchImpl: async () => new Response("ok", { status: 200 }),
+      playwrightPresent: true,
+    });
+    assert.match(slack.transcript, /green Slack: bot token and signing secret are set/);
+    assert.doesNotMatch(slack.transcript, /xoxb-secret-value/);
+    assert.doesNotMatch(slack.transcript, /signing-secret-value/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

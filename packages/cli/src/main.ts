@@ -8,7 +8,7 @@ import { stdin, stdout } from "node:process";
 import { codingRunnerForEnv, appendViaOpenClaw, copyViaOpenClaw, deleteViaOpenClaw, discoverStack, dockerLine, mkdirViaOpenClaw, predictWithLaya, renameViaOpenClaw, rmdirViaOpenClaw, runConnectedPath, runDoctor, sendOrchestrationTurn, startSandboxWriteBridge, todoViaOpenClaw, writeViaOpenClaw } from "@opencodingpartner/bundle";
 import { access, copyFile, mkdir, readFile } from "node:fs/promises";
 import { acpOptIn, applySwarmManifest, doctorSwarmLine, approveDoctorLine, captureComputerFrame, checkComputerFrame, checkComputerFrames, computerTabText, doctorComputerControlLine, doctorComputerFrameLine, doctorComputerRunLine, doctorComputerStatusLine, allowedCheckArgv, doctorLastCheckLine, doctorLastQaLine, runAllowedCheck, doctorLastWriteLine, doctorRoutineLine, doctorSharedMountLine, createRoutine, fireDueRoutines, fireEvent, formatApproveQueue, formatApproveQueueJson, formatReviewHolds, formatRoutineList, formatTodoQueue, formatTodoQueueJson, formatSettings, fleetDoctorLine, formatFleetStatus, formatFleetStatusJson, isolatePartner, listApproveQueue, listReviewHolds, listRoutines, listTodoQueue, partnerAgreementDoctorLine, partnerAgreementStatus, parseSwarmManifest, pauseRoutine, postSlackReply, postTelegramReply, readFleetStatus, readPackaging, resumeRoutine, returnComputer, reviewHoldDoctorLine, doctorPlanLine, runChatTurn, todoDoctorLine, runDemo, slackCredentialStatus, slackTurn, startPartnerContainer, stopPartnerContainer, takeoverComputer, telegramCredentialStatus, telegramTurn, deliverSlackEvent, deliverTelegramUpdate, validateSwarmManifest, type ChatTurnInput } from "@opencodingpartner/gateway";
-import { applySandboxTodo, globSandbox, grepSandbox, listSandboxDir, playwrightBrowserDriver, readSandboxText, securityGate } from "@opencodingpartner/workers";
+import { applySandboxTodo, commandDecision, globSandbox, grepSandbox, listSandboxDir, playwrightBrowserDriver, readSandboxText, securityGate } from "@opencodingpartner/workers";
 import { routeWithPredict } from "@opencodingpartner/policy";
 import { proveCoding, proveComputer } from "./prove.js";
 import { runChatRepl } from "./repl.js";
@@ -35,6 +35,42 @@ function refusedSandboxRead(relativePath: string): boolean {
 function refusedSandboxList(relativePath: string): boolean {
   if (relativePath === "" || relativePath === ".") return false;
   return refusedSandboxRead(relativePath);
+}
+
+function runGitStatus(cwd: string): Promise<{ code: number; output: string; missing: boolean }> {
+  const argv = ["git", "status", "-sb"];
+  if (!commandDecision(argv).allow) return Promise.resolve({ code: 2, output: "", missing: true });
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (value: { code: number; output: string; missing: boolean }) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+    const env = { ...process.env };
+    for (const key of Object.keys(env)) {
+      if (key.startsWith("NODE_TEST") || key.startsWith("NODE_CHANNEL")) delete env[key];
+    }
+    const child = spawn(argv[0] ?? "git", argv.slice(1), { cwd, env, shell: false, stdio: ["ignore", "pipe", "pipe"] });
+    let output = "";
+    const timer = setTimeout(() => child.kill(), 15000);
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => {
+      output += chunk;
+    });
+    child.stderr.on("data", (chunk: string) => {
+      output += chunk;
+    });
+    child.on("error", () => {
+      clearTimeout(timer);
+      finish({ code: 127, output: "", missing: true });
+    });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      finish({ code: code ?? 1, output, missing: false });
+    });
+  });
 }
 
 function redactListName(name: string): string {
@@ -475,6 +511,36 @@ export async function main(argv: readonly string[]): Promise<number> {
     process.stdout.write(`${body}\n`);
     return 0;
   }
+  if (command === "git") {
+    const sand = takeFlag(tail, "--sandbox");
+    const sandbox = sand.value ?? ".sandbox";
+    const partner = takeFlag(sand.rest, "--partner");
+    const sub = partner.rest[0];
+    if (sub !== "status" || partner.rest.length > 1) {
+      process.stdout.write("Usage: ocp git status [--sandbox .sandbox] [--partner name]\n");
+      return 2;
+    }
+    let root = sandbox;
+    try {
+      if (partner.value) root = await isolatePartner(sandbox, partner.value);
+    } catch (error) {
+      process.stdout.write(`${error instanceof Error ? error.message : "partner refused"}\n`);
+      return 1;
+    }
+    await mkdir(root, { recursive: true });
+    const result = await runGitStatus(root);
+    if (result.missing) {
+      process.stdout.write("git status did not run.\n");
+      return 1;
+    }
+    const text = result.output.trim();
+    const lines = text
+      ? text.split("\n").filter((line) => !line.includes(".ocp") && !line.includes("gtm")).map(redactListName)
+      : [`git status exit ${result.code}`];
+    const body = lines.filter((line) => line.length > 0).join("\n");
+    process.stdout.write(`${body}\n`);
+    return result.code === 0 ? 0 : 1;
+  }
   if (command === "doctor") {
     const sand = takeFlag(tail, "--sandbox");
     const sandbox = sand.value ?? ".sandbox";
@@ -574,7 +640,7 @@ export async function main(argv: readonly string[]): Promise<number> {
     return 0;
   }
   process.stdout.write(
-    "Open Coding Partner chat\n\n  ocp chat --sandbox .sandbox\n  ocp chat --sandbox .sandbox \"Use the coding worker to create hello.txt with content:\nhello\n\"\n  ocp chat --sandbox .sandbox --computer-execute \"Open https://example.com\"\n  ocp demo --sandbox .sandbox\n  ocp doctor\n  ocp check --sandbox .sandbox\n  ocp read --sandbox .sandbox path\n  ocp list --sandbox .sandbox\n  ocp grep --text \"...\" --sandbox .sandbox\n  ocp glob --pattern \"*.txt\" --sandbox .sandbox\n  ocp prove coding\n  ocp prove computer\n  ocp computer --sandbox .sandbox\n  ocp computer --sandbox .sandbox takeover\n  ocp computer --sandbox .sandbox return\n  ocp computer --sandbox .sandbox qa\n\nThe Computer tab shows the sandbox desktop status and the last frame path. There is no live pixel stream in this build. takeover hands the browser to you. return hands it back to the partner. ocp computer qa checks the frame file and does not open a page.\nOrchestration owns the session plan. After it accepts the plan, it invokes the sandbox write bridge. The transcript says Write path: orchestration. Delete and rename use the same bridge when the gateway drove the turn. When the gateway is down, the transcript says Write path: local sandbox. fs_write, apply_patch, and sessions_spawn stay blocked.\nThe computer agent opens a browser only with --computer-execute or OCP_COMPUTER_EXECUTE=1, and only after an Approve card when the sandbox has PARTNER.md. It opens a named http(s) URL, reads the screen, and types into one selector when you ask. A live stream is not in this build.\n",
+    "Open Coding Partner chat\n\n  ocp chat --sandbox .sandbox\n  ocp chat --sandbox .sandbox \"Use the coding worker to create hello.txt with content:\nhello\n\"\n  ocp chat --sandbox .sandbox --computer-execute \"Open https://example.com\"\n  ocp demo --sandbox .sandbox\n  ocp doctor\n  ocp check --sandbox .sandbox\n  ocp read --sandbox .sandbox path\n  ocp list --sandbox .sandbox\n  ocp grep --text \"...\" --sandbox .sandbox\n  ocp glob --pattern \"*.txt\" --sandbox .sandbox\n  ocp git status --sandbox .sandbox\n  ocp prove coding\n  ocp prove computer\n  ocp computer --sandbox .sandbox\n  ocp computer --sandbox .sandbox takeover\n  ocp computer --sandbox .sandbox return\n  ocp computer --sandbox .sandbox qa\n\nThe Computer tab shows the sandbox desktop status and the last frame path. There is no live pixel stream in this build. takeover hands the browser to you. return hands it back to the partner. ocp computer qa checks the frame file and does not open a page.\nOrchestration owns the session plan. After it accepts the plan, it invokes the sandbox write bridge. The transcript says Write path: orchestration. Delete and rename use the same bridge when the gateway drove the turn. When the gateway is down, the transcript says Write path: local sandbox. fs_write, apply_patch, and sessions_spawn stay blocked.\nThe computer agent opens a browser only with --computer-execute or OCP_COMPUTER_EXECUTE=1, and only after an Approve card when the sandbox has PARTNER.md. It opens a named http(s) URL, reads the screen, and types into one selector when you ask. A live stream is not in this build.\n",
   );
   return command === undefined || command === "--help" || command === "-h" ? 0 : 2;
 }

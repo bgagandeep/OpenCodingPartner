@@ -7,7 +7,7 @@ import test from "node:test";
 import { routeWithPredict, type ManagerPlan } from "@opencodingpartner/policy";
 import { grepSandbox, listSandboxDir, writeSandboxFile } from "@opencodingpartner/workers";
 import { DEMO_MESSAGE, applySwarmManifest, clearSessionMemory, coreIsOpen, createRoutine, fireDueRoutines, fireEvent, isolatePartner, listRoutines, parseSwarmManifest, partnerContainerArgv, pauseRoutine, readPackaging, runChatTurn, runDemo, slackTurn, startPartnerContainer, stopPartnerContainer } from "./index.js";
-import { allowComputerUse, computerTabText } from "./computer-tab.js";
+import { allowComputerUse, captureComputerFrame, computerTabText } from "./computer-tab.js";
 import { REVIEW_HOLD_CODING_CAP, rolesUnderReviewHold } from "./sdlc.js";
 
 test("chat stands up agents, writes, checks QA, gates security, and records GTM", async () => {
@@ -2203,6 +2203,33 @@ test("fleet start dry-run and a missing Docker do not claim a running container"
     });
     assert.equal(stopped.ok, true);
     assert.match(await computerTabText(path.join(root, ".ocp/fleet/coding")), /Container: stopped/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("computer capture writes a PNG frame and reports its time", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-frame-"));
+  try {
+    const png = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]);
+    await mkdir(path.join(root, "gtm"), { recursive: true });
+    await writeFile(path.join(root, "gtm", "last-run.json"), `${JSON.stringify({ url: "https://example.com", screenshot: "" })}\n`);
+    const shot = await captureComputerFrame(root, { capture: async () => png });
+    assert.equal(shot.ok, true);
+    const bytes = await readFile(path.join(root, "gtm", "last-frame.png"));
+    assert.equal(bytes[0], 0x89);
+    assert.equal(bytes[1], 0x50);
+    const tab = await computerTabText(root);
+    assert.match(tab, /Last frame: gtm\/last-frame.png/);
+    assert.match(tab, /Frame time: \d{4}-/);
+    const missing = await captureComputerFrame(root);
+    assert.equal(missing.ok, false);
+    assert.match(missing.text, /Browser is missing/);
+    const empty = await mkdtemp(path.join(tmpdir(), "ocp-frame-empty-"));
+    const none = await captureComputerFrame(empty);
+    assert.match(none.text, /No page is open/);
+    await assert.rejects(readFile(path.join(empty, "gtm", "last-frame.png")));
+    await rm(empty, { recursive: true, force: true });
   } finally {
     await rm(root, { recursive: true, force: true });
   }

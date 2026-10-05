@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fleetIds, readPartnerIdentity } from "./fleet.js";
 
@@ -74,12 +74,88 @@ async function containerState(sandboxRoot: string): Promise<string> {
   return "not started";
 }
 
-async function lastFrame(sandboxRoot: string): Promise<string> {
+async function lastRun(sandboxRoot: string): Promise<{ url: string; screenshot: string; body: Record<string, unknown> } | undefined> {
   try {
-    const body = JSON.parse(await readFile(path.join(sandboxRoot, "gtm", "last-run.json"), "utf8")) as { screenshot?: string };
-    return body.screenshot?.trim() || "none";
+    const body = JSON.parse(await readFile(path.join(sandboxRoot, "gtm", "last-run.json"), "utf8")) as Record<string, unknown>;
+    return {
+      url: typeof body.url === "string" ? body.url : "",
+      screenshot: typeof body.screenshot === "string" ? body.screenshot.trim() : "",
+      body,
+    };
   } catch {
-    return "none";
+    return undefined;
+  }
+}
+
+async function lastFrame(sandboxRoot: string): Promise<string> {
+  const run = await lastRun(sandboxRoot);
+  return run?.screenshot || "none";
+}
+
+async function frameTime(sandboxRoot: string, relativePath: string): Promise<string> {
+  if (relativePath === "none") return "none";
+  try {
+    const info = await stat(path.join(sandboxRoot, relativePath));
+    return info.mtime.toISOString();
+  } catch {
+    return "missing";
+  }
+}
+
+export type FrameCapturer = (url: string) => Promise<Uint8Array>;
+
+async function playwrightCapture(url: string): Promise<Uint8Array> {
+  const { playwrightBrowserDriver } = await import("@opencodingpartner/workers");
+  const session = await playwrightBrowserDriver().start();
+  try {
+    const screen = await session.open(url);
+    return screen.screenshotPng;
+  } finally {
+    await session.close();
+  }
+}
+
+/** Write gtm/last-frame.png from the open page. A missing browser is an error, not a blank image. */
+export async function captureComputerFrame(
+  sandboxRoot: string,
+  options: { capture?: FrameCapturer } = {},
+): Promise<{ ok: boolean; text: string }> {
+  const run = await lastRun(sandboxRoot);
+  const url = run?.url ?? "";
+  if (!url.startsWith("http://") && !url.startsWith("https://")) {
+    return { ok: false, text: "No page is open. Open a URL first. No frame was written." };
+  }
+  let png: Uint8Array;
+  try {
+    png = await (options.capture ?? playwrightCapture)(url);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "browser missing";
+    return { ok: false, text: `Browser is missing. No frame was written. ${message}` };
+  }
+  if (png.length < 8 || png[0] !== 0x89 || png[1] !== 0x50 || png[2] !== 0x4e || png[3] !== 0x47) {
+    return { ok: false, text: "Capture did not return a PNG. No frame was written." };
+  }
+  await mkdir(path.join(sandboxRoot, "gtm"), { recursive: true });
+  await writeFile(path.join(sandboxRoot, "gtm", "last-frame.png"), png);
+  const next = { ...(run?.body ?? {}), url, screenshot: "gtm/last-frame.png" };
+  await writeFile(path.join(sandboxRoot, "gtm", "last-run.json"), `${JSON.stringify(next, null, 2)}\n`);
+  const when = await frameTime(sandboxRoot, "gtm/last-frame.png");
+  return { ok: true, text: `Last frame: gtm/last-frame.png\nFrame time: ${when}` };
+}
+
+/** Point the Computer tab at gtm/last-frame.png when a step screenshot already exists. */
+export async function publishLastFrame(sandboxRoot: string): Promise<void> {
+  const run = await lastRun(sandboxRoot);
+  const rel = run?.screenshot ?? "";
+  if (!rel || rel === "gtm/last-frame.png") return;
+  try {
+    const bytes = await readFile(path.join(sandboxRoot, rel));
+    await mkdir(path.join(sandboxRoot, "gtm"), { recursive: true });
+    await writeFile(path.join(sandboxRoot, "gtm", "last-frame.png"), bytes);
+    const next = { ...(run?.body ?? {}), screenshot: "gtm/last-frame.png" };
+    await writeFile(path.join(sandboxRoot, "gtm", "last-run.json"), `${JSON.stringify(next, null, 2)}\n`);
+  } catch {
+    // Keep the step path already recorded.
   }
 }
 
@@ -87,6 +163,7 @@ async function lastFrame(sandboxRoot: string): Promise<string> {
 export async function computerTabText(sandboxRoot: string): Promise<string> {
   const state = await readComputerTab(sandboxRoot);
   const frame = await lastFrame(sandboxRoot);
+  const when = await frameTime(sandboxRoot, frame);
   const identity = await readPartnerIdentity(sandboxRoot);
   const lines = ["Computer tab"];
   if (identity) {
@@ -97,6 +174,13 @@ export async function computerTabText(sandboxRoot: string): Promise<string> {
   } else {
     lines.push("Desktop: sandbox");
   }
-  lines.push(`Control: ${state.control}`, `Status: ${state.status}`, `Container: ${await containerState(sandboxRoot)}`, `Last frame: ${frame}`, "Live stream: not in this build");
+  lines.push(
+    `Control: ${state.control}`,
+    `Status: ${state.status}`,
+    `Container: ${await containerState(sandboxRoot)}`,
+    `Last frame: ${frame}`,
+    `Frame time: ${when}`,
+    "Live stream: not in this build",
+  );
   return lines.join("\n");
 }

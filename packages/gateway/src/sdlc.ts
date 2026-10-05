@@ -245,9 +245,32 @@ export function formatApproveQueueJson(items: readonly ApproveQueueItem[]): stri
   return `${JSON.stringify(items, null, 2)}\n`;
 }
 
-export function approveDoctorLine(pending: number): string {
+/** Count pending cards and name plan or computer. This does not print the request or decide a card. */
+export function approveDoctorLine(pending: number, items: readonly Pick<ApproveQueueItem, "partner" | "kind">[] = []): string {
   if (pending === 0) return "green Approvals: none pending. This check does not decide a card.";
-  return `yellow Approvals: ${pending} pending. This check does not decide a card.`;
+  const counts = new Map<string, { plan: number; computer: number }>();
+  const order: string[] = [];
+  for (const item of items) {
+    if (item.kind !== "plan" && item.kind !== "computer") continue;
+    if (!counts.has(item.partner)) {
+      counts.set(item.partner, { plan: 0, computer: 0 });
+      order.push(item.partner);
+    }
+    const row = counts.get(item.partner);
+    if (!row) continue;
+    row[item.kind] += 1;
+  }
+  const bits: string[] = [];
+  for (const partner of order) {
+    const row = counts.get(partner);
+    if (!row) continue;
+    const parts: string[] = [];
+    if (row.plan > 0) parts.push(`${row.plan} plan`);
+    if (row.computer > 0) parts.push(`${row.computer} computer`);
+    if (parts.length > 0) bits.push(`${partner} ${parts.join(", ")}`);
+  }
+  const named = bits.length > 0 ? ` ${bits.join(". ")}.` : "";
+  return `yellow Approvals: ${pending} pending.${named} This check does not decide a card.`;
 }
 
 export interface ReviewHold {

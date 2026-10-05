@@ -9,7 +9,7 @@ import { applySandboxTodo, grepSandbox, listSandboxDir, writeSandboxFile } from 
 import { DEMO_MESSAGE, applySwarmManifest, doctorSwarmLine, approveDoctorLine, clearSessionMemory, coreIsOpen, createRoutine, deliverSlackEvent, deliverTelegramUpdate, doctorPlanLine, fireDueRoutines, fireEvent, formatApproveQueue, formatFleetStatus, formatFleetStatusJson, formatReviewHolds, formatTodoQueue, isolatePartner, listApproveQueue, listReviewHolds, listRoutines, listTodoQueue, parseSwarmManifest, partnerAgreementDoctorLine, partnerAgreementStatus, partnerContainerArgv, pauseRoutine, readFleetStatus, readPackaging, reviewHoldDoctorLine, runChatTurn, todoDoctorLine, runDemo, slackSignature, slackTurn, startPartnerContainer, stopPartnerContainer, verifySlackRequest, verifyTelegramRequest } from "./index.js";
 import { allowComputerUse, captureComputerFrame, checkComputerFrame, computerTabText, doctorComputerControlLine, doctorComputerFrameLine, doctorComputerRunLine, doctorComputerStatusLine } from "./computer-tab.js";
 import { doctorSharedMountLine } from "./fleet.js";
-import { doctorLastCheckLine } from "./last-check.js";
+import { doctorLastCheckLine, runAllowedCheck } from "./last-check.js";
 import { doctorLastQaLine } from "./last-qa.js";
 import { doctorLastWriteLine } from "./last-write.js";
 import { doctorRoutineLine } from "./routines.js";
@@ -3008,6 +3008,47 @@ test("a coding check records its exit code and doctor does not print the output"
     assert.match(line, /does not print its output/);
     assert.doesNotMatch(line, /password=hunter2/);
     assert.doesNotMatch(line, /src\/a.test.ts/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("ocp check runs node --test and stores the exit code without the output", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-check-run-"));
+  try {
+    await writeFile(
+      path.join(root, "add.test.mjs"),
+      "import test from \"node:test\";\nimport assert from \"node:assert/strict\";\ntest(\"adds\", () => { assert.equal(1 + 1, 2); });\n",
+    );
+    const passed = await runAllowedCheck(root, "node");
+    assert.equal(passed.ok, true);
+    assert.match(passed.detail, /node --test exit 0/);
+    const saved = JSON.parse(await readFile(path.join(root, ".ocp/last-check.json"), "utf8")) as { code: number; kind: string };
+    assert.equal(saved.code, 0);
+    assert.equal(saved.kind, "node --test");
+    assert.equal(Object.keys(saved).sort().join(","), "code,kind");
+    await writeFile(
+      path.join(root, "add.test.mjs"),
+      "import test from \"node:test\";\nimport assert from \"node:assert/strict\";\ntest(\"adds\", () => { assert.equal(1, 2, \"password=hunter2\"); });\n",
+    );
+    const failed = await runAllowedCheck(root, "node");
+    assert.equal(failed.ok, false);
+    assert.match(failed.detail, /node --test exit 1/);
+    assert.match(failed.detail, /not equal|fail/i);
+    assert.doesNotMatch(failed.detail, /hunter2/);
+    const again = JSON.parse(await readFile(path.join(root, ".ocp/last-check.json"), "utf8")) as { code: number; kind: string };
+    assert.equal(again.code, 1);
+    assert.doesNotMatch(JSON.stringify(again), /hunter2/);
+    assert.doesNotMatch(JSON.stringify(again), /not equal/);
+    const doctor = await doctorLastCheckLine(root);
+    assert.match(doctor, /yellow Last check: session node --test exit 1/);
+    assert.match(doctor, /does not print its output/);
+    assert.doesNotMatch(doctor, /hunter2/);
+    const refused = await runAllowedCheck(root, "git");
+    assert.equal(refused.code, 2);
+    assert.match(refused.detail, /Usage: ocp check/);
+    const kept = JSON.parse(await readFile(path.join(root, ".ocp/last-check.json"), "utf8")) as { code: number };
+    assert.equal(kept.code, 1);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

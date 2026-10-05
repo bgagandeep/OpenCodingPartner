@@ -35,4 +35,4 @@ Write rules in `PARTNER.rules` at the sandbox root, or in `.ocp/rules`. The codi
 
 ## Self-verify
 
-The named check is `node --test`, run in the sandbox with no shell. The transcript reports the exit code. The coding worker does not invent a pass.
+The named check is `node --test`, run in the sandbox with no shell. The transcript reports the exit code. The coding worker does not invent a pass. `ocp check` runs that check, or `pnpm test` or `tsc --noEmit`, in this workspace and records the exit code. The output is not stored. A secret line is not printed.

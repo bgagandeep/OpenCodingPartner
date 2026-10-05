@@ -28,11 +28,13 @@ import {
 import { allowComputerUse, captureExecutedFrame, computerTabText, markComputerLive, readComputerTab } from "./computer-tab.js";
 export { captureComputerFrame, captureExecutedFrame, checkComputerFrame, checkComputerFrames, computerTabText, doctorComputerControlLine, doctorComputerFrameLine, doctorComputerRunLine, returnComputer, takeoverComputer } from "./computer-tab.js";
 export { doctorSharedMountLine, fleetDoctorLine, fleetIds, formatFleetStatus, formatFleetStatusJson, globShared, grepShared, isolatePartner, listShared, partnerContainerArgv, partnerWorkspace, readFleetStatus, readPartnerIdentity, readShared, sharedRequest } from "./fleet.js";
+export { doctorLastCheckLine, recordLastCheck } from "./last-check.js";
 export { startPartnerContainer, stopPartnerContainer } from "./fleet-run.js";
 export { createRoutine, fireDueRoutines, fireEvent, formatRoutineList, listRoutines, pauseRoutine, resumeRoutine } from "./routines.js";
 export { applySwarmManifest, parseSwarmManifest, validateSwarmManifest } from "./swarm-manifest.js";
 export { channelPartnerId, deliverSlackEvent, deliverTelegramUpdate, discordTurn, postSlackReply, postTelegramReply, slackCredentialStatus, slackSignature, slackTurn, telegramCredentialStatus, telegramTurn, verifySlackRequest, verifyTelegramRequest } from "./channels.js";
 import { globShared, grepShared, isolatePartner as openPartnerWorkspace, listShared, readShared, sharedRequest } from "./fleet.js";
+import { recordLastCheck } from "./last-check.js";
 import { noopAcpBackend, type AcpBackend } from "./acp.js";
 export { acpOptIn, formatSettings, noopAcpBackend } from "./acp.js";
 export { coreIsOpen, readPackaging } from "./packaging.js";
@@ -468,6 +470,7 @@ async function executeTurn(input: ChatTurnInput, session: SwarmSession, key: str
     const result = decision.allow
       ? await (input.checkExec ?? defaultCheckExec)([...argv], input.sandboxRoot)
       : { code: 1, stdout: "", stderr: decision.reason };
+    if (decision.allow) await recordLastCheck(input.sandboxRoot, argv, result.code);
     const mechanical = `QA ${qa?.pass === false ? "fail" : "pass"}. Self-verify node --test exit ${result.code}.`;
     await writeReviewSplit(input.sandboxRoot, mechanical);
     const verifyLine = `Self-verify: node --test (exit ${result.code}). Review: mechanical. Human intent and risk are not decided here.`;
@@ -934,6 +937,7 @@ async function applyToolReply(
           continue;
         }
         const result = await (input.checkExec ?? defaultCheckExec)(step.argv ?? [], input.sandboxRoot);
+        await recordLastCheck(input.sandboxRoot, step.argv ?? [], result.code);
         check = result;
         const detail = capRunOutput(result.stderr || result.stdout || "no output");
         const line = `Tool: run ${(step.argv ?? []).join(" ")} (exit ${result.code}${detail.endsWith("(truncated)") ? ", truncated" : ""})`;

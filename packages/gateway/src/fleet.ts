@@ -63,10 +63,7 @@ export async function fleetIds(workspace: string): Promise<string[]> {
   }
 }
 
-/**
- * Optional container start. This build does not run it.
- * The partner workspace is already isolated on disk.
- */
+/** Detached container command. The workspace and the session root are mounted. */
 export function partnerContainerArgv(sessionRoot: string, partnerId: string): string[] {
   const decision = partnerIdDecision(partnerId);
   if (!decision.allow) throw new Error(decision.reason);
@@ -75,6 +72,7 @@ export function partnerContainerArgv(sessionRoot: string, partnerId: string): st
   return [
     "docker",
     "run",
+    "-d",
     "--rm",
     "--name",
     `ocp-${partnerId}`,

@@ -64,6 +64,16 @@ export async function markComputerLive(sandboxRoot: string): Promise<void> {
   await writeComputerTab(sandboxRoot, state);
 }
 
+async function containerState(sandboxRoot: string): Promise<string> {
+  try {
+    const body = JSON.parse(await readFile(path.join(sandboxRoot, ".ocp", "container.json"), "utf8")) as { state?: string };
+    if (body.state === "running" || body.state === "stopped") return body.state;
+  } catch {
+    // No container has been started.
+  }
+  return "not started";
+}
+
 async function lastFrame(sandboxRoot: string): Promise<string> {
   try {
     const body = JSON.parse(await readFile(path.join(sandboxRoot, "gtm", "last-run.json"), "utf8")) as { screenshot?: string };
@@ -87,6 +97,6 @@ export async function computerTabText(sandboxRoot: string): Promise<string> {
   } else {
     lines.push("Desktop: sandbox");
   }
-  lines.push(`Control: ${state.control}`, `Status: ${state.status}`, `Last frame: ${frame}`, "Live stream: not in this build");
+  lines.push(`Control: ${state.control}`, `Status: ${state.status}`, `Container: ${await containerState(sandboxRoot)}`, `Last frame: ${frame}`, "Live stream: not in this build");
   return lines.join("\n");
 }

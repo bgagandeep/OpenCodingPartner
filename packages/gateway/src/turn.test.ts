@@ -1982,6 +1982,71 @@ test("approve cards deny or redirect, and partner rules block a request", async 
   }
 });
 
+test("a partner computer waits for Approve, then a takeover blocks the browser", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-computer-gate-"));
+  const png = Uint8Array.from([137, 80, 78, 71]);
+  try {
+    await writeFile(path.join(root, "PARTNER.md"), "partner\n");
+    let opened = 0;
+    const driver = {
+      async start() {
+        opened += 1;
+        return {
+          async open() {
+            return { title: "Example", text: "page", screenshotPng: png };
+          },
+          async readScreen() {
+            return { title: "Example", text: "page", screenshotPng: png };
+          },
+          async typeInto() {
+            return { title: "Example", text: "page", screenshotPng: png };
+          },
+          async close() {
+            return undefined;
+          },
+        };
+      },
+    };
+    const held = await runChatTurn({
+      message: "sell this page. Open https://example.com",
+      sandboxRoot: root,
+      computerExecute: true,
+      browserDriver: driver,
+    });
+    assert.equal(opened, 0);
+    assert.match(held.transcript, /Approve card computer-/);
+    assert.match(held.transcript, /Computer tab/);
+    assert.match(held.transcript, /waiting for Approve/);
+    assert.equal(held.computer?.actions.every((action) => action.executed === false), true);
+
+    await runChatTurn({ message: "approve", sandboxRoot: root });
+    await runChatTurn({ message: "approve the browser", sandboxRoot: root });
+    const ran = await runChatTurn({
+      message: "sell this page. Open https://example.com/live",
+      sandboxRoot: root,
+      computerExecute: true,
+      browserDriver: driver,
+    });
+    assert.equal(opened, 1);
+    assert.match(ran.transcript, /Last frame: gtm\//);
+    assert.equal(ran.computer?.actions.some((action) => action.executed === true), true);
+
+    const { takeoverComputer } = await import("./computer-tab.js");
+    await takeoverComputer(root);
+    const blocked = await runChatTurn({
+      message: "sell this page. Open https://example.com/held",
+      sandboxRoot: root,
+      computerExecute: true,
+      browserDriver: driver,
+    });
+    assert.equal(opened, 1);
+    assert.match(blocked.transcript, /human has control/);
+    assert.equal(blocked.computer?.actions.every((action) => action.executed === false), true);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("a failed partner check returns to intent and holds one coding worker", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "ocp-partner-fail-"));
   try {

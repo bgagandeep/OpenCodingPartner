@@ -21,9 +21,12 @@ import {
   returnToIntent,
   reviewHoldOn,
   rolesUnderReviewHold,
+  queueComputerCard,
   writePlanChain,
   writeReviewSplit,
 } from "./sdlc.js";
+import { allowComputerUse, computerTabText, markComputerLive, readComputerTab } from "./computer-tab.js";
+export { computerTabText, returnComputer, takeoverComputer } from "./computer-tab.js";
 import {
   applyUnifiedDiff,
   commandDecision,
@@ -198,9 +201,10 @@ async function executeTurn(input: ChatTurnInput, session: SwarmSession, key: str
   if (openclawDrove) plan = { ...plan, source: "openclaw" };
   if (await partnerAgreementOn(input.sandboxRoot)) {
     const verb = approveVerb(input.message);
-    if (verb === "approve") await decidePlanCard(input.sandboxRoot, "approved");
+    const approved = verb === "approve" ? await decidePlanCard(input.sandboxRoot, "approved") : undefined;
+    if (approved?.kind === "computer") await allowComputerUse(input.sandboxRoot);
     const pending = verb === "deny" || verb === "redirect" ? await pendingPlanCard(input.sandboxRoot) : undefined;
-    if ((verb === "approve" && (await acceptPlan(input.sandboxRoot))) || pending) {
+    if ((approved?.kind === "plan" && (await acceptPlan(input.sandboxRoot))) || pending) {
       if (!plan.roles.includes("coding")) {
         plan = { ...plan, roles: ["coding", "qa", "security", "computer"] };
       }
@@ -492,7 +496,19 @@ async function executeTurn(input: ChatTurnInput, session: SwarmSession, key: str
   }
 
   if (agents.some((agent) => agent.role === "computer")) {
-    const execute = input.computerExecute === true;
+    let execute = input.computerExecute === true;
+    let gateNote = "";
+    if (await partnerAgreementOn(input.sandboxRoot)) {
+      const tab = await readComputerTab(input.sandboxRoot);
+      if (tab.control === "human") {
+        execute = false;
+        gateNote = "Computer tab: human has control. The partner did not run the browser. Use the Computer tab return command to hand it back.";
+      } else if (input.computerExecute === true && !tab.approved) {
+        await queueComputerCard(input.sandboxRoot, input.message.replace(/\s+/g, " ").trim().slice(0, 400));
+        execute = false;
+        gateNote = `Computer tab: waiting for Approve before the browser starts.\n${await formatApproveCards(input.sandboxRoot)}`;
+      }
+    }
     computer = await swarm.dispatch("computer", () =>
       execute || pageClaim(input.message)
         ? executeComputerVisit({
@@ -531,6 +547,9 @@ async function executeTurn(input: ChatTurnInput, session: SwarmSession, key: str
       claimQa = finishFixLoop(claimQa, retries);
       qa = qa ? { pass: qa.pass && claimQa.pass, summary: `${qa.summary}; ${claimQa.summary}` } : claimQa;
     }
+    if (execute) await markComputerLive(input.sandboxRoot);
+    const tabLine = await computerTabText(input.sandboxRoot);
+    computer.note = [computer.note, gateNote, tabLine].filter((line) => line && line.length > 0).join("\n");
   }
 
   const result: ChatTurnResult = {

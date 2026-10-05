@@ -17,6 +17,10 @@ An explicit create-file message still writes that one file. It is not an open ed
 
 While `.ocp/sdlc/review-hold` exists, orchestration stands up one coding worker. The board session already runs one chat turn at a time. The ceiling is one coding worker during the hold, not a one-worker product. The early-test cap of 8 agents stays temporary and is a different limit.
 
+## Computer tab
+
+`ocp computer` shows the sandbox desktop: who has control, and the last frame path. There is no live pixel stream in this build. `ocp computer takeover` gives you the mouse and keyboard handoff. The partner does not run the browser while you hold it. `ocp computer return` gives control back. Starting the browser waits on an Approve card.
+
 ## Partner rules
 
 Write rules in `PARTNER.rules` at the sandbox root, or in `.ocp/rules`. The coding worker sees both in its prompt. A line `block: text` stops the turn when the message contains that text.

@@ -310,7 +310,8 @@ async function runProductTurn(message: string, sandbox: string, computerExecute:
     stack = undefined;
   }
   const bins = await discoverStack({ env: process.env, repoRoot, stack });
-  const bridge = await startSandboxWriteBridge(sandbox);
+  const writeRoot = partnerId ? await isolatePartner(sandbox, partnerId) : sandbox;
+  const bridge = await startSandboxWriteBridge(writeRoot);
   const env = { ...process.env, OCP_WRITE_BRIDGE_URL: bridge.url };
   try {
   const input: ChatTurnInput = {
@@ -323,13 +324,13 @@ async function runProductTurn(message: string, sandbox: string, computerExecute:
     acp: await acpOptIn(sandbox, process.env),
     browserDriver: computerExecute ? playwrightBrowserDriver() : undefined,
     orchestration: (plan) => sendOrchestrationTurn(message, { env, bins }, plan),
-    openclawWrite: (relativePath, content) => writeViaOpenClaw({ env, bins }, sandbox, relativePath, content),
-    openclawDelete: (relativePath) => deleteViaOpenClaw({ env, bins }, sandbox, relativePath),
-    openclawMkdir: (relativePath) => mkdirViaOpenClaw({ env, bins }, sandbox, relativePath),
-    openclawRmdir: (relativePath) => rmdirViaOpenClaw({ env, bins }, sandbox, relativePath),
-    openclawRename: (fromPath, toPath) => renameViaOpenClaw({ env, bins }, sandbox, fromPath, toPath),
-    openclawCopy: (fromPath, toPath) => copyViaOpenClaw({ env, bins }, sandbox, fromPath, toPath),
-    openclawAppend: (relativePath, content) => appendViaOpenClaw({ env, bins }, sandbox, relativePath, content),
+    openclawWrite: (relativePath, content) => writeViaOpenClaw({ env, bins }, writeRoot, relativePath, content),
+    openclawDelete: (relativePath) => deleteViaOpenClaw({ env, bins }, writeRoot, relativePath),
+    openclawMkdir: (relativePath) => mkdirViaOpenClaw({ env, bins }, writeRoot, relativePath),
+    openclawRmdir: (relativePath) => rmdirViaOpenClaw({ env, bins }, writeRoot, relativePath),
+    openclawRename: (fromPath, toPath) => renameViaOpenClaw({ env, bins }, writeRoot, fromPath, toPath),
+    openclawCopy: (fromPath, toPath) => copyViaOpenClaw({ env, bins }, writeRoot, fromPath, toPath),
+    openclawAppend: (relativePath, content) => appendViaOpenClaw({ env, bins }, writeRoot, relativePath, content),
   };
   if (bins.layaPython) {
     const pythonBin = bins.layaPython;

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { createServer } from "node:http";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -249,6 +250,66 @@ test("ocp computer qa prints pass or fail and does not open a page", async () =>
     assert.match(captured, /The frame is a PNG/);
   } finally {
     process.stdout.write = original;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a partner orchestration write lands in the partner workspace", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "ocp-partner-write-"));
+  let captured = "";
+  const original = process.stdout.write.bind(process.stdout);
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    captured += String(chunk);
+    return true;
+  }) as typeof process.stdout.write;
+  const previous = process.env.OPENCLAW_GATEWAY_URL;
+  const server = createServer(async (req, res) => {
+    if (req.url === "/healthz") {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end('{"ok":true}');
+      return;
+    }
+    const chunks: Buffer[] = [];
+    for await (const chunk of req) chunks.push(chunk as Buffer);
+    const body = JSON.parse(chunks.length === 0 ? "{}" : Buffer.concat(chunks).toString("utf8")) as {
+      tool?: string;
+      args?: { bridgeUrl?: string; relativePath?: string; content?: string };
+    };
+    if (body.tool === "ocp_sandbox_write" && body.args?.bridgeUrl) {
+      const forwarded = await fetch(body.args.bridgeUrl, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ relativePath: body.args.relativePath, content: body.args.content }),
+      });
+      res.writeHead(forwarded.status, { "content-type": "application/json" });
+      res.end(await forwarded.text());
+      return;
+    }
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end('{"ok":true}');
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+  const port = (server.address() as { port: number }).port;
+  process.env.OPENCLAW_GATEWAY_URL = `http://127.0.0.1:${port}`;
+  try {
+    const code = await main([
+      "chat",
+      "--sandbox",
+      root,
+      "--partner",
+      "coding",
+      "Use the coding worker to create hello.txt with content:\nfrom partner\n",
+    ]);
+    assert.equal(code, 0);
+    assert.equal(readFileSync(path.join(root, ".ocp/fleet/coding/hello.txt"), "utf8"), "from partner\n");
+    assert.throws(() => readFileSync(path.join(root, "hello.txt"), "utf8"));
+    assert.match(captured, /Write path: orchestration/);
+    assert.doesNotMatch(captured, /did not land the file/);
+  } finally {
+    if (previous === undefined) delete process.env.OPENCLAW_GATEWAY_URL;
+    else process.env.OPENCLAW_GATEWAY_URL = previous;
+    process.stdout.write = original;
+    await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
     rmSync(root, { recursive: true, force: true });
   }
 });

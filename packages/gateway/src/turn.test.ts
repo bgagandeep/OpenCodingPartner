@@ -2263,6 +2263,23 @@ test("a missing browser fails capture and computer-frame in the transcript", asy
   }
 });
 
+test("the same message for two partners is two turns, and one partner still replays", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-partner-replay-"));
+  try {
+    const coding = await runChatTurn({ message: "hello", sandboxRoot: root, partnerId: "coding" });
+    const qa = await runChatTurn({ message: "hello", sandboxRoot: root, partnerId: "qa" });
+    assert.equal(coding.replayed, false);
+    assert.equal(qa.replayed, false);
+    assert.match(await readFile(path.join(root, ".ocp/fleet/coding/.ocp/identity.json"), "utf8"), /"id": "coding"/);
+    assert.match(await readFile(path.join(root, ".ocp/fleet/qa/.ocp/identity.json"), "utf8"), /"id": "qa"/);
+    const again = await runChatTurn({ message: "hello", sandboxRoot: root, partnerId: "coding" });
+    assert.equal(again.replayed, true);
+    assert.match(again.transcript, /Replayed the same turn/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("a partner turn writes in its own workspace, not the shared session root", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "ocp-fleet-"));
   try {

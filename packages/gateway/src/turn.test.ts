@@ -11,6 +11,7 @@ import { allowComputerUse, captureComputerFrame, checkComputerFrame, computerTab
 import { doctorSharedMountLine } from "./fleet.js";
 import { doctorLastCheckLine } from "./last-check.js";
 import { doctorLastQaLine } from "./last-qa.js";
+import { doctorLastWriteLine } from "./last-write.js";
 import { doctorRoutineLine } from "./routines.js";
 import { REVIEW_HOLD_CODING_CAP, rolesUnderReviewHold } from "./sdlc.js";
 
@@ -2779,6 +2780,63 @@ test("fleet start dry-run and a missing Docker do not claim a running container"
     });
     assert.equal(stopped.ok, true);
     assert.match(await computerTabText(path.join(root, ".ocp/fleet/coding")), /Container: stopped/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a landed write records orchestration or local and doctor does not print the path", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-last-write-"));
+  try {
+    assert.match(await doctorLastWriteLine(root), /green Last write: none/);
+    await runChatTurn({
+      message: "Use the coding worker to create note.txt with content:\nnote\n",
+      sandboxRoot: root,
+    });
+    assert.deepEqual(JSON.parse(await readFile(path.join(root, ".ocp/last-write.json"), "utf8")), { via: "local" });
+    const local = await doctorLastWriteLine(root);
+    assert.match(local, /yellow Last write: session local/);
+    assert.match(local, /does not print a path/);
+    assert.doesNotMatch(local, /note\.txt/);
+    await runChatTurn({
+      message: "Stand up a security agent and a coding agent.\nUse Grok Build to create ../secret.txt with content:\npassword=hunter2\n",
+      sandboxRoot: root,
+    });
+    assert.deepEqual(JSON.parse(await readFile(path.join(root, ".ocp/last-write.json"), "utf8")), { via: "local" });
+    assert.doesNotMatch(await doctorLastWriteLine(root), /hunter2/);
+    await runChatTurn({ message: "hello", sandboxRoot: root });
+    assert.deepEqual(JSON.parse(await readFile(path.join(root, ".ocp/last-write.json"), "utf8")), { via: "local" });
+    const partner = await runChatTurn({
+      message: "Use the coding worker to create hello.txt with content:\nhello\n",
+      sandboxRoot: root,
+      partnerId: "coding",
+      orchestration: async () => ({ state: "ran", driver: "openclaw", detail: "Session agent:board:main accepted the plan." }),
+      openclawWrite: async (relativePath, bytes) => {
+        await writeSandboxFile(path.join(root, ".ocp/fleet/coding"), relativePath, bytes);
+        return { ok: true, detail: "wrote" };
+      },
+    });
+    assert.equal(partner.coding?.via, "openclaw-write");
+    assert.deepEqual(JSON.parse(await readFile(path.join(root, ".ocp/fleet/coding/.ocp/last-write.json"), "utf8")), { via: "orchestration" });
+    const mixed = await doctorLastWriteLine(root);
+    assert.match(mixed, /yellow Last write: session local\. coding orchestration/);
+    assert.doesNotMatch(mixed, /hello/);
+    await runChatTurn({
+      message: "Use the coding worker to create hello.txt with content:\nhello\n",
+      sandboxRoot: root,
+      orchestration: async () => ({ state: "ran", driver: "openclaw", detail: "Session agent:board:main accepted the plan." }),
+      openclawWrite: async (relativePath, bytes) => {
+        await writeSandboxFile(root, relativePath, bytes);
+        return { ok: true, detail: "wrote" };
+      },
+    });
+    const ready = await doctorLastWriteLine(root);
+    assert.match(ready, /green Last write: session orchestration\. coding orchestration/);
+    assert.doesNotMatch(ready, /hello\.txt/);
+    await writeFile(path.join(root, ".ocp/fleet/coding/.ocp/last-write.json"), `${JSON.stringify({ via: "password=hunter2" })}\n`);
+    const broken = await doctorLastWriteLine(root);
+    assert.match(broken, /yellow Last write: coding file could not be read/);
+    assert.doesNotMatch(broken, /hunter2/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

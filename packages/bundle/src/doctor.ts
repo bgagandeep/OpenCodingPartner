@@ -24,6 +24,7 @@ export interface DoctorDeps {
   checkLine?: string;
   qaLine?: string;
   routineLine?: string;
+  writeLine?: string;
 }
 
 export interface DoctorReport {
@@ -54,6 +55,7 @@ export async function runDoctor(deps: DoctorDeps): Promise<DoctorReport> {
   lines.push(deps.checkLine ?? "green Last check: none. This check does not run a command and does not print its output.");
   lines.push(deps.qaLine ?? "green Last QA: none. This check does not review files and does not print the QA summary.");
   lines.push(deps.routineLine ?? "green Routines: none. This check does not run a routine and does not print its message.");
+  lines.push(deps.writeLine ?? "green Last write: none. This check does not write a file and does not print a path.");
   lines.push("Prove-it: pnpm exec ocp chat --sandbox .sandbox \"Use the coding worker to create hello.txt with content:");
   lines.push("hello");
   lines.push("\"");

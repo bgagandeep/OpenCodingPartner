@@ -7,7 +7,7 @@ import test from "node:test";
 import { routeWithPredict, type ManagerPlan } from "@opencodingpartner/policy";
 import { applySandboxTodo, grepSandbox, listSandboxDir, writeSandboxFile } from "@opencodingpartner/workers";
 import { DEMO_MESSAGE, applySwarmManifest, doctorSwarmLine, approveDoctorLine, clearSessionMemory, coreIsOpen, createRoutine, deliverSlackEvent, deliverTelegramUpdate, doctorPlanLine, fireDueRoutines, fireEvent, formatApproveQueue, formatFleetStatus, formatFleetStatusJson, formatReviewHolds, formatTodoQueue, isolatePartner, listApproveQueue, listReviewHolds, listRoutines, listTodoQueue, parseSwarmManifest, partnerAgreementDoctorLine, partnerAgreementStatus, partnerContainerArgv, pauseRoutine, readFleetStatus, readPackaging, reviewHoldDoctorLine, runChatTurn, todoDoctorLine, runDemo, slackSignature, slackTurn, startPartnerContainer, stopPartnerContainer, verifySlackRequest, verifyTelegramRequest } from "./index.js";
-import { allowComputerUse, captureComputerFrame, checkComputerFrame, computerTabText, doctorComputerControlLine, doctorComputerFrameLine, doctorComputerRunLine } from "./computer-tab.js";
+import { allowComputerUse, captureComputerFrame, checkComputerFrame, computerTabText, doctorComputerControlLine, doctorComputerFrameLine, doctorComputerRunLine, doctorComputerStatusLine } from "./computer-tab.js";
 import { doctorSharedMountLine } from "./fleet.js";
 import { doctorLastCheckLine } from "./last-check.js";
 import { doctorLastQaLine } from "./last-qa.js";
@@ -3030,6 +3030,36 @@ test("doctor names a shared mount that does not point at this session", async ()
     assert.match(wrong, /yellow Shared mount: coding does not point at this session/);
     assert.match(wrong, /does not copy files/);
     assert.doesNotMatch(wrong, /elsewhere-secret/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("doctor names a live browser flag and does not start the browser", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-doctor-status-"));
+  try {
+    const idle = await doctorComputerStatusLine(root);
+    assert.match(idle, /green Computer status: idle/);
+    assert.match(idle, /does not start the browser/);
+    assert.match(idle, /Live stream is not in this build/);
+    await mkdir(path.join(root, ".ocp"), { recursive: true });
+    const liveFile = `${JSON.stringify({ desktop: "sandbox", control: "partner", approved: false, status: "live", url: "https://example.com/?token=password=hunter2" })}\n`;
+    await writeFile(path.join(root, ".ocp/computer.json"), liveFile);
+    const live = await doctorComputerStatusLine(root);
+    assert.match(live, /yellow Computer status: the session is live/);
+    assert.doesNotMatch(live, /hunter2/);
+    assert.equal(await readFile(path.join(root, ".ocp/computer.json"), "utf8"), liveFile);
+    await isolatePartner(root, "coding");
+    await writeFile(
+      path.join(root, ".ocp/fleet/coding/.ocp/computer.json"),
+      `${JSON.stringify({ status: "live" })}\n`,
+    );
+    const both = await doctorComputerStatusLine(root);
+    assert.match(both, /yellow Computer status: the session is live\. coding is live/);
+    await writeFile(path.join(root, ".ocp/fleet/coding/.ocp/computer.json"), `${JSON.stringify({ status: "password=hunter2" })}\n`);
+    const broken = await doctorComputerStatusLine(root);
+    assert.match(broken, /yellow Computer status: coding file could not be read/);
+    assert.doesNotMatch(broken, /hunter2/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

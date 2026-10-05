@@ -15,6 +15,7 @@ export interface DoctorDeps {
   frameLine?: string;
   dockerLine?: string;
   reviewLine?: string;
+  agreementLine?: string;
 }
 
 export interface DoctorReport {
@@ -37,6 +38,7 @@ export async function runDoctor(deps: DoctorDeps): Promise<DoctorReport> {
   lines.push(deps.frameLine ?? "yellow Computer frame: none at gtm/last-frame.png. This check does not start the browser.");
   lines.push(deps.dockerLine ?? dockerLine(false));
   lines.push(deps.reviewLine ?? "green Review hold: none. One coding worker is not forced.");
+  lines.push(deps.agreementLine ?? "yellow Partner agreement: PARTNER.md is missing. Edits do not wait for approve. This check does not copy the file or decide a card.");
   lines.push("Prove-it: pnpm exec ocp chat --sandbox .sandbox \"Use the coding worker to create hello.txt with content:");
   lines.push("hello");
   lines.push("\"");

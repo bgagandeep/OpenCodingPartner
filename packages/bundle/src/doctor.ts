@@ -45,6 +45,7 @@ export async function runDoctor(deps: DoctorDeps): Promise<DoctorReport> {
   lines.push(playwrightLine(deps.playwrightPresent === true));
   lines.push(slackLine(deps.env));
   lines.push(telegramLine(deps.env));
+  lines.push(discordLine(deps.env));
   lines.push(deps.fleetLine ?? "yellow Fleet: no partners. This check does not start containers. No telemetry is sent.");
   lines.push(deps.approveLine ?? "green Approvals: none pending. This check does not decide a card.");
   lines.push(deps.frameLine ?? "yellow Computer frame: none at gtm/last-frame.png. This check does not start the browser.");
@@ -145,6 +146,11 @@ async function pluginLine(deps: DoctorDeps): Promise<string> {
   } catch {
     return "yellow Write bridge plugin: the gateway answered, but the tool check did not finish. This check does not update a list. fs_write stays blocked.";
   }
+}
+
+function discordLine(env: NodeJS.ProcessEnv): string {
+  const token = env.DISCORD_BOT_TOKEN ? " A token is set and is not printed." : "";
+  return `yellow Discord: not in this build.${token} The offline turn can still run. This check does not post a message.`;
 }
 
 function telegramLine(env: NodeJS.ProcessEnv): string {

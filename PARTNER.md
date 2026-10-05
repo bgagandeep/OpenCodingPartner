@@ -25,6 +25,10 @@ While `.ocp/sdlc/review-hold` exists, orchestration stands up one coding worker.
 
 A routine in `.ocp/routines.json` can wake a partner on an interval or an event name while you are away. `ocp routine run` fires the ones that are due. Slack or Telegram text arrives as a partner turn. `approve` and `deny` in that text decide the Approve card. This build does not call those networks.
 
+## Swarm manifest
+
+`docs/examples/swarm.json` lists partners and routines. `ocp swarm apply` creates each partner workspace under `.ocp/fleet` and registers the routines. `ocp swarm validate` and `--dry-run` do not write. A short interval is refused. The manifest does not start a container.
+
 ## Partner rules
 
 Write rules in `PARTNER.rules` at the sandbox root, or in `.ocp/rules`. The coding worker sees both in its prompt. A line `block: text` stops the turn when the message contains that text.

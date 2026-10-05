@@ -6,7 +6,7 @@ import path from "node:path";
 import test from "node:test";
 import { routeWithPredict, type ManagerPlan } from "@opencodingpartner/policy";
 import { grepSandbox, listSandboxDir, writeSandboxFile } from "@opencodingpartner/workers";
-import { DEMO_MESSAGE, clearSessionMemory, createRoutine, fireDueRoutines, fireEvent, isolatePartner, listRoutines, partnerContainerArgv, pauseRoutine, runChatTurn, runDemo, slackTurn } from "./index.js";
+import { DEMO_MESSAGE, applySwarmManifest, clearSessionMemory, createRoutine, fireDueRoutines, fireEvent, isolatePartner, listRoutines, parseSwarmManifest, partnerContainerArgv, pauseRoutine, runChatTurn, runDemo, slackTurn } from "./index.js";
 import { computerTabText } from "./computer-tab.js";
 import { REVIEW_HOLD_CODING_CAP, rolesUnderReviewHold } from "./sdlc.js";
 
@@ -2119,6 +2119,35 @@ test("a routine fires a partner turn, and Slack approve still gates the edit", a
     await createRoutine(root, { partnerId: "coding", message: "add a note", event: "build-finished", now: 0 });
     const events = await fireEvent(root, "build-finished", async (item) => item.message);
     assert.deepEqual(events, ["add a note"]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a swarm manifest validates, dry-runs, and applies partner workspaces", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-swarm-"));
+  try {
+    const raw = await readFile(path.join(fileURLToPath(new URL("../../../docs/examples/swarm.json", import.meta.url))), "utf8");
+    const manifest = parseSwarmManifest(raw);
+    const dry = await applySwarmManifest(root, manifest, { dryRun: true, now: 0 });
+    assert.equal(dry.ok, true);
+    assert.match(dry.text, /dry-run: no files written/);
+    assert.match(dry.text, /partner coding coding workspace \.ocp\/fleet\/coding/);
+    await assert.rejects(readFile(path.join(root, ".ocp/fleet/coding/.ocp/identity.json"), "utf8"));
+    const applied = await applySwarmManifest(root, manifest, { now: 0 });
+    assert.equal(applied.ok, true);
+    assert.match(applied.text, /applied/);
+    const identity = JSON.parse(await readFile(path.join(root, ".ocp/fleet/coding/.ocp/identity.json"), "utf8")) as { id: string };
+    assert.equal(identity.id, "coding");
+    assert.match(await readFile(path.join(root, ".ocp/fleet/chat/.ocp/identity.json"), "utf8"), /chat/);
+    const routines = await listRoutines(root);
+    assert.equal(routines.length, 2);
+    await applySwarmManifest(root, manifest, { now: 0 });
+    assert.equal((await listRoutines(root)).length, 2);
+    const bad = parseSwarmManifest(JSON.stringify({ system: "board", partners: [{ id: "coding", kind: "coding", role: "coding" }], routines: [{ partnerId: "coding", message: "loop", everyMs: 1 }] }));
+    const refused = await applySwarmManifest(root, bad, { dryRun: true });
+    assert.equal(refused.ok, false);
+    assert.match(refused.text, /at least 1000 ms/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

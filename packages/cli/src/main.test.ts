@@ -435,6 +435,34 @@ test("ocp channel slack receive rejects a bad signature and accepts a signed eve
   }
 });
 
+test("ocp computer qa fails a bad partner frame without opening a browser", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "ocp-fleet-frame-qa-"));
+  let captured = "";
+  const original = process.stdout.write.bind(process.stdout);
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    captured += String(chunk);
+    return true;
+  }) as typeof process.stdout.write;
+  try {
+    const { mkdirSync, writeFileSync } = await import("node:fs");
+    mkdirSync(path.join(root, "gtm"), { recursive: true });
+    writeFileSync(path.join(root, "gtm", "last-frame.png"), Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10]));
+    mkdirSync(path.join(root, ".ocp/fleet/coding/.ocp"), { recursive: true });
+    mkdirSync(path.join(root, ".ocp/fleet/coding/gtm"), { recursive: true });
+    writeFileSync(path.join(root, ".ocp/fleet/coding/.ocp/identity.json"), `${JSON.stringify({ id: "coding", role: "coding", desktop: "partner-sandbox" })}\n`);
+    writeFileSync(path.join(root, ".ocp/fleet/coding/gtm/last-frame.png"), Buffer.from("not-a-png"));
+    const code = await main(["computer", "--sandbox", root, "qa"]);
+    assert.equal(code, 1);
+    assert.match(captured, /Last frame: gtm\/last-frame.png/);
+    assert.match(captured, /Computer QA computer-frame: pass/);
+    assert.match(captured, /not a PNG \(\.ocp\/fleet\/coding\/gtm\/last-frame.png\)/);
+    assert.doesNotMatch(captured, /Browser is missing/);
+  } finally {
+    process.stdout.write = original;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("ocp computer qa prints pass or fail and does not open a page", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "ocp-computer-qa-"));
   let captured = "";

@@ -1,4 +1,4 @@
-import { mkdir, readFile, stat, utimes, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, stat, utimes, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { browserMissingMessage, browserMissingNote } from "@opencodingpartner/workers";
 import { fleetIds, readPartnerIdentity } from "./fleet.js";
@@ -151,6 +151,42 @@ export async function checkComputerFrame(
   }
   const moved = beforeMs === undefined ? "the time is set" : "the time moved";
   return { pass: true, summary: `Computer QA computer-frame: pass. The frame is a PNG and ${moved}. Last frame: ${where}.` };
+}
+
+async function hasComputerEvidence(sandboxRoot: string): Promise<boolean> {
+  for (const relative of [FRAME_FILE, "gtm/last-run.json"]) {
+    try {
+      await stat(path.join(sandboxRoot, relative));
+      return true;
+    } catch {
+      // That evidence file is absent.
+    }
+  }
+  return false;
+}
+
+/** Check the session frame and each partner frame that has a page or a file. This does not open a browser. */
+export async function checkComputerFrames(sessionRoot: string): Promise<{ pass: boolean; summary: string }> {
+  const checks: { pass: boolean; summary: string }[] = [];
+  if (await hasComputerEvidence(sessionRoot)) checks.push(await checkComputerFrame(sessionRoot));
+  let names: string[] = [];
+  try {
+    names = await readdir(path.join(sessionRoot, ".ocp", "fleet"));
+  } catch {
+    names = [];
+  }
+  const partners: { id: string; workspace: string }[] = [];
+  for (const name of names) {
+    const workspace = path.join(sessionRoot, ".ocp", "fleet", name);
+    const identity = await readPartnerIdentity(workspace);
+    if (identity) partners.push({ id: identity.id, workspace });
+  }
+  partners.sort((left, right) => left.id.localeCompare(right.id));
+  for (const partner of partners) {
+    if (await hasComputerEvidence(partner.workspace)) checks.push(await checkComputerFrame(partner.workspace));
+  }
+  if (checks.length === 0) return checkComputerFrame(sessionRoot);
+  return { pass: checks.every((check) => check.pass), summary: checks.map((check) => check.summary).join("\n") };
 }
 
 export type FrameCapturer = (url: string) => Promise<Uint8Array>;

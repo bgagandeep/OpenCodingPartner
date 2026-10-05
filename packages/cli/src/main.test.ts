@@ -1108,6 +1108,57 @@ test("ocp delete removes one file and leaves a secret file", async () => {
   }
 });
 
+test("ocp rmdir removes one empty directory and leaves the rest", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "ocp-rmdir-"));
+  let captured = "";
+  const original = process.stdout.write.bind(process.stdout);
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    captured += String(chunk);
+    return true;
+  }) as typeof process.stdout.write;
+  try {
+    const { existsSync, mkdirSync, writeFileSync } = await import("node:fs");
+    assert.equal(await main(["rmdir", "--sandbox", root]), 2);
+    assert.match(captured, /Usage: ocp rmdir/);
+    captured = "";
+    assert.equal(await main(["rmdir", "--sandbox", root, "missing"]), 1);
+    assert.match(captured, /directory missing/);
+    mkdirSync(path.join(root, "empty"));
+    captured = "";
+    assert.equal(await main(["rmdir", "--sandbox", root, "empty"]), 0);
+    assert.match(captured, /removed/);
+    assert.equal(existsSync(path.join(root, "empty")), false);
+    assert.equal(existsSync(path.join(root, ".ocp/last-check.json")), false);
+    mkdirSync(path.join(root, "full"));
+    writeFileSync(path.join(root, "full/keep.txt"), "keep\n");
+    captured = "";
+    assert.equal(await main(["rmdir", "--sandbox", root, "full"]), 1);
+    assert.match(captured, /directory is not empty/);
+    assert.equal(readFileSync(path.join(root, "full/keep.txt"), "utf8"), "keep\n");
+    writeFileSync(path.join(root, "hello.txt"), "hello\n");
+    captured = "";
+    assert.equal(await main(["rmdir", "--sandbox", root, "hello.txt"]), 1);
+    assert.match(captured, /path is a file/);
+    assert.equal(readFileSync(path.join(root, "hello.txt"), "utf8"), "hello\n");
+    captured = "";
+    assert.equal(await main(["rmdir", "--sandbox", root, "password=hunter2"]), 1);
+    assert.match(captured, /blocked \(secret pattern\)/);
+    assert.doesNotMatch(captured, /hunter2/);
+    captured = "";
+    assert.equal(await main(["rmdir", "--sandbox", root, "../secret"]), 1);
+    assert.match(captured, /path refused/);
+    mkdirSync(path.join(root, ".ocp/fleet/coding/notes"), { recursive: true });
+    captured = "";
+    assert.equal(await main(["rmdir", "--sandbox", root, "--partner", "coding", "notes"]), 0);
+    assert.match(captured, /removed/);
+    assert.equal(existsSync(path.join(root, ".ocp/fleet/coding/notes")), false);
+    assert.equal(existsSync(path.join(root, "full")), true);
+  } finally {
+    process.stdout.write = original;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("ocp fleet status lists a partner and can print json", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "ocp-fleet-cli-"));
   let captured = "";

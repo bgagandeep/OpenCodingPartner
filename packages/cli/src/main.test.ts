@@ -1213,6 +1213,58 @@ test("ocp rename moves one file and does not overwrite", async () => {
   }
 });
 
+test("ocp copy duplicates one file and leaves the source", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "ocp-copy-"));
+  let captured = "";
+  const original = process.stdout.write.bind(process.stdout);
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    captured += String(chunk);
+    return true;
+  }) as typeof process.stdout.write;
+  try {
+    const { existsSync, mkdirSync, writeFileSync } = await import("node:fs");
+    assert.equal(await main(["copy", "--sandbox", root]), 2);
+    assert.match(captured, /Usage: ocp copy/);
+    writeFileSync(path.join(root, "hello.txt"), "hello\n");
+    captured = "";
+    assert.equal(await main(["copy", "--from", "hello.txt", "--to", "note.txt", "--sandbox", root]), 0);
+    assert.match(captured, /copied/);
+    assert.equal(readFileSync(path.join(root, "hello.txt"), "utf8"), "hello\n");
+    assert.equal(readFileSync(path.join(root, "note.txt"), "utf8"), "hello\n");
+    assert.equal(existsSync(path.join(root, ".ocp/last-check.json")), false);
+    captured = "";
+    assert.equal(await main(["copy", "--from", "hello.txt", "--to", "note.txt", "--sandbox", root]), 1);
+    assert.match(captured, /target already exists/);
+    assert.equal(readFileSync(path.join(root, "hello.txt"), "utf8"), "hello\n");
+    writeFileSync(path.join(root, "secret.txt"), "password=hunter2\n");
+    captured = "";
+    assert.equal(await main(["copy", "--from", "secret.txt", "--to", "safe.txt", "--sandbox", root]), 1);
+    assert.match(captured, /blocked \(secret pattern\)/);
+    assert.doesNotMatch(captured, /hunter2/);
+    assert.equal(existsSync(path.join(root, "secret.txt")), true);
+    assert.equal(existsSync(path.join(root, "safe.txt")), false);
+    mkdirSync(path.join(root, "subdir"));
+    captured = "";
+    assert.equal(await main(["copy", "--from", "subdir", "--to", "other", "--sandbox", root]), 1);
+    assert.match(captured, /directories are not copied/);
+    assert.equal(existsSync(path.join(root, "subdir")), true);
+    captured = "";
+    assert.equal(await main(["copy", "--from", "../secret", "--to", "note.txt", "--sandbox", root]), 1);
+    assert.match(captured, /path refused/);
+    mkdirSync(path.join(root, ".ocp/fleet/coding"), { recursive: true });
+    writeFileSync(path.join(root, ".ocp/fleet/coding/one.txt"), "partner\n");
+    captured = "";
+    assert.equal(await main(["copy", "--from", "one.txt", "--to", "two.txt", "--sandbox", root, "--partner", "coding"]), 0);
+    assert.match(captured, /copied/);
+    assert.equal(readFileSync(path.join(root, ".ocp/fleet/coding/one.txt"), "utf8"), "partner\n");
+    assert.equal(readFileSync(path.join(root, ".ocp/fleet/coding/two.txt"), "utf8"), "partner\n");
+    assert.equal(existsSync(path.join(root, "two.txt")), false);
+  } finally {
+    process.stdout.write = original;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("ocp fleet status lists a partner and can print json", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "ocp-fleet-cli-"));
   let captured = "";

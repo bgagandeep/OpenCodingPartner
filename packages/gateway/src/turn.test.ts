@@ -7,7 +7,7 @@ import test from "node:test";
 import { routeWithPredict, type ManagerPlan } from "@opencodingpartner/policy";
 import { applySandboxTodo, grepSandbox, listSandboxDir, writeSandboxFile } from "@opencodingpartner/workers";
 import { DEMO_MESSAGE, applySwarmManifest, approveDoctorLine, clearSessionMemory, coreIsOpen, createRoutine, deliverSlackEvent, deliverTelegramUpdate, fireDueRoutines, fireEvent, formatApproveQueue, formatFleetStatus, formatFleetStatusJson, formatReviewHolds, isolatePartner, listApproveQueue, listReviewHolds, listRoutines, parseSwarmManifest, partnerContainerArgv, pauseRoutine, readFleetStatus, readPackaging, reviewHoldDoctorLine, runChatTurn, runDemo, slackSignature, slackTurn, startPartnerContainer, stopPartnerContainer, verifySlackRequest, verifyTelegramRequest } from "./index.js";
-import { allowComputerUse, captureComputerFrame, checkComputerFrame, computerTabText } from "./computer-tab.js";
+import { allowComputerUse, captureComputerFrame, checkComputerFrame, computerTabText, doctorComputerFrameLine } from "./computer-tab.js";
 import { REVIEW_HOLD_CODING_CAP, rolesUnderReviewHold } from "./sdlc.js";
 
 test("chat stands up agents, writes, checks QA, gates security, and records GTM", async () => {
@@ -2608,6 +2608,36 @@ test("fleet start dry-run and a missing Docker do not claim a running container"
     });
     assert.equal(stopped.ok, true);
     assert.match(await computerTabText(path.join(root, ".ocp/fleet/coding")), /Container: stopped/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("doctor names a bad partner frame and does not open a browser", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-doctor-frames-"));
+  try {
+    const none = await doctorComputerFrameLine(root);
+    assert.match(none, /yellow Computer frame: none at gtm\/last-frame.png/);
+    assert.match(none, /does not start the browser/);
+    await mkdir(path.join(root, "gtm"), { recursive: true });
+    await writeFile(path.join(root, "gtm/last-frame.png"), Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10]));
+    await mkdir(path.join(root, ".ocp/fleet/coding/.ocp"), { recursive: true });
+    await writeFile(path.join(root, ".ocp/fleet/coding/.ocp/identity.json"), `${JSON.stringify({ id: "coding" })}\n`);
+    const quiet = await doctorComputerFrameLine(root);
+    assert.match(quiet, /green Computer frame: a PNG is at gtm\/last-frame.png/);
+    assert.doesNotMatch(quiet, /partner frame/);
+    await mkdir(path.join(root, ".ocp/fleet/coding/gtm"), { recursive: true });
+    await writeFile(path.join(root, ".ocp/fleet/coding/gtm/last-frame.png"), Buffer.from("not-a-png"));
+    const bad = await doctorComputerFrameLine(root);
+    assert.match(bad, /yellow Computer frame:/);
+    assert.match(bad, /a PNG is at gtm\/last-frame.png/);
+    assert.match(bad, /not a PNG \(\.ocp\/fleet\/coding\/gtm\/last-frame.png\)|\.ocp\/fleet\/coding\/gtm\/last-frame.png is not a PNG/);
+    assert.match(bad, /does not start the browser/);
+    assert.doesNotMatch(bad, /Browser is missing/);
+    await writeFile(path.join(root, ".ocp/fleet/coding/gtm/last-frame.png"), Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10]));
+    const passed = await doctorComputerFrameLine(root);
+    assert.match(passed, /green Computer frame: a PNG is at gtm\/last-frame.png/);
+    assert.match(passed, /1 partner frame passed/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

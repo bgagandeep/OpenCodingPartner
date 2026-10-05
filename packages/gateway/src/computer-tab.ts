@@ -189,6 +189,51 @@ export async function checkComputerFrames(sessionRoot: string): Promise<{ pass: 
   return { pass: checks.every((check) => check.pass), summary: checks.map((check) => check.summary).join("\n") };
 }
 
+async function frameDoctorDetail(sandboxRoot: string): Promise<{ pass: boolean; detail: string }> {
+  const where = await reportedFrame(sandboxRoot);
+  try {
+    const bytes = await readFile(path.join(sandboxRoot, FRAME_FILE));
+    const png = bytes.length >= PNG_SIGNATURE.length && PNG_SIGNATURE.every((byte, index) => bytes[index] === byte);
+    if (!png) return { pass: false, detail: `${where} is not a PNG.` };
+    return { pass: true, detail: where === FRAME_FILE ? `a PNG is at ${where}.` : `${where} is a PNG.` };
+  } catch {
+    return { pass: false, detail: where === FRAME_FILE ? `none at ${where}.` : `${where} is missing.` };
+  }
+}
+
+/** Doctor line for the session frame and each partner frame that has a page or a file. This does not open a browser. */
+export async function doctorComputerFrameLine(sessionRoot: string): Promise<string> {
+  const tail = "This check does not start the browser.";
+  const session = await frameDoctorDetail(sessionRoot);
+  const partners: { pass: boolean; detail: string }[] = [];
+  let names: string[] = [];
+  try {
+    names = await readdir(path.join(sessionRoot, ".ocp", "fleet"));
+  } catch {
+    names = [];
+  }
+  const workspaces: { id: string; workspace: string }[] = [];
+  for (const name of names) {
+    const workspace = path.join(sessionRoot, ".ocp", "fleet", name);
+    const identity = await readPartnerIdentity(workspace);
+    if (identity) workspaces.push({ id: identity.id, workspace });
+  }
+  workspaces.sort((left, right) => left.id.localeCompare(right.id));
+  for (const partner of workspaces) {
+    if (await hasComputerEvidence(partner.workspace)) partners.push(await frameDoctorDetail(partner.workspace));
+  }
+  if (partners.length === 0) {
+    return `${session.pass ? "green" : "yellow"} Computer frame: ${session.detail} ${tail}`;
+  }
+  const bad = partners.filter((partner) => !partner.pass);
+  if (session.pass && bad.length === 0) {
+    const count = partners.length === 1 ? "1 partner frame passed." : `${partners.length} partner frames passed.`;
+    return `green Computer frame: ${session.detail} ${count} ${tail}`;
+  }
+  const extra = bad.length > 0 ? bad.map((partner) => partner.detail).join(" ") : `${partners.length} partner frame${partners.length === 1 ? "" : "s"} passed.`;
+  return `yellow Computer frame: ${session.detail} ${extra} ${tail}`;
+}
+
 export type FrameCapturer = (url: string) => Promise<Uint8Array>;
 
 async function playwrightCapture(url: string): Promise<Uint8Array> {

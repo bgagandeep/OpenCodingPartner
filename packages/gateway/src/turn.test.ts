@@ -6,7 +6,7 @@ import path from "node:path";
 import test from "node:test";
 import { routeWithPredict, type ManagerPlan } from "@opencodingpartner/policy";
 import { grepSandbox, listSandboxDir, writeSandboxFile } from "@opencodingpartner/workers";
-import { DEMO_MESSAGE, applySwarmManifest, clearSessionMemory, coreIsOpen, createRoutine, deliverSlackEvent, fireDueRoutines, fireEvent, isolatePartner, listRoutines, parseSwarmManifest, partnerContainerArgv, pauseRoutine, readPackaging, runChatTurn, runDemo, slackSignature, slackTurn, startPartnerContainer, stopPartnerContainer, verifySlackRequest } from "./index.js";
+import { DEMO_MESSAGE, applySwarmManifest, clearSessionMemory, coreIsOpen, createRoutine, deliverSlackEvent, deliverTelegramUpdate, fireDueRoutines, fireEvent, isolatePartner, listRoutines, parseSwarmManifest, partnerContainerArgv, pauseRoutine, readPackaging, runChatTurn, runDemo, slackSignature, slackTurn, startPartnerContainer, stopPartnerContainer, verifySlackRequest, verifyTelegramRequest } from "./index.js";
 import { allowComputerUse, captureComputerFrame, checkComputerFrame, computerTabText } from "./computer-tab.js";
 import { REVIEW_HOLD_CODING_CAP, rolesUnderReviewHold } from "./sdlc.js";
 
@@ -2617,6 +2617,74 @@ test("a signed Slack deny still decides the Approve card", async () => {
     assert.match(delivered.reply, /Approve denied/);
     assert.doesNotMatch(delivered.reply, /xoxb-test/);
     assert.doesNotMatch(delivered.reply, /signing-secret/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Telegram delivery checks the webhook secret and posts the partner reply", async () => {
+  const secret = "webhook-secret";
+  const raw = JSON.stringify({ message: { message_id: 9, text: "deny", chat: { id: 42 } } });
+  assert.equal(verifyTelegramRequest({ secret, header: secret }).ok, true);
+  assert.equal(verifyTelegramRequest({ secret, header: "" }).reason, "missing secret");
+  assert.equal(verifyTelegramRequest({ secret, header: "nope" }).reason, "bad secret");
+  let posted = "";
+  let url = "";
+  const delivered = await deliverTelegramUpdate(
+    {
+      rawBody: raw,
+      secretHeader: secret,
+      webhookSecret: secret,
+      botToken: "123:telegram-secret",
+      fetchImpl: async (target, init) => {
+        url = String(target);
+        posted = String(init?.body ?? "");
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      },
+    },
+    async (message) => `turn:${message}`,
+  );
+  assert.equal(delivered.ok, true);
+  assert.equal(delivered.posted, true);
+  assert.equal(delivered.reply, "Telegram adapter\nturn:deny");
+  assert.match(url, /\/sendMessage$/);
+  assert.doesNotMatch(posted, /telegram-secret/);
+  assert.doesNotMatch(posted, /webhook-secret/);
+  assert.match(posted, /"chat_id":"42"/);
+  assert.match(posted, /"reply_to_message_id":9/);
+  const rejected = await deliverTelegramUpdate(
+    { rawBody: raw, secretHeader: "nope", webhookSecret: secret, botToken: "123:telegram-secret" },
+    async () => "ran",
+  );
+  assert.equal(rejected.ok, false);
+  assert.equal(rejected.posted, false);
+  assert.equal(rejected.reply, "bad secret");
+});
+
+test("a Telegram deny still decides the Approve card", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-telegram-card-"));
+  try {
+    await writeFile(path.join(root, "PARTNER.md"), "partner\n");
+    const asked = await runChatTurn({ message: "add a helper", sandboxRoot: root, partnerId: "telegram-42" });
+    assert.match(asked.transcript, /Approve card/);
+    const raw = JSON.stringify({ message: { message_id: 3, text: "deny", chat: { id: 42 } } });
+    const delivered = await deliverTelegramUpdate(
+      {
+        rawBody: raw,
+        secretHeader: "webhook-secret",
+        webhookSecret: "webhook-secret",
+        botToken: "123:telegram-secret",
+        fetchImpl: async () => new Response(JSON.stringify({ ok: true }), { status: 200 }),
+      },
+      async (message, partnerId) => {
+        const turn = await runChatTurn({ message, sandboxRoot: root, partnerId });
+        return turn.transcript;
+      },
+    );
+    assert.equal(delivered.ok, true);
+    assert.match(delivered.reply, /Approve denied/);
+    assert.doesNotMatch(delivered.reply, /telegram-secret/);
+    assert.doesNotMatch(delivered.reply, /webhook-secret/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

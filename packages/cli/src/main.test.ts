@@ -226,6 +226,51 @@ test("ocp channel slack stays offline without credentials and posts when they ar
   }
 });
 
+test("ocp channel telegram stays offline without credentials and posts when they are set", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "ocp-telegram-cli-"));
+  let captured = "";
+  const original = process.stdout.write.bind(process.stdout);
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    captured += String(chunk);
+    return true;
+  }) as typeof process.stdout.write;
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  const secret = process.env.TELEGRAM_WEBHOOK_SECRET;
+  delete process.env.TELEGRAM_BOT_TOKEN;
+  delete process.env.TELEGRAM_WEBHOOK_SECRET;
+  const originalFetch = globalThis.fetch;
+  try {
+    const missing = await main(["channel", "telegram", "--sandbox", root, "--text", "hello", "--channel", "42"]);
+    assert.equal(missing, 0);
+    assert.match(captured, /Telegram live: missing TELEGRAM_BOT_TOKEN, TELEGRAM_WEBHOOK_SECRET/);
+    assert.match(captured, /The offline turn still ran/);
+    assert.match(captured, /Telegram adapter/);
+    captured = "";
+    process.env.TELEGRAM_BOT_TOKEN = "123:telegram-cli-secret";
+    process.env.TELEGRAM_WEBHOOK_SECRET = "webhook-cli-secret";
+    let body = "";
+    globalThis.fetch = (async (_url: string | URL | Request, init?: RequestInit) => {
+      body = String(init?.body ?? "");
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    }) as typeof fetch;
+    const posted = await main(["channel", "telegram", "--sandbox", root, "--text", "hello again", "--channel", "42"]);
+    assert.equal(posted, 0);
+    assert.match(body, /"chat_id":"42"/);
+    assert.match(captured, /Telegram adapter/);
+    assert.doesNotMatch(captured, /telegram-cli-secret/);
+    assert.doesNotMatch(captured, /webhook-cli-secret/);
+    assert.doesNotMatch(captured, /Telegram live: missing/);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (token === undefined) delete process.env.TELEGRAM_BOT_TOKEN;
+    else process.env.TELEGRAM_BOT_TOKEN = token;
+    if (secret === undefined) delete process.env.TELEGRAM_WEBHOOK_SECRET;
+    else process.env.TELEGRAM_WEBHOOK_SECRET = secret;
+    process.stdout.write = original;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("ocp computer qa prints pass or fail and does not open a page", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "ocp-computer-qa-"));
   let captured = "";

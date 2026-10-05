@@ -128,7 +128,85 @@ export async function slackTurn(
   return { partnerId, message, reply };
 }
 
-/** Same partner turn as Slack. This build does not call Telegram. */
+export function telegramCredentialStatus(env: NodeJS.ProcessEnv): { ready: boolean; missing: string[] } {
+  const missing: string[] = [];
+  if (!env.TELEGRAM_BOT_TOKEN) missing.push("TELEGRAM_BOT_TOKEN");
+  if (!env.TELEGRAM_WEBHOOK_SECRET) missing.push("TELEGRAM_WEBHOOK_SECRET");
+  return { ready: missing.length === 0, missing };
+}
+
+/** Reject a missing or mismatched webhook secret. The secret is not returned. */
+export function verifyTelegramRequest(input: { secret: string; header: string }): { ok: boolean; reason: string } {
+  if (!input.secret || !input.header) return { ok: false, reason: "missing secret" };
+  const left = Buffer.from(input.secret);
+  const right = Buffer.from(input.header);
+  if (left.length !== right.length || !timingSafeEqual(left, right)) return { ok: false, reason: "bad secret" };
+  return { ok: true, reason: "" };
+}
+
+export function telegramUpdateMessage(rawBody: string): { text: string; chatId: string; replyTo: string } | undefined {
+  let body: { message?: { text?: string; message_id?: number; chat?: { id?: number | string } } };
+  try {
+    body = JSON.parse(rawBody) as typeof body;
+  } catch {
+    return undefined;
+  }
+  const text = body.message?.text?.trim() ?? "";
+  const chat = body.message?.chat?.id;
+  if (!text || chat === undefined || chat === "") return undefined;
+  const replyTo = body.message?.message_id === undefined ? "" : String(body.message.message_id);
+  return { text, chatId: String(chat), replyTo };
+}
+
+export async function postTelegramReply(
+  token: string,
+  chatId: string,
+  text: string,
+  replyTo: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<{ ok: boolean; detail: string }> {
+  const replyId = /^\d+$/.test(replyTo) ? Number(replyTo) : undefined;
+  let response: Response;
+  try {
+    response = await fetchImpl(`https://api.telegram.org/bot${encodeURIComponent(token)}/sendMessage`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ chat_id: chatId, text, ...(replyId !== undefined ? { reply_to_message_id: replyId } : {}) }),
+    });
+  } catch {
+    return { ok: false, detail: "Telegram post did not connect." };
+  }
+  if (!response.ok) return { ok: false, detail: `Telegram post returned HTTP ${response.status}.` };
+  let payload: { ok?: boolean };
+  try {
+    payload = (await response.json()) as { ok?: boolean };
+  } catch {
+    return { ok: false, detail: "Telegram post returned an unreadable body." };
+  }
+  if (payload.ok === false) return { ok: false, detail: "Telegram post was refused." };
+  return { ok: true, detail: "Telegram post sent." };
+}
+
+export async function deliverTelegramUpdate(
+  input: {
+    rawBody: string;
+    secretHeader: string;
+    webhookSecret: string;
+    botToken: string;
+    fetchImpl?: typeof fetch;
+  },
+  run: (message: string, partnerId: string) => Promise<string>,
+): Promise<{ ok: boolean; reply: string; posted: boolean }> {
+  const verified = verifyTelegramRequest({ secret: input.webhookSecret, header: input.secretHeader });
+  if (!verified.ok) return { ok: false, reply: verified.reason, posted: false };
+  const update = telegramUpdateMessage(input.rawBody);
+  if (!update) return { ok: false, reply: "Telegram update had no text.", posted: false };
+  const turn = await telegramTurn({ text: update.text, channel: update.chatId }, run);
+  const posted = await postTelegramReply(input.botToken, update.chatId, turn.reply, update.replyTo, input.fetchImpl);
+  return { ok: posted.ok, reply: turn.reply, posted: posted.ok };
+}
+
+/** Same partner turn as Slack. A live reply is posted only when Telegram credentials are set. */
 export async function telegramTurn(
   inbound: ChannelInbound,
   run: (message: string, partnerId: string) => Promise<string>,

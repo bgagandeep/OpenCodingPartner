@@ -7,6 +7,7 @@ import test from "node:test";
 import { routeWithPredict, type ManagerPlan } from "@opencodingpartner/policy";
 import { grepSandbox, listSandboxDir, writeSandboxFile } from "@opencodingpartner/workers";
 import { DEMO_MESSAGE, clearSessionMemory, runChatTurn, runDemo } from "./index.js";
+import { REVIEW_HOLD_CODING_CAP, rolesUnderReviewHold } from "./sdlc.js";
 
 test("chat stands up agents, writes, checks QA, gates security, and records GTM", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "ocp-turn-"));
@@ -1871,6 +1872,92 @@ test("prior turns survive a fresh process and stay inside one sandbox", async ()
   } finally {
     await rm(root, { recursive: true, force: true });
     await rm(other, { recursive: true, force: true });
+  }
+});
+
+test("a partner sandbox waits for the plan, then edits and runs node --test", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-partner-"));
+  try {
+    await writeFile(path.join(root, "PARTNER.md"), "partner\n");
+    let calls = 0;
+    const held = await runChatTurn({
+      message: "add a helper in src/add.test.mjs",
+      sandboxRoot: root,
+      grokRunner: {
+        async run() {
+          calls += 1;
+          return { exitCode: 0, stdout: JSON.stringify({ done: true, steps: [{ tool: "write", path: "src/add.test.mjs", content: "no\n" }] }) };
+        },
+      },
+    });
+    assert.equal(calls, 0);
+    assert.match(held.transcript, /Plan is waiting/);
+    assert.equal(held.coding?.wrote, false);
+    assert.match(await readFile(path.join(root, ".ocp/sdlc/intent.md"), "utf8"), /add a helper/);
+    assert.match(await readFile(path.join(root, ".ocp/sdlc/spec.md"), "utf8"), /sandbox/);
+    assert.match(await readFile(path.join(root, ".ocp/sdlc/plan.md"), "utf8"), /node --test/);
+    const plan = JSON.parse(await readFile(path.join(root, ".ocp/sdlc/plan.json"), "utf8")) as { accepted: boolean };
+    assert.equal(plan.accepted, false);
+
+    const edited = await runChatTurn({
+      message: "accept the plan",
+      sandboxRoot: root,
+      grokRunner: {
+        async run() {
+          calls += 1;
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify({
+              done: true,
+              steps: [
+                {
+                  tool: "write",
+                  path: "src/add.test.mjs",
+                  content: "import assert from \"node:assert/strict\";\nimport test from \"node:test\";\ntest(\"adds\", () => { assert.equal(1 + 1, 2); });\n",
+                },
+              ],
+            }),
+          };
+        },
+      },
+    });
+    assert.equal(calls, 1);
+    assert.match(edited.transcript, /Self-verify: node --test \(exit 0\)/);
+    assert.match(edited.transcript, /Human intent and risk are not decided/);
+    assert.match(await readFile(path.join(root, ".ocp/sdlc/review.md"), "utf8"), /Mechanical review/);
+    assert.match(await readFile(path.join(root, "src/add.test.mjs"), "utf8"), /adds/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a failed partner check returns to intent and holds one coding worker", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-partner-fail-"));
+  try {
+    await writeFile(path.join(root, "PARTNER.md"), "partner\n");
+    await runChatTurn({ message: "add a broken check", sandboxRoot: root });
+    const failed = await runChatTurn({
+      message: "accept the plan",
+      sandboxRoot: root,
+      checkExec: async () => ({ code: 1, stdout: "failed", stderr: "" }),
+      grokRunner: {
+        async run() {
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify({ done: true, steps: [{ tool: "write", path: "src/note.txt", content: "note\n" }] }),
+          };
+        },
+      },
+    });
+    assert.match(failed.transcript, /Self-verify: node --test \(exit 1\)/);
+    assert.match(failed.transcript, /Returned to intent/);
+    assert.match(await readFile(path.join(root, ".ocp/sdlc/intent.md"), "utf8"), /Returned from review/);
+    assert.match(await readFile(path.join(root, ".ocp/sdlc/review-hold"), "utf8"), /exit 1/);
+    const capped = rolesUnderReviewHold(["coding", "coding", "qa", "security", "computer"]);
+    assert.equal(capped.filter((role) => role === "coding").length, REVIEW_HOLD_CODING_CAP);
+    assert.equal(capped.length, 4);
+  } finally {
+    await rm(root, { recursive: true, force: true });
   }
 });
 

@@ -56,7 +56,7 @@ function sessionPlan(message: string, plan?: SessionPlanInput): string {
     "Stand up a coding agent, a QA agent, a security agent, and a computer agent.",
     "A create-file request uses the gateway write tool after the plan is accepted.",
     "The gateway still blocks fs_write, apply_patch, and sessions_spawn.",
-    "General model edits still run in this process with Grok Build or the meter.",
+    "General model edits still run in this process on the coding worker or the meter.",
     "Security gates path escape and secrets.",
     "The computer agent records a GTM plan and does not run a browser.",
     "User request:",
@@ -64,7 +64,7 @@ function sessionPlan(message: string, plan?: SessionPlanInput): string {
   ].join("\n");
 }
 
-/** Ask the OpenClaw gateway to own the session plan. The local swarm runs only when the gateway is down. */
+/** Ask the Orchestration gateway to own the session plan. The local swarm runs only when the gateway is down. */
 export async function sendOrchestrationTurn(
   message: string,
   deps: ConnectedDeps,
@@ -75,7 +75,7 @@ export async function sendOrchestrationTurn(
   const gatewayHttp = (deps.gatewayHttp ?? deps.env.OPENCLAW_GATEWAY_URL ?? "http://127.0.0.1:18789").replace(/\/$/, "");
   const up = await gatewayIsUp(gatewayHttp, fetchImpl);
   if (!up) {
-    return { state: "skipped", driver: "local-swarm", detail: `OpenClaw gateway skipped (${gatewayHttp}/healthz did not answer).` };
+    return { state: "skipped", driver: "local-swarm", detail: `Orchestration gateway skipped (${gatewayHttp}/healthz did not answer).` };
   }
   const planText = sessionPlan(message, plan);
   if (deps.bins.openclawBin) {
@@ -114,9 +114,9 @@ export async function sendOrchestrationTurn(
       signal: AbortSignal.timeout(15000),
     });
     const skillsNote = tools.ok ? "skills.status ran on the session." : "skills.status did not succeed. The session plan still drove the turn.";
-    return { state: "ran", driver: "openclaw", detail: `OpenClaw chat completions accepted session ${BOARD_SESSION_KEY}. ${skillsNote}` };
+    return { state: "ran", driver: "openclaw", detail: `Orchestration accepted session ${BOARD_SESSION_KEY}. ${skillsNote}` };
   } catch {
-    return { state: "failed", driver: "openclaw", detail: "OpenClaw gateway was up, but the session plan did not finish." };
+    return { state: "failed", driver: "openclaw", detail: "The orchestration gateway was up, but the session plan did not finish." };
   }
 }
 
@@ -127,7 +127,7 @@ export type CodingMeterVia = "litellm" | "openai-compatible" | "grok-build";
 export interface CodingMeter {
   runner?: InjectedRunner;
   via?: CodingMeterVia;
-  label?: "LiteLLM" | "OpenAI-compatible" | "Grok Build";
+  label?: "proxy" | "compatible" | "worker";
   baseUrl?: string;
   model?: string;
 }
@@ -145,7 +145,7 @@ export function resolveCodingMeter(
     return {
       runner: openAiCompatibleRunner({ apiKey: litellmKey, baseUrl, model, fetchImpl: options?.fetchImpl }),
       via: "litellm",
-      label: "LiteLLM",
+      label: "proxy",
       baseUrl,
       model,
     };
@@ -159,13 +159,13 @@ export function resolveCodingMeter(
         fetchImpl: options?.fetchImpl,
       }),
       via: "openai-compatible",
-      label: "OpenAI-compatible",
+      label: "compatible",
       baseUrl: env.OPENAI_BASE_URL,
       model: env.OPENAI_MODEL || "gpt-4o-mini",
     };
   }
   if (bins.grokBin && env.XAI_API_KEY) {
-    return { runner: grokRunnerForBin(bins.grokBin, env, options?.exec), via: "grok-build", label: "Grok Build" };
+    return { runner: grokRunnerForBin(bins.grokBin, env, options?.exec), via: "grok-build", label: "worker" };
   }
   return {};
 }
@@ -213,7 +213,7 @@ export interface OpenClawWriteResult {
 }
 
 /**
- * Ask the OpenClaw gateway to invoke the sandbox write bridge.
+ * Ask the Orchestration gateway to invoke the sandbox write bridge.
  * This function does not write the file. `fs_write` is never sent.
  * If the bridge tool is missing, the built-in `write` tool is the fallback.
  */
@@ -232,7 +232,7 @@ export async function writeViaOpenClaw(
   const gatewayHttp = (deps.gatewayHttp ?? deps.env.OPENCLAW_GATEWAY_URL ?? "http://127.0.0.1:18789").replace(/\/$/, "");
   const up = await gatewayIsUp(gatewayHttp, fetchImpl);
   if (!up) {
-    return { ok: false, detail: "OpenClaw gateway is not up. The write tool did not run." };
+    return { ok: false, detail: "Orchestration gateway is not up. The write tool did not run." };
   }
   const bridgeUrl = deps.env.OCP_WRITE_BRIDGE_URL;
   if (bridgeUrl) {
@@ -241,12 +241,12 @@ export async function writeViaOpenClaw(
       relativePath,
       content,
     });
-    if (bridged.ok) return { ok: true, detail: "OpenClaw invoked the sandbox write bridge." };
+    if (bridged.ok) return { ok: true, detail: "Orchestration invoked the sandbox write bridge." };
     if (!bridged.missing) return { ok: false, detail: bridged.detail };
   }
   const absolute = path.resolve(sandboxRoot, relativePath);
   const direct = await invokeGatewayTool(deps, gatewayHttp, exec, fetchImpl, "write", { path: absolute, content });
-  if (direct.ok) return { ok: true, detail: "OpenClaw write tool accepted the file." };
+  if (direct.ok) return { ok: true, detail: "Orchestration write tool accepted the file." };
   return { ok: false, detail: direct.detail };
 }
 
@@ -337,7 +337,7 @@ async function invokeSandboxAction(
   const gatewayHttp = (deps.gatewayHttp ?? deps.env.OPENCLAW_GATEWAY_URL ?? "http://127.0.0.1:18789").replace(/\/$/, "");
   const up = await gatewayIsUp(gatewayHttp, fetchImpl);
   if (!up) {
-    return { ok: false, missing: true, detail: "OpenClaw gateway is not up. The tool did not run." };
+    return { ok: false, missing: true, detail: "Orchestration gateway is not up. The tool did not run." };
   }
   const bridgeUrl = deps.env.OCP_WRITE_BRIDGE_URL;
   if (!bridgeUrl) {
@@ -347,7 +347,7 @@ async function invokeSandboxAction(
     ...args,
     bridgeUrl: bridgeUrl.replace(/\/write$/, actionPath),
   });
-  if (bridged.ok) return { ok: true, missing: false, detail: `OpenClaw invoked the sandbox ${tool} bridge.` };
+  if (bridged.ok) return { ok: true, missing: false, detail: `Orchestration invoked the sandbox ${tool} bridge.` };
   if (bridged.missing) return { ok: false, missing: true, detail: bridged.detail };
   return { ok: false, missing: false, detail: bridged.detail };
 }
@@ -386,7 +386,7 @@ async function invokeGatewayTool(
     );
     if (sent.code !== 0) {
       const missing = /not available|not_found|404/i.test(`${sent.stdout}\n${sent.stderr}`);
-      return { ok: false, missing, detail: `OpenClaw ${tool} did not accept the call.` };
+      return { ok: false, missing, detail: `Orchestration ${tool} did not accept the call.` };
     }
     return { ok: true, missing: false, detail: "accepted" };
   }
@@ -399,18 +399,18 @@ async function invokeGatewayTool(
       body: JSON.stringify({ tool, sessionKey: BOARD_SESSION_KEY, args }),
       signal: AbortSignal.timeout(15000),
     });
-    if (response.status === 404) return { ok: false, missing: true, detail: `OpenClaw ${tool} is not available.` };
-    if (!response.ok) return { ok: false, missing: false, detail: `OpenClaw ${tool} returned HTTP ${response.status}.` };
+    if (response.status === 404) return { ok: false, missing: true, detail: `Orchestration ${tool} is not available.` };
+    if (!response.ok) return { ok: false, missing: false, detail: `Orchestration ${tool} returned HTTP ${response.status}.` };
     let body: { ok?: boolean } = {};
     try {
       body = (await response.json()) as { ok?: boolean };
     } catch {
       body = {};
     }
-    if (body.ok === false) return { ok: false, missing: false, detail: `OpenClaw ${tool} refused the file.` };
+    if (body.ok === false) return { ok: false, missing: false, detail: `Orchestration ${tool} refused the file.` };
     return { ok: true, missing: false, detail: "accepted" };
   } catch {
-    return { ok: false, missing: false, detail: `OpenClaw ${tool} did not finish.` };
+    return { ok: false, missing: false, detail: `Orchestration ${tool} did not finish.` };
   }
 }
 
@@ -424,7 +424,7 @@ async function gatewayIsUp(url: string, fetchImpl: typeof fetch): Promise<boolea
 }
 
 /**
- * Talk to a live OpenClaw gateway and dispatch coding/QA through the Grok Build runner.
+ * Talk to a live Orchestration gateway and dispatch coding/QA through the Grok Build runner.
  * Each step says whether it ran or was skipped. Secrets are never printed.
  */
 export async function runConnectedPath(deps: ConnectedDeps): Promise<ConnectedReport> {
@@ -434,10 +434,10 @@ export async function runConnectedPath(deps: ConnectedDeps): Promise<ConnectedRe
 
   const orchestration = await sendOrchestrationTurn(CHAT_MESSAGE, deps);
   if (orchestration.state === "skipped") {
-    lines.push(`OpenClaw gateway: skipped (${orchestration.detail})`);
+    lines.push(`Orchestration gateway: skipped (${orchestration.detail})`);
     lines.push("Chat turn: skipped (gateway down). Start it with: docker compose up -d openclaw-gateway");
   } else if (orchestration.state === "ran") {
-    lines.push(`OpenClaw gateway: ran. ${orchestration.detail}`);
+    lines.push(`Orchestration gateway: ran. ${orchestration.detail}`);
     lines.push(`Chat turn: ran. ${orchestration.detail}`);
   } else {
     failed = true;
@@ -445,7 +445,7 @@ export async function runConnectedPath(deps: ConnectedDeps): Promise<ConnectedRe
   }
 
   const meter = deps.grokRunner
-    ? { runner: deps.grokRunner, via: "grok-build" as const, label: "Grok Build" as const }
+    ? { runner: deps.grokRunner, via: "grok-build" as const, label: "worker" as const }
     : resolveCodingMeter(deps.bins, deps.env, { exec });
   if (!meter.runner) {
     lines.push(
@@ -459,7 +459,7 @@ export async function runConnectedPath(deps: ConnectedDeps): Promise<ConnectedRe
     if (coding.exitCode === 0 && qa.exitCode === 0) {
       lines.push(
         meter.via === "grok-build"
-          ? "Coding/QA on Grok Build: ran (two headless grok calls, streaming-json)."
+          ? "Coding/QA on the coding worker: ran (two headless calls, streaming-json)."
           : `Coding/QA: ran. Meter: ${meter.label}.`,
       );
     } else {

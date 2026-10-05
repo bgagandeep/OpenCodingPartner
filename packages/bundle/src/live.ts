@@ -46,7 +46,7 @@ export async function probeLiveStack(bins: StackBins): Promise<LiveProbe> {
       connected: false,
       transcript: [
         "Connected demo skipped.",
-        "OpenClaw or Grok Build is not installed.",
+        "The orchestration gateway or the coding worker is not installed.",
         "Install the stack with: pnpm bundle:install",
         "The offline demo still works: pnpm exec ocp demo --sandbox .sandbox",
         "",
@@ -59,22 +59,22 @@ export async function probeLiveStack(bins: StackBins): Promise<LiveProbe> {
   const codingArgv = grokBuildArgv("Say ready.", process.cwd());
   const lines = [
     "Connected stack",
-    `OpenClaw: ${bins.openclawBin}`,
-    `OpenClaw version: ${firstLine(openclaw.stdout || openclaw.stderr) || "(no output)"}`,
-    `Grok Build: ${bins.grokBin}`,
-    `Grok Build version: ${firstLine(grok.stdout || grok.stderr) || "(no output)"}`,
-    "Chat agent hands orchestration to this OpenClaw binary.",
+    `Orchestration: ${bins.openclawBin}`,
+    `Orchestration version: ${firstLine(openclaw.stdout || openclaw.stderr) || "(no output)"}`,
+    `Coding worker: ${bins.grokBin}`,
+    `Coding worker version: ${firstLine(grok.stdout || grok.stderr) || "(no output)"}`,
+    "Chat hands the session plan to this orchestration binary.",
     `Coding and QA agents call: ${codingArgv.join(" ")}`,
     "This probe did not send a model prompt.",
   ];
 
-  let layaNote = "Laya: not installed. The mock System-1 router still picks the route.";
+  let layaNote = "System-1: not installed. The fallback router still picks the route.";
   if (bins.layaPython) {
     const laya = await run(bins.layaPython, ["-c", "import laya; print(getattr(laya, '__version__', 'installed'))"]);
     layaNote =
       laya.code === 0
-        ? `Laya: ${firstLine(laya.stdout) || "import ok"} via ${bins.layaPython}`
-        : "Laya python is set, but import failed. The mock System-1 router still picks the route.";
+        ? `System-1: ${firstLine(laya.stdout) || "import ok"} via ${bins.layaPython}`
+        : "System-1 python is set, but import failed. The fallback router still picks the route.";
   }
   lines.push(layaNote);
 
@@ -82,7 +82,7 @@ export async function probeLiveStack(bins: StackBins): Promise<LiveProbe> {
   if (!connected) {
     lines.push("The binaries were found, but a version check failed. The stack is not connected.");
   } else {
-    lines.push("OpenClaw and Grok Build answered. The stack is connected.");
+    lines.push("Orchestration and the coding worker answered. The stack is connected.");
   }
   return { skipped: false, connected, transcript: `${lines.join("\n")}\n` };
 }

@@ -85,14 +85,14 @@ export async function installBundle(root: string, dryRun: boolean, layaOnly = fa
   };
   await mkdir(path.join(root, ".bundle"), { recursive: true });
   await writeFile(path.join(root, ".bundle/stack.json"), `${JSON.stringify(stack, null, 2)}\n`);
-  process.stdout.write("Installed Laya and the English checkpoint under .bundle/laya/.\n");
+  process.stdout.write("Installed System-1 and the English checkpoint under .bundle/laya/.\n");
   process.stdout.write(`${pins.laya.weightNote}\n`);
   if (!layaOnly) {
-    process.stdout.write("Installed OpenClaw and Grok Build under .bundle/.\n");
-    process.stdout.write("Their license files stay inside those installs. This repo did not copy their source.\n");
+    process.stdout.write("Installed the orchestration gateway and the coding worker under .bundle/.\n");
+    process.stdout.write("Their license files stay inside those installs. This repo did not copy their source. Names are in THIRD_PARTY_NOTICES.md.\n");
     process.stdout.write("Optional gateway: docker compose up -d openclaw-gateway\n");
   }
-  process.stdout.write("Next chat turn uses this Laya. The transcript says System-1: real Laya.\n");
+  process.stdout.write("Next chat turn uses this System-1. The transcript says System-1: real.\n");
   return 0;
 }
 

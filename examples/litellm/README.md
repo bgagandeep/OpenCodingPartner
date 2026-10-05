@@ -1,8 +1,8 @@
-# Local LiteLLM proxy
+# Local meter proxy
 
-LiteLLM is an OpenAI-compatible proxy. You own the keys. This repo does not vendor LiteLLM.
+This folder is a local chat-completions proxy for the meter. You own the keys. This repo does not vendor the proxy. The upstream name, image, and license are in [THIRD_PARTY_NOTICES.md](../../THIRD_PARTY_NOTICES.md).
 
-The example config exposes one alias, `gpt-4o-mini`. The proxy sends that to OpenAI using `OPENAI_API_KEY`. Clients call the proxy with `LITELLM_MASTER_KEY`.
+The example config exposes one alias, `gpt-4o-mini`. The proxy sends that to the provider using `OPENAI_API_KEY`. Clients call the proxy with `LITELLM_MASTER_KEY`.
 
 ```bash
 export LITELLM_MASTER_KEY="the proxy key"
@@ -13,4 +13,4 @@ export LITELLM_BASE_URL="http://127.0.0.1:4000/v1"
 pnpm exec ocp chat --sandbox .sandbox
 ```
 
-The proxy listens on `127.0.0.1:4000` only. Image: `docker.litellm.ai/berriai/litellm:v1.102.1` (MIT, BerriAI).
+The proxy listens on `127.0.0.1:4000` only.

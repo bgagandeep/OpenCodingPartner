@@ -18,9 +18,9 @@ test("doctor marks missing pieces and does not print a key", async () => {
       playwrightPresent: false,
     });
     assert.equal(missing.code, 1);
-    assert.match(missing.transcript, /yellow Laya weights: not installed/);
-    assert.match(missing.transcript, /green Meter: LiteLLM/);
-    assert.match(missing.transcript, /yellow OpenClaw \/healthz:/);
+    assert.match(missing.transcript, /yellow System-1: not installed/);
+    assert.match(missing.transcript, /green Meter: proxy/);
+    assert.match(missing.transcript, /yellow orchestration \/healthz:/);
     assert.match(missing.transcript, /red Write bridge plugin/);
     assert.match(missing.transcript, /yellow Playwright: not installed/);
     assert.doesNotMatch(missing.transcript, /super-secret-value/);
@@ -36,9 +36,9 @@ test("doctor marks missing pieces and does not print a key", async () => {
       playwrightPresent: true,
     });
     assert.equal(ready.code, 0);
-    assert.match(ready.transcript, /green Laya weights/);
+    assert.match(ready.transcript, /green System-1:/);
     assert.match(ready.transcript, /yellow Meter: none/);
-    assert.match(ready.transcript, /green OpenClaw \/healthz/);
+    assert.match(ready.transcript, /green orchestration \/healthz/);
     assert.match(ready.transcript, /green Write bridge plugin/);
     assert.match(ready.transcript, /green Playwright/);
     assert.match(ready.transcript, /System-1: fallback/);

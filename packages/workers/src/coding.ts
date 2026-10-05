@@ -9,13 +9,14 @@ export interface CreateFileInstruction {
 
 /**
  * Pull a create-file instruction out of a chat message.
- * Only "Use Grok Build to create ..." is accepted. Any other "Use X to create" is ignored.
+ * "Use the coding worker to create ..." is the product phrase. "Use Grok Build to create ..." still parses. Any other "Use X to create" is ignored.
  * Leading space is stripped. The rest of the message is not trimmed, so a trailing newline stays.
  */
 export function parseCreateFileInstruction(message: string): CreateFileInstruction | null {
   const text = message.replace(/^\s+/, "");
   const toolUse = text.match(/Use ([A-Za-z0-9 ._-]+) to create\s+/);
-  if (toolUse?.[1] !== undefined && toolUse[1].trim().toLowerCase() !== "grok build") {
+  const named = toolUse?.[1]?.trim().toLowerCase();
+  if (named !== undefined && named !== "grok build" && named !== "the coding worker" && named !== "coding worker") {
     return null;
   }
   const match = text.match(/create\s+(\S+)\s+with content:\n?([\s\S]*)$/);

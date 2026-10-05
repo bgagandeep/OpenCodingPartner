@@ -98,6 +98,8 @@ test("ocp doctor --sandbox checks that sandbox frame, fleet, and approvals", asy
     captured = "";
     const empty = await main(["doctor", "--sandbox", other]);
     assert.match(captured, /yellow Computer frame: none at gtm\/last-frame.png/);
+    assert.match(captured, /yellow Computer run: none/);
+    assert.match(captured, /does not open a page/);
     assert.match(captured, /yellow Fleet: no partners/);
     assert.match(captured, /green Approvals: none pending/);
     assert.match(captured, /yellow Partner agreement: PARTNER.md is missing/);

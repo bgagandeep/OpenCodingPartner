@@ -234,6 +234,84 @@ export async function doctorComputerFrameLine(sessionRoot: string): Promise<stri
   return `yellow Computer frame: ${session.detail} ${extra} ${tail}`;
 }
 
+function stepKind(value: unknown): string {
+  return typeof value === "string" && /^[a-z0-9-]{1,32}$/.test(value) ? value : "step";
+}
+
+async function readRunOutcome(sandboxRoot: string): Promise<{ present: boolean; pass: boolean; kind: string }> {
+  let raw: string;
+  try {
+    raw = await readFile(path.join(sandboxRoot, "gtm", "last-run.json"), "utf8");
+  } catch {
+    return { present: false, pass: false, kind: "" };
+  }
+  let body: { steps?: unknown; executed?: unknown };
+  try {
+    body = JSON.parse(raw) as { steps?: unknown; executed?: unknown };
+  } catch {
+    return { present: true, pass: false, kind: "unreadable" };
+  }
+  const steps = Array.isArray(body.steps) ? body.steps : [];
+  for (const step of steps) {
+    if (!step || typeof step !== "object") continue;
+    const record = step as { kind?: unknown; executed?: unknown; passed?: unknown };
+    if (record.passed === false || record.executed === false) return { present: true, pass: false, kind: stepKind(record.kind) };
+  }
+  if (body.executed === false || steps.length === 0) return { present: true, pass: false, kind: "run" };
+  return { present: true, pass: true, kind: "" };
+}
+
+async function partnerWorkspaces(sessionRoot: string): Promise<{ id: string; workspace: string }[]> {
+  let names: string[] = [];
+  try {
+    names = await readdir(path.join(sessionRoot, ".ocp", "fleet"));
+  } catch {
+    return [];
+  }
+  const partners: { id: string; workspace: string }[] = [];
+  for (const name of names) {
+    const workspace = path.join(sessionRoot, ".ocp", "fleet", name);
+    const identity = await readPartnerIdentity(workspace);
+    if (identity) partners.push({ id: identity.id, workspace });
+  }
+  partners.sort((left, right) => left.id.localeCompare(right.id));
+  return partners;
+}
+
+/** Doctor line for the last page check. It does not print the page text and does not open a browser. */
+export async function doctorComputerRunLine(sessionRoot: string): Promise<string> {
+  const tail = "This check does not open a page.";
+  const session = await readRunOutcome(sessionRoot);
+  const partners: { id: string; pass: boolean; kind: string }[] = [];
+  for (const partner of await partnerWorkspaces(sessionRoot)) {
+    const outcome = await readRunOutcome(partner.workspace);
+    if (outcome.present) partners.push({ id: partner.id, pass: outcome.pass, kind: outcome.kind });
+  }
+  const sessionDetail = !session.present
+    ? partners.length === 0
+      ? "none."
+      : "none at the session."
+    : session.pass
+      ? "the last page check passed."
+      : session.kind === "unreadable"
+        ? "gtm/last-run.json could not be read."
+        : `the last page check failed at ${session.kind}.`;
+  if (partners.length === 0) {
+    return `${session.pass ? "green" : "yellow"} Computer run: ${sessionDetail} ${tail}`;
+  }
+  const bad = partners.filter((partner) => !partner.pass);
+  if (session.pass && bad.length === 0) {
+    const count = partners.length === 1 ? "1 partner run passed." : `${partners.length} partner runs passed.`;
+    return `green Computer run: ${sessionDetail} ${count} ${tail}`;
+  }
+  const extra = bad.length > 0
+    ? bad.map((partner) => `${partner.id} failed at ${partner.kind}.`).join(" ")
+    : partners.length === 1
+      ? "1 partner run passed."
+      : `${partners.length} partner runs passed.`;
+  return `yellow Computer run: ${sessionDetail} ${extra} ${tail}`;
+}
+
 export type FrameCapturer = (url: string) => Promise<Uint8Array>;
 
 async function playwrightCapture(url: string): Promise<Uint8Array> {

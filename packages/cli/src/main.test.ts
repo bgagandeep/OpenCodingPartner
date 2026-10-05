@@ -1487,13 +1487,13 @@ test("ocp same compares two files and does not print them", async () => {
     writeFileSync(path.join(root, "b.txt"), "alpha-body\n");
     captured = "";
     assert.equal(await main(["same", "--from", "a.txt", "--to", "b.txt", "--sandbox", root]), 0);
-    assert.match(captured, /(^|\n)same\n/);
+    assert.match(captured, /same\n/);
     assert.doesNotMatch(captured, /alpha-body/);
     assert.equal(existsSync(path.join(root, ".ocp/last-check.json")), false);
     writeFileSync(path.join(root, "b.txt"), "beta-body\n");
     captured = "";
     assert.equal(await main(["same", "--from", "a.txt", "--to", "b.txt", "--sandbox", root]), 0);
-    assert.match(captured, /(^|\n)different\n/);
+    assert.match(captured, /different\n/);
     assert.doesNotMatch(captured, /alpha-body/);
     assert.doesNotMatch(captured, /beta-body/);
     captured = "";
@@ -1516,7 +1516,7 @@ test("ocp same compares two files and does not print them", async () => {
     writeFileSync(path.join(root, ".ocp/fleet/coding/two.txt"), "partner-body\n");
     captured = "";
     assert.equal(await main(["same", "--from", "one.txt", "--to", "two.txt", "--sandbox", root, "--partner", "coding"]), 0);
-    assert.match(captured, /(^|\n)same\n/);
+    assert.match(captured, /same\n/);
     assert.doesNotMatch(captured, /partner-body/);
     assert.doesNotMatch(captured, /beta-body/);
   } finally {

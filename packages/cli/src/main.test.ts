@@ -100,6 +100,7 @@ test("ocp doctor --sandbox checks that sandbox frame, fleet, and approvals", asy
     assert.match(captured, /yellow Computer frame: none at gtm\/last-frame.png/);
     assert.match(captured, /yellow Computer run: none/);
     assert.match(captured, /green Computer control: partner/);
+    assert.match(captured, /green Shared mount: no partners/);
     assert.match(captured, /does not take or return the browser/);
     assert.match(captured, /does not open a page/);
     assert.match(captured, /yellow Fleet: no partners/);

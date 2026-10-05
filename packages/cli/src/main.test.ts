@@ -1310,6 +1310,66 @@ test("ocp write creates one new file and does not overwrite", async () => {
   }
 });
 
+test("ocp patch edits one file and leaves a mismatch unchanged", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "ocp-patch-"));
+  let captured = "";
+  const original = process.stdout.write.bind(process.stdout);
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    captured += String(chunk);
+    return true;
+  }) as typeof process.stdout.write;
+  try {
+    const { existsSync, mkdirSync, writeFileSync } = await import("node:fs");
+    const diff = "@@ -1 +1 @@\n-hello\n+world\n";
+    assert.equal(await main(["patch", "--sandbox", root]), 2);
+    assert.match(captured, /Usage: ocp patch/);
+    captured = "";
+    assert.equal(await main(["patch", "--text", diff, "--sandbox", root, "missing.txt"]), 1);
+    assert.match(captured, /file missing/);
+    assert.equal(existsSync(path.join(root, "missing.txt")), false);
+    writeFileSync(path.join(root, "hello.txt"), "hello\n");
+    captured = "";
+    assert.equal(await main(["patch", "--text", diff, "--sandbox", root, "hello.txt"]), 0);
+    assert.match(captured, /patched/);
+    assert.doesNotMatch(captured, /world/);
+    assert.equal(readFileSync(path.join(root, "hello.txt"), "utf8"), "world\n");
+    assert.equal(existsSync(path.join(root, ".ocp/last-check.json")), false);
+    captured = "";
+    assert.equal(await main(["patch", "--text", diff, "--sandbox", root, "hello.txt"]), 1);
+    assert.match(captured, /patch did not match/);
+    assert.equal(readFileSync(path.join(root, "hello.txt"), "utf8"), "world\n");
+    const secretDiff = "@@ -1 +1 @@\n-world\n+password=hunter2\n";
+    captured = "";
+    assert.equal(await main(["patch", "--text", secretDiff, "--sandbox", root, "hello.txt"]), 1);
+    assert.match(captured, /blocked \(secret pattern\)/);
+    assert.doesNotMatch(captured, /hunter2/);
+    assert.equal(readFileSync(path.join(root, "hello.txt"), "utf8"), "world\n");
+    writeFileSync(path.join(root, "secret.txt"), "password=hunter2\n");
+    captured = "";
+    assert.equal(await main(["patch", "--text", diff, "--sandbox", root, "secret.txt"]), 1);
+    assert.match(captured, /blocked \(secret pattern\)/);
+    assert.doesNotMatch(captured, /hunter2/);
+    assert.equal(readFileSync(path.join(root, "secret.txt"), "utf8"), "password=hunter2\n");
+    mkdirSync(path.join(root, "subdir"));
+    captured = "";
+    assert.equal(await main(["patch", "--text", diff, "--sandbox", root, "subdir"]), 1);
+    assert.match(captured, /path is a directory/);
+    captured = "";
+    assert.equal(await main(["patch", "--text", diff, "--sandbox", root, "../secret"]), 1);
+    assert.match(captured, /path refused/);
+    mkdirSync(path.join(root, ".ocp/fleet/coding"), { recursive: true });
+    writeFileSync(path.join(root, ".ocp/fleet/coding/note.txt"), "hello\n");
+    captured = "";
+    assert.equal(await main(["patch", "--text", diff, "--sandbox", root, "--partner", "coding", "note.txt"]), 0);
+    assert.match(captured, /patched/);
+    assert.equal(readFileSync(path.join(root, ".ocp/fleet/coding/note.txt"), "utf8"), "world\n");
+    assert.equal(readFileSync(path.join(root, "hello.txt"), "utf8"), "world\n");
+  } finally {
+    process.stdout.write = original;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("ocp fleet status lists a partner and can print json", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "ocp-fleet-cli-"));
   let captured = "";

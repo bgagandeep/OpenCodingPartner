@@ -251,6 +251,15 @@ export function urlDecision(raw: string, allowHosts?: readonly string[]): { allo
   return { allow: true, reason: "" };
 }
 
+/** Shown when Playwright or Chromium is missing. No blank frame is written. */
+export function browserMissingNote(): string {
+  return "Browser is missing. Playwright is not installed. No frame was written. Install Chromium with pnpm exec playwright install chromium. ocp doctor reports Computer capture and does not start the browser.";
+}
+
+export function browserMissingMessage(message: string): boolean {
+  return /playwright|chromium|browserType|executable doesn't exist|cannot find package|browser missing/i.test(message);
+}
+
 export async function executeComputerVisit(input: ComputerVisitInput): Promise<GtmPlan> {
   if (!input.execute) {
     const plan = planGtmActions(input.productName);
@@ -278,7 +287,7 @@ export async function executeComputerVisit(input: ComputerVisitInput): Promise<G
     return plan;
   }
   if (!input.driver) {
-    plan.note = "Computer execute was requested. Playwright is missing or no browser driver is configured. No live browser ran.";
+    plan.note = browserMissingNote();
     if (claim) await writeClaim(input.sandboxRoot, url, claim, "", "", "", false);
     return plan;
   }
@@ -337,7 +346,9 @@ export async function executeComputerVisit(input: ComputerVisitInput): Promise<G
   } catch (error) {
     const message = error instanceof Error ? error.message : "browser failed";
     failed = failed || redact(message);
-    plan.note = `Computer execute was requested. The browser did not finish (${failed}). Playwright or Chromium may be missing. Later steps were skipped.`;
+    plan.note = browserMissingMessage(failed)
+      ? browserMissingNote()
+      : `Computer execute was requested. The browser did not finish (${failed}). Later steps were skipped.`;
     await session?.close().catch(() => undefined);
     await persistRun(input.sandboxRoot, url, recorded, plan);
     if (claim) await writeClaim(input.sandboxRoot, url, claim, "", "", "", false);

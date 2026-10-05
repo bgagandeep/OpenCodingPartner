@@ -2251,9 +2251,11 @@ test("a missing browser fails capture and computer-frame in the transcript", asy
       computerAllowHosts: ["example.com"],
     });
     assert.equal(turn.qa?.pass, false);
-    assert.match(turn.transcript, /Playwright is missing/);
+    assert.match(turn.transcript, /Browser is missing/);
+    assert.match(turn.transcript, /Playwright is not installed/);
+    assert.match(turn.transcript, /pnpm exec playwright install chromium/);
+    assert.match(turn.transcript, /ocp doctor reports Computer capture/);
     assert.match(turn.transcript, /Computer QA computer-frame: fail/);
-    assert.match(turn.transcript, /Capture found no open page/);
     assert.match(turn.transcript, /No frame was written/);
     await assert.rejects(readFile(path.join(root, "gtm/last-frame.png")));
   } finally {
@@ -2439,6 +2441,9 @@ test("computer capture writes a PNG frame and reports its time", async () => {
     const missing = await captureComputerFrame(root);
     assert.equal(missing.ok, false);
     assert.match(missing.text, /Browser is missing/);
+    assert.match(missing.text, /pnpm exec playwright install chromium/);
+    assert.match(missing.text, /ocp doctor reports Computer capture/);
+    assert.match(missing.text, /No frame was written/);
     const empty = await mkdtemp(path.join(tmpdir(), "ocp-frame-empty-"));
     const none = await captureComputerFrame(empty);
     assert.match(none.text, /No page is open/);

@@ -252,11 +252,23 @@ export async function main(argv: readonly string[]): Promise<number> {
     const args = tail.filter((arg) => arg !== "--json");
     const sub = args[0];
     const sand = takeFlag(args.slice(1), "--sandbox");
+    const sandbox = sand.value ?? ".sandbox";
+    const partner = takeFlag(sand.rest, "--partner");
+    const note = takeFlag(partner.rest, "--note");
+    if (sub === "accept" || sub === "deny" || sub === "redirect") {
+      if (sub === "redirect" && !note.value?.trim()) {
+        process.stdout.write("Usage: ocp approve redirect --note \"text\" [--sandbox .sandbox] [--partner name]\n");
+        return 2;
+      }
+      const message = sub === "accept" ? "approve" : sub === "deny" ? "deny" : `redirect: ${note.value?.trim()}`;
+      const result = await runProductTurn(message, sandbox, false, partner.value);
+      process.stdout.write(result.transcript);
+      return 0;
+    }
     if (sub !== "list") {
-      process.stdout.write("Usage: ocp approve list [--sandbox .sandbox] [--json]\n");
+      process.stdout.write("Usage: ocp approve list [--sandbox .sandbox] [--json]\n       ocp approve accept|deny [--sandbox .sandbox] [--partner name]\n       ocp approve redirect --note \"text\" [--sandbox .sandbox] [--partner name]\n");
       return 2;
     }
-    const sandbox = sand.value ?? ".sandbox";
     const items = await listApproveQueue(sandbox);
     const holds = await listReviewHolds(sandbox);
     if (json) {

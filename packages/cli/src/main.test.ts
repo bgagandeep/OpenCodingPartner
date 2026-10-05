@@ -344,6 +344,51 @@ test("ocp approve list shows a pending card and does not decide it", async () =>
   }
 });
 
+test("ocp approve accept deny and redirect run the chat turn", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "ocp-approve-decide-"));
+  let captured = "";
+  const original = process.stdout.write.bind(process.stdout);
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    captured += String(chunk);
+    return true;
+  }) as typeof process.stdout.write;
+  try {
+    const { writeFileSync, readFileSync } = await import("node:fs");
+    writeFileSync(path.join(root, "PARTNER.md"), "partner\n");
+    assert.equal(await main(["chat", "--sandbox", root, "add a helper"]), 0);
+    assert.match(captured, /Approve card plan-1 pending/);
+    captured = "";
+    assert.equal(await main(["approve", "accept", "--sandbox", root]), 0);
+    const plan = JSON.parse(readFileSync(path.join(root, ".ocp/sdlc/plan.json"), "utf8")) as { accepted?: boolean };
+    assert.equal(plan.accepted, true);
+    const cards = JSON.parse(readFileSync(path.join(root, ".ocp/approvals.json"), "utf8")) as { cards: { status: string }[] };
+    assert.equal(cards.cards[0]?.status, "approved");
+
+    captured = "";
+    assert.equal(await main(["chat", "--sandbox", root, "--partner", "coding", "add a helper"]), 0);
+    assert.match(captured, /Approve card plan-1 pending/);
+    captured = "";
+    assert.equal(await main(["approve", "deny", "--sandbox", root, "--partner", "coding"]), 0);
+    assert.match(captured, /Approve denied/);
+    const denied = JSON.parse(readFileSync(path.join(root, ".ocp/fleet/coding/.ocp/approvals.json"), "utf8")) as { cards: { status: string }[] };
+    assert.equal(denied.cards[0]?.status, "denied");
+
+    captured = "";
+    assert.equal(await main(["chat", "--sandbox", root, "--partner", "coding", "add a helper again"]), 0);
+    captured = "";
+    const missing = await main(["approve", "redirect", "--sandbox", root, "--partner", "coding"]);
+    assert.equal(missing, 2);
+    assert.match(captured, /Usage: ocp approve redirect/);
+    captured = "";
+    assert.equal(await main(["approve", "redirect", "--sandbox", root, "--partner", "coding", "--note", "use a smaller helper"]), 0);
+    assert.match(captured, /Approve redirected/);
+    assert.match(readFileSync(path.join(root, ".ocp/fleet/coding/.ocp/sdlc/intent.md"), "utf8"), /smaller helper/);
+  } finally {
+    process.stdout.write = original;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("ocp todo list shows the checklist and does not change it", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "ocp-todo-cli-"));
   let captured = "";

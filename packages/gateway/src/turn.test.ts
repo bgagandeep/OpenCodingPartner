@@ -6,7 +6,7 @@ import path from "node:path";
 import test from "node:test";
 import { routeWithPredict, type ManagerPlan } from "@opencodingpartner/policy";
 import { applySandboxTodo, grepSandbox, listSandboxDir, writeSandboxFile } from "@opencodingpartner/workers";
-import { DEMO_MESSAGE, applySwarmManifest, doctorSwarmLine, approveDoctorLine, clearSessionMemory, coreIsOpen, createRoutine, deliverSlackEvent, deliverTelegramUpdate, doctorPlanLine, fireDueRoutines, fireEvent, formatApproveQueue, formatFleetStatus, formatFleetStatusJson, formatReviewHolds, formatTodoQueue, isolatePartner, listApproveQueue, listReviewHolds, listRoutines, listTodoQueue, parseSwarmManifest, partnerAgreementDoctorLine, partnerAgreementStatus, partnerContainerArgv, pauseRoutine, readFleetStatus, readPackaging, reviewHoldDoctorLine, runChatTurn, todoDoctorLine, runDemo, slackSignature, slackTurn, startPartnerContainer, stopPartnerContainer, verifySlackRequest, verifyTelegramRequest } from "./index.js";
+import { DEMO_MESSAGE, applySwarmManifest, doctorSwarmLine, approveDoctorLine, clearSessionMemory, coreIsOpen, doctorAcpLine, createRoutine, deliverSlackEvent, deliverTelegramUpdate, doctorPlanLine, fireDueRoutines, fireEvent, formatApproveQueue, formatFleetStatus, formatFleetStatusJson, formatReviewHolds, formatTodoQueue, isolatePartner, listApproveQueue, listReviewHolds, listRoutines, listTodoQueue, parseSwarmManifest, partnerAgreementDoctorLine, partnerAgreementStatus, partnerContainerArgv, pauseRoutine, readFleetStatus, readPackaging, reviewHoldDoctorLine, runChatTurn, todoDoctorLine, runDemo, slackSignature, slackTurn, startPartnerContainer, stopPartnerContainer, verifySlackRequest, verifyTelegramRequest } from "./index.js";
 import { allowComputerUse, captureComputerFrame, checkComputerFrame, computerTabText, doctorComputerControlLine, doctorComputerFrameLine, doctorComputerRunLine } from "./computer-tab.js";
 import { doctorSharedMountLine } from "./fleet.js";
 import { doctorLastCheckLine } from "./last-check.js";
@@ -3418,6 +3418,32 @@ test("a billing key stays inert and the core stays open", async () => {
     });
     assert.equal(turn.coding?.wrote, true);
     assert.equal(await readFile(path.join(root, "hello.txt"), "utf8"), "hello\n");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("doctor says whether Advanced ACP is on and does not start a backend", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-acp-doctor-"));
+  try {
+    const off = await doctorAcpLine(root, {});
+    assert.match(off, /green Advanced ACP: off/);
+    assert.match(off, /does not start one/);
+    assert.match(off, /local swarm still runs/);
+    const envOn = await doctorAcpLine(root, { OCP_ACP: "1" });
+    assert.match(envOn, /yellow Advanced ACP: on/);
+    await mkdir(path.join(root, ".ocp"), { recursive: true });
+    await writeFile(
+      path.join(root, ".ocp/settings.json"),
+      `${JSON.stringify({ advanced: { acp: true }, token: "password=hunter2" })}\n`,
+    );
+    const settingsOn = await doctorAcpLine(root, {});
+    assert.match(settingsOn, /yellow Advanced ACP: on/);
+    assert.doesNotMatch(settingsOn, /hunter2/);
+    await writeFile(path.join(root, ".ocp/settings.json"), "not-json\n");
+    const broken = await doctorAcpLine(root, {});
+    assert.match(broken, /yellow Advanced ACP: the settings file could not be read/);
+    assert.doesNotMatch(broken, /not-json/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

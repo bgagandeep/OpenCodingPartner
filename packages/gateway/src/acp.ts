@@ -26,6 +26,28 @@ export function noopAcpBackend(): AcpBackend {
   };
 }
 
+/** Doctor line for the ACP switch. This does not start a backend. */
+export async function doctorAcpLine(sandboxRoot: string, env: NodeJS.ProcessEnv): Promise<string> {
+  const tail = "No backend is installed. The local swarm still runs. This check does not start one.";
+  const file = path.join(sandboxRoot, ".ocp", "settings.json");
+  let raw: string | undefined;
+  try {
+    raw = await readFile(file, "utf8");
+  } catch {
+    raw = undefined;
+  }
+  if (raw !== undefined) {
+    try {
+      JSON.parse(raw);
+    } catch {
+      if (env.OCP_ACP === "1") return `yellow Advanced ACP: on. The settings file could not be read. ${tail}`;
+      return `yellow Advanced ACP: the settings file could not be read. ${tail}`;
+    }
+  }
+  if (await acpOptIn(sandboxRoot, env)) return `yellow Advanced ACP: on. ${tail}`;
+  return `green Advanced ACP: off. ${tail}`;
+}
+
 export async function acpOptIn(sandboxRoot: string, env: NodeJS.ProcessEnv): Promise<boolean> {
   if (env.OCP_ACP === "1") return true;
   try {

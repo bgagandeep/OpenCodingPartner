@@ -9,7 +9,7 @@ Open Coding Partner (OCP) uses this file as the partner agreement for a repo or 
 3. Plan. The steps are saved at `.ocp/sdlc/plan.md`. The chat shows an Approve card in the transcript and stores the queue at `.ocp/approvals.json`. Edits wait until you say `approve` or `accept the plan`. `deny` stops the edit. `redirect: note` sends the note back to intent and opens a new card. `ocp approve list` shows pending cards and does not decide them.
 4. Diff and tests. After the plan is accepted, the coding worker edits the sandbox and runs the named check `node --test` in that sandbox.
 5. Review. The QA agent does the mechanical review (files and the check). Human intent and risk are the Approve card before the edit. The split is written at `.ocp/sdlc/review.md`.
-6. Fail. A failed check or a failed mechanical review goes back to intent. `.ocp/sdlc/review-hold` stays until the plan is accepted again.
+6. Fail. A failed check or a failed mechanical review goes back to intent. `.ocp/sdlc/review-hold` stays until the plan is accepted again. `ocp approve accept` does that and does not replace the intent.
 
 An explicit create-file message still writes that one file. It is not an open edit. When the orchestration gateway drives that write for a partner, the file lands in that partner workspace, not the session root. The same message sent to another partner id runs again. Repeating it for one partner replays the first result.
 

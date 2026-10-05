@@ -235,12 +235,14 @@ async function executeTurn(input: ChatTurnInput, session: SwarmSession, key: str
   const openclawDrove = notice.driver === "openclaw" && notice.state === "ran";
   const openclawFailed = notice.driver === "openclaw" && notice.state === "failed";
   if (openclawDrove) plan = { ...plan, source: "openclaw" };
+  let acceptedAgain = false;
   if (await partnerAgreementOn(input.sandboxRoot)) {
     const verb = approveVerb(input.message);
     const approved = verb === "approve" ? await decidePlanCard(input.sandboxRoot, "approved") : undefined;
     if (approved?.kind === "computer") await allowComputerUse(input.sandboxRoot);
     const pending = verb === "deny" || verb === "redirect" ? await pendingPlanCard(input.sandboxRoot) : undefined;
-    if ((approved?.kind === "plan" && (await acceptPlan(input.sandboxRoot))) || pending) {
+    if (verb === "approve" && !approved) acceptedAgain = await acceptPlan(input.sandboxRoot);
+    if ((approved?.kind === "plan" && (await acceptPlan(input.sandboxRoot))) || acceptedAgain || pending) {
       if (!plan.roles.includes("coding")) {
         plan = { ...plan, roles: ["coding", "qa", "security", "computer"] };
       }
@@ -466,6 +468,11 @@ async function executeTurn(input: ChatTurnInput, session: SwarmSession, key: str
         note: "Coding agent did not edit files. General edits need a meter key. A simple create-file message still runs on the local sandbox.",
       };
     }
+  }
+
+  if (acceptedAgain && coding) {
+    const line = "Plan accepted again. The review hold is clear.";
+    coding = { ...coding, note: coding.note ? `${line}\n${coding.note}` : line };
   }
 
   if ((await partnerAgreementOn(input.sandboxRoot)) && coding?.wrote && (await planIsAccepted(input.sandboxRoot))) {

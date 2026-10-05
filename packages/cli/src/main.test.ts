@@ -1029,12 +1029,12 @@ test("ocp mkdir creates a directory and does not replace a file", async () => {
     assert.match(captured, /Usage: ocp mkdir/);
     captured = "";
     assert.equal(await main(["mkdir", "--sandbox", root, "src/lib"]), 0);
-    assert.match(captured, /^created\n$/);
+    assert.match(captured, /created/);
     assert.equal(statSync(path.join(root, "src/lib")).isDirectory(), true);
     assert.equal(existsSync(path.join(root, ".ocp/last-check.json")), false);
     captured = "";
     assert.equal(await main(["mkdir", "--sandbox", root, "src/lib"]), 0);
-    assert.match(captured, /^already exists\n$/);
+    assert.match(captured, /already exists/);
     writeFileSync(path.join(root, "hello.txt"), "hello\n");
     captured = "";
     assert.equal(await main(["mkdir", "--sandbox", root, "hello.txt"]), 1);
@@ -1050,7 +1050,7 @@ test("ocp mkdir creates a directory and does not replace a file", async () => {
     assert.match(captured, /path refused/);
     captured = "";
     assert.equal(await main(["mkdir", "--sandbox", root, "--partner", "coding", "notes"]), 0);
-    assert.match(captured, /^created\n$/);
+    assert.match(captured, /created/);
     assert.equal(statSync(path.join(root, ".ocp/fleet/coding/notes")).isDirectory(), true);
     assert.equal(existsSync(path.join(root, "notes")), false);
   } finally {

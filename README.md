@@ -21,7 +21,7 @@ pnpm exec ocp doctor
 - System-1: green when `.bundle/laya` python and `.bundle/laya/hf` are present. The next chat can say `System-1: real.` Yellow means the transcript will say `System-1: fallback.` System python is not System-1.
 - Meter: set one of these, in this order. `LITELLM_API_KEY` or `LITELLM_MASTER_KEY` (optional `LITELLM_BASE_URL`, default `http://127.0.0.1:4000/v1`). Else `OPENAI_API_KEY` and `OPENAI_BASE_URL`. Else `XAI_API_KEY` with the `grok` binary. Yellow `Meter: none` means a general edit will refuse. A simple create-file still writes on the local sandbox.
 - Orchestration: `docker compose up -d openclaw-gateway`. Doctor checks `GET /healthz`. Yellow means the chat turn writes locally and says `Write path: local sandbox.`
-- Write bridge: load `integrations/openclaw-sandbox-write` on that gateway. Doctor checks that the plugin is in this repo. It does not prove the gateway loaded it. `fs_write` stays blocked.
+- Write bridge: load `integrations/openclaw-sandbox-write` on that gateway. When the gateway answers, `ocp doctor` asks whether `ocp_sandbox_todo` is offered. That check does not update a list. When the gateway is down, doctor does not prove the plugin loaded. `fs_write` stays blocked.
 - Computer capture: yellow until Playwright is installed. Needed for `ocp computer capture` and `--computer-execute`. The doctor line does not start the browser.
 
 Prove-it chat, after doctor is green for the pieces you care about:

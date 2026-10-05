@@ -26,7 +26,7 @@ import {
   writeReviewSplit,
 } from "./sdlc.js";
 import { allowComputerUse, captureExecutedFrame, computerTabText, markComputerLive, readComputerTab } from "./computer-tab.js";
-export { captureComputerFrame, captureExecutedFrame, checkComputerFrame, computerTabText, returnComputer, takeoverComputer } from "./computer-tab.js";
+export { captureComputerFrame, captureExecutedFrame, checkComputerFrame, checkComputerFrames, computerTabText, returnComputer, takeoverComputer } from "./computer-tab.js";
 export { fleetDoctorLine, fleetIds, formatFleetStatus, formatFleetStatusJson, isolatePartner, partnerContainerArgv, partnerWorkspace, readFleetStatus, readPartnerIdentity } from "./fleet.js";
 export { startPartnerContainer, stopPartnerContainer } from "./fleet-run.js";
 export { createRoutine, fireDueRoutines, fireEvent, formatRoutineList, listRoutines, pauseRoutine, resumeRoutine } from "./routines.js";

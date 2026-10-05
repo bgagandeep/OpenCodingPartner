@@ -6,7 +6,7 @@ import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 import { codingRunnerForEnv, copyViaOpenClaw, deleteViaOpenClaw, discoverStack, mkdirViaOpenClaw, predictWithLaya, renameViaOpenClaw, rmdirViaOpenClaw, runConnectedPath, runDoctor, sendOrchestrationTurn, startSandboxWriteBridge, writeViaOpenClaw } from "@opencodingpartner/bundle";
 import { access, copyFile, mkdir, readFile } from "node:fs/promises";
-import { computerTabText, returnComputer, runChatTurn, runDemo, takeoverComputer, type ChatTurnInput } from "@opencodingpartner/gateway";
+import { computerTabText, isolatePartner, returnComputer, runChatTurn, runDemo, takeoverComputer, type ChatTurnInput } from "@opencodingpartner/gateway";
 import { playwrightBrowserDriver } from "@opencodingpartner/workers";
 import { routeWithPredict } from "@opencodingpartner/policy";
 import { proveCoding, proveComputer } from "./prove.js";
@@ -78,14 +78,16 @@ export async function main(argv: readonly string[]): Promise<number> {
   if (command === "computer") {
     const { value, rest } = takeFlag(tail, "--sandbox");
     const sandbox = value ?? ".sandbox";
-    const action = rest[0];
-    if (action === "takeover") await takeoverComputer(sandbox);
-    else if (action === "return") await returnComputer(sandbox);
+    const partnerFlag = takeFlag(rest, "--partner");
+    const target = partnerFlag.value ? await isolatePartner(sandbox, partnerFlag.value) : sandbox;
+    const action = partnerFlag.rest[0];
+    if (action === "takeover") await takeoverComputer(target);
+    else if (action === "return") await returnComputer(target);
     else if (action) {
-      process.stdout.write("Usage: ocp computer [--sandbox .sandbox] [takeover|return]\n");
+      process.stdout.write("Usage: ocp computer [--sandbox .sandbox] [--partner name] [takeover|return]\n");
       return 2;
     }
-    process.stdout.write(`${await computerTabText(sandbox)}\n`);
+    process.stdout.write(`${await computerTabText(target)}\n`);
     return 0;
   }
   if (command === "doctor") {
@@ -119,6 +121,7 @@ export async function main(argv: readonly string[]): Promise<number> {
       tail.filter((arg) => arg !== "--computer-execute"),
       "--sandbox",
     );
+    const partnerFlag = takeFlag(rest, "--partner");
     const sandbox = value ?? ".sandbox";
     const repoRoot = path.resolve(fileURLToPath(new URL("../../../", import.meta.url)));
     await mkdir(sandbox, { recursive: true });
@@ -127,8 +130,8 @@ export async function main(argv: readonly string[]): Promise<number> {
     } catch {
       await copyFile(path.join(repoRoot, "PARTNER.md"), path.join(sandbox, "PARTNER.md")).catch(() => undefined);
     }
-    const message = rest.join(" ");
-    const turn = (text: string) => runProductTurn(text, sandbox, computerExecute);
+    const message = partnerFlag.rest.join(" ");
+    const turn = (text: string) => runProductTurn(text, sandbox, computerExecute, partnerFlag.value);
     if (message.replace(/^\s+/, "").length === 0) {
       if (!stdin.isTTY) {
         process.stderr.write("Usage: ocp chat --sandbox .sandbox \"your message\"\n");
@@ -155,7 +158,7 @@ export async function main(argv: readonly string[]): Promise<number> {
   return command === undefined || command === "--help" || command === "-h" ? 0 : 2;
 }
 
-async function runProductTurn(message: string, sandbox: string, computerExecute: boolean) {
+async function runProductTurn(message: string, sandbox: string, computerExecute: boolean, partnerId?: string) {
   const repoRoot = path.resolve(fileURLToPath(new URL("../../../", import.meta.url)));
   let stack: { openclawBin?: string; grokBin?: string; layaPython?: string; layaHfHome?: string } | undefined;
   try {
@@ -178,6 +181,7 @@ async function runProductTurn(message: string, sandbox: string, computerExecute:
     computerExecute,
     computerUrl: process.env.OCP_COMPUTER_URL,
     computerAllowHosts: process.env.OCP_COMPUTER_ALLOW_HOSTS?.split(","),
+    partnerId,
     browserDriver: computerExecute ? playwrightBrowserDriver() : undefined,
     orchestration: (plan) => sendOrchestrationTurn(message, { env, bins }, plan),
     openclawWrite: (relativePath, content) => writeViaOpenClaw({ env, bins }, sandbox, relativePath, content),

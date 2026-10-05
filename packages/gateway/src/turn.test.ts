@@ -2376,6 +2376,80 @@ test("the same message for two partners is two turns, and one partner still repl
   }
 });
 
+test("a partner copies one shared file into its workspace and leaves the source", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-shared-copy-"));
+  try {
+    await mkdir(path.join(root, "src"), { recursive: true });
+    await writeFile(path.join(root, "src", "note.txt"), "hello shared\n");
+    await writeFile(path.join(root, "secret.txt"), "password=hunter2\n");
+    const workspace = await isolatePartner(root, "coding");
+    const turn = await runChatTurn({
+      message: "fix the checklist",
+      sandboxRoot: workspace,
+      grokRunner: {
+        async run() {
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify({
+              done: true,
+              steps: [
+                { tool: "copy", path: "shared/src/note.txt", to: "src/note.txt" },
+                { tool: "copy", path: "shared/secret.txt", to: "src/secret.txt" },
+                { tool: "copy", path: "src/note.txt", to: "shared/src/other.txt" },
+              ],
+            }),
+          };
+        },
+      },
+    });
+    assert.match(turn.transcript, /Tool: copy shared\/src\/note.txt → src\/note.txt/);
+    assert.match(turn.transcript, /Copy path: local sandbox/);
+    assert.match(turn.transcript, /Tool: copy shared\/secret.txt → src\/secret.txt \(blocked/);
+    assert.match(turn.transcript, /shared is read-only/);
+    assert.doesNotMatch(turn.transcript, /password=hunter2/);
+    assert.equal(await readFile(path.join(workspace, "src", "note.txt"), "utf8"), "hello shared\n");
+    assert.equal(await readFile(path.join(root, "src", "note.txt"), "utf8"), "hello shared\n");
+    await assert.rejects(readFile(path.join(workspace, "src", "secret.txt"), "utf8"));
+    await assert.rejects(readFile(path.join(root, "src", "other.txt"), "utf8"));
+
+    const remoteRoot = await mkdtemp(path.join(tmpdir(), "ocp-shared-copy-remote-"));
+    await mkdir(path.join(remoteRoot, "src"), { recursive: true });
+    await writeFile(path.join(remoteRoot, "src", "note.txt"), "hello shared\n");
+    const remoteWorkspace = await isolatePartner(remoteRoot, "coding");
+    const remote = await runChatTurn({
+      message: "fix the checklist",
+      sandboxRoot: remoteWorkspace,
+      orchestration: async () => ({
+        state: "ran",
+        driver: "openclaw",
+        detail: "Session agent:board:main accepted the plan.",
+      }),
+      grokRunner: {
+        async run() {
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify({
+              done: true,
+              steps: [{ tool: "copy", path: "shared/src/note.txt", to: "src/note.txt" }],
+            }),
+          };
+        },
+      },
+      openclawWrite: async (relativePath, content) => {
+        await writeSandboxFile(remoteWorkspace, relativePath, content);
+        return { ok: true, detail: "bridge" };
+      },
+    });
+    assert.match(remote.transcript, /Copy path: orchestration/);
+    assert.doesNotMatch(remote.transcript, /Copy path: local sandbox/);
+    assert.equal(await readFile(path.join(remoteWorkspace, "src", "note.txt"), "utf8"), "hello shared\n");
+    assert.equal(await readFile(path.join(remoteRoot, "src", "note.txt"), "utf8"), "hello shared\n");
+    await rm(remoteRoot, { recursive: true, force: true });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("a partner reads the shared session and a write to shared is refused", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "ocp-shared-read-"));
   try {

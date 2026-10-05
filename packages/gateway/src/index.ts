@@ -880,6 +880,49 @@ async function applyToolReply(
         observations.push(read.ok ? `${line}\n${read.detail.slice(0, 4000)}` : line);
         continue;
       }
+      if (step.tool === "copy" && step.path && step.to && sharedRequest(step.path).shared && !sharedRequest(step.to).shared) {
+        const read = await readShared(input.sandboxRoot, step.path);
+        if (!read.ok) {
+          const line = `Tool: copy ${step.path} → ${step.to} (${read.detail})`;
+          log.push(line);
+          observations.push(line);
+          continue;
+        }
+        const gate = securityGate({ relativePath: step.to, content: read.detail, sandboxRoot: input.sandboxRoot });
+        if (!gate.allow) {
+          blocked.push(step.to);
+          security = { allow: false, reasons: gate.reasons };
+          const line = `Tool: copy ${step.path} → ${step.to} (blocked)`;
+          log.push(line);
+          observations.push(line);
+          continue;
+        }
+        if (await fileExists(input.sandboxRoot, step.to)) {
+          const line = `Tool: copy ${step.path} → ${step.to} (overwrite refused)`;
+          log.push(line);
+          observations.push(line);
+          continue;
+        }
+        if (openclawDrove && input.openclawWrite) {
+          const landed = await input.openclawWrite(step.to, read.detail);
+          const onDisk = landed.ok && (await fileMatches(input.sandboxRoot, step.to, read.detail));
+          if (!onDisk) {
+            const line = `Tool: copy ${step.path} → ${step.to} (orchestration write did not land)`;
+            log.push(line);
+            observations.push(line);
+            continue;
+          }
+          copiedRemote = true;
+        } else {
+          await writeSandboxFile(input.sandboxRoot, step.to, read.detail);
+          copiedLocal = true;
+        }
+        kept.push(step.to);
+        const line = `Tool: copy ${step.path} → ${step.to}`;
+        log.push(line);
+        observations.push(line);
+        continue;
+      }
       if (onShared) {
         const line = `Tool: ${step.tool} refused (shared is read-only)`;
         log.push(line);
@@ -1210,7 +1253,7 @@ async function codingPrompt(sandboxRoot: string, message: string): Promise<strin
   const planNote = planText ? `Accepted plan:\n${planText}\n` : "";
   const rules = await loadPartnerRules(sandboxRoot);
   const rulesNote = rules ? `Partner rules:\n${rules}\n` : "";
-  return `${history}${filesNote}${planNote}${rulesNote}User request:\n${message}\nReply with JSON only: {"steps":[{"tool":"list"|"read"|"grep"|"glob"|"run"|"write"|"patch"|"delete"|"rename"|"copy"|"append"|"mkdir"|"rmdir"|"todo","action":"add or complete","to":"relative destination","query":"text or /regex/","path":"relative","content":"full text for write, or todo text, or a 1-based todo index","diff":"unified diff for patch","argv":["node","--test","relative.test.ts"]}],"done":false}. One reply is one round. After you see Tool observations, send the next round. Set "done" to true when finished. List or read before you edit. In a partner workspace, list and read of shared or shared/path read the session root and do not copy it. .ocp and gtm are skipped. A write to shared is refused. Patch a file that already exists. Write only a new file. Append adds text to one existing file and does not create a file. When the gateway drove the turn, append uses the sandbox append bridge. A missing plugin appends locally. A refusal does not append locally. Copy copies one existing file to a new relative path and leaves the source. A todo step uses action add with the task text, or action complete with a 1-based index or id. At most 12 todos. When the gateway drove the turn, a todo uses the sandbox todo bridge. A missing plugin updates the list locally. A refusal does not update it locally. Allowed commands are node --test plus relative paths, pnpm test with no extra arguments, tsc --noEmit plus relative paths, git status, git status -sb, git status --short --branch, git diff plus relative paths, and git log --oneline -n N with N from 1 to 20, and git show HEAD: plus one relative path.`;
+  return `${history}${filesNote}${planNote}${rulesNote}User request:\n${message}\nReply with JSON only: {"steps":[{"tool":"list"|"read"|"grep"|"glob"|"run"|"write"|"patch"|"delete"|"rename"|"copy"|"append"|"mkdir"|"rmdir"|"todo","action":"add or complete","to":"relative destination","query":"text or /regex/","path":"relative","content":"full text for write, or todo text, or a 1-based todo index","diff":"unified diff for patch","argv":["node","--test","relative.test.ts"]}],"done":false}. One reply is one round. After you see Tool observations, send the next round. Set "done" to true when finished. List or read before you edit. In a partner workspace, list and read of shared or shared/path read the session root and do not copy the tree. Copy from shared/path to a workspace path writes that one file and leaves the source. A copy onto shared is refused. .ocp and gtm are skipped. A write to shared is refused. Patch a file that already exists. Write only a new file. Append adds text to one existing file and does not create a file. When the gateway drove the turn, append uses the sandbox append bridge. A missing plugin appends locally. A refusal does not append locally. Copy copies one existing file to a new relative path and leaves the source. A todo step uses action add with the task text, or action complete with a 1-based index or id. At most 12 todos. When the gateway drove the turn, a todo uses the sandbox todo bridge. A missing plugin updates the list locally. A refusal does not update it locally. Allowed commands are node --test plus relative paths, pnpm test with no extra arguments, tsc --noEmit plus relative paths, git status, git status -sb, git status --short --branch, git diff plus relative paths, and git log --oneline -n N with N from 1 to 20, and git show HEAD: plus one relative path.`;
 }
 
 async function mkdirThroughTurn(

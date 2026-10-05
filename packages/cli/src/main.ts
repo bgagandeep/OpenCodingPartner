@@ -8,7 +8,7 @@ import { stdin, stdout } from "node:process";
 import { codingRunnerForEnv, appendViaOpenClaw, copyViaOpenClaw, deleteViaOpenClaw, discoverStack, dockerLine, mkdirViaOpenClaw, predictWithLaya, renameViaOpenClaw, rmdirViaOpenClaw, runConnectedPath, runDoctor, sendOrchestrationTurn, startSandboxWriteBridge, todoViaOpenClaw, writeViaOpenClaw } from "@opencodingpartner/bundle";
 import { access, copyFile, mkdir, readFile } from "node:fs/promises";
 import { acpOptIn, applySwarmManifest, doctorSwarmLine, approveDoctorLine, captureComputerFrame, checkComputerFrame, checkComputerFrames, computerTabText, doctorComputerControlLine, doctorComputerFrameLine, doctorComputerRunLine, doctorComputerStatusLine, doctorLastCheckLine, doctorLastQaLine, doctorLastWriteLine, doctorRoutineLine, doctorSharedMountLine, createRoutine, fireDueRoutines, fireEvent, formatApproveQueue, formatApproveQueueJson, formatReviewHolds, formatRoutineList, formatTodoQueue, formatTodoQueueJson, formatSettings, fleetDoctorLine, formatFleetStatus, formatFleetStatusJson, isolatePartner, listApproveQueue, listReviewHolds, listRoutines, listTodoQueue, partnerAgreementDoctorLine, partnerAgreementStatus, parseSwarmManifest, pauseRoutine, postSlackReply, postTelegramReply, readFleetStatus, readPackaging, resumeRoutine, returnComputer, reviewHoldDoctorLine, doctorPlanLine, runChatTurn, todoDoctorLine, runDemo, slackCredentialStatus, slackTurn, startPartnerContainer, stopPartnerContainer, takeoverComputer, telegramCredentialStatus, telegramTurn, deliverSlackEvent, deliverTelegramUpdate, validateSwarmManifest, type ChatTurnInput } from "@opencodingpartner/gateway";
-import { playwrightBrowserDriver } from "@opencodingpartner/workers";
+import { applySandboxTodo, playwrightBrowserDriver } from "@opencodingpartner/workers";
 import { routeWithPredict } from "@opencodingpartner/policy";
 import { proveCoding, proveComputer } from "./prove.js";
 import { runChatRepl } from "./repl.js";
@@ -283,11 +283,33 @@ export async function main(argv: readonly string[]): Promise<number> {
     const args = tail.filter((arg) => arg !== "--json");
     const sub = args[0];
     const sand = takeFlag(args.slice(1), "--sandbox");
+    const sandbox = sand.value ?? ".sandbox";
+    if (sub === "add" || sub === "complete") {
+      const partner = takeFlag(sand.rest, "--partner");
+      const textFlag = takeFlag(partner.rest, "--text");
+      const text = (textFlag.value ?? textFlag.rest.join(" ")).trim();
+      if (!text) {
+        process.stdout.write("Usage: ocp todo add|complete --text \"...\" [--sandbox .sandbox] [--partner name]\n");
+        return 2;
+      }
+      let root = sandbox;
+      try {
+        if (partner.value) root = await isolatePartner(sandbox, partner.value);
+      } catch (error) {
+        process.stdout.write(`${error instanceof Error ? error.message : "partner refused"}\n`);
+        return 1;
+      }
+      const changed = await applySandboxTodo(root, sub, text);
+      process.stdout.write(`${changed.detail}\n`);
+      if (!changed.ok) return 1;
+      const items = await listTodoQueue(sandbox);
+      process.stdout.write(json ? formatTodoQueueJson(items) : formatTodoQueue(items));
+      return 0;
+    }
     if (sub !== "list") {
-      process.stdout.write("Usage: ocp todo list [--sandbox .sandbox] [--json]\n");
+      process.stdout.write("Usage: ocp todo list [--sandbox .sandbox] [--json]\n       ocp todo add|complete --text \"...\" [--sandbox .sandbox] [--partner name]\n");
       return 2;
     }
-    const sandbox = sand.value ?? ".sandbox";
     const items = await listTodoQueue(sandbox);
     process.stdout.write(json ? formatTodoQueueJson(items) : formatTodoQueue(items));
     return 0;

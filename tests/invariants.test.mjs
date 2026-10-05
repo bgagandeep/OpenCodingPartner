@@ -30,7 +30,7 @@ test("product docs name the tools and keep ads and payments off", () => {
   assert.match(read("THIRD_PARTY_NOTICES.md"), /convaiinnovations\/laya/);
   assert.match(docs, /System-1/);
   assert.match(read("README.md"), /Open Coding Partner/);
-  for (const name of ["ARCHITECTURE.md", "ROADMAP.md", "CONTRIBUTING.md"]) {
+  for (const name of ["ARCHITECTURE.md", "ROADMAP.md", "CONTRIBUTING.md", "PARTNER.md"]) {
     const page = read(name);
     assert.doesNotMatch(page, /OpenClaw|Grok Build|LiteLLM|\bLaya\b|Claude Code|Hermes|Trinity/);
   }

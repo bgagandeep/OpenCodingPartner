@@ -3,9 +3,21 @@ import { mkdir, mkdtemp, readFile, rm, stat, unlink, writeFile } from "node:fs/p
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { StoodUpAgent, SwarmSession } from "@opencodingpartner/mesh";
-import { boardSession } from "@opencodingpartner/mesh";
+import { boardSession, type AgentRole } from "@opencodingpartner/mesh";
 import { routeMessage, type ManagerPlan, type RouteDecision } from "@opencodingpartner/policy";
 import { OrchestrationSwarm } from "@opencodingpartner/swarm";
+import {
+  acceptPlan,
+  acceptedPlanText,
+  acceptsPlan,
+  partnerAgreementOn,
+  planIsAccepted,
+  returnToIntent,
+  reviewHoldOn,
+  rolesUnderReviewHold,
+  writePlanChain,
+  writeReviewSplit,
+} from "./sdlc.js";
 import {
   applyUnifiedDiff,
   commandDecision,
@@ -178,6 +190,14 @@ async function executeTurn(input: ChatTurnInput, session: SwarmSession, key: str
   const openclawDrove = notice.driver === "openclaw" && notice.state === "ran";
   const openclawFailed = notice.driver === "openclaw" && notice.state === "failed";
   if (openclawDrove) plan = { ...plan, source: "openclaw" };
+  if ((await partnerAgreementOn(input.sandboxRoot)) && acceptsPlan(input.message) && (await acceptPlan(input.sandboxRoot))) {
+    if (!plan.roles.includes("coding")) {
+      plan = { ...plan, roles: ["coding", "qa", "security", "computer"] };
+    }
+  }
+  if (await reviewHoldOn(input.sandboxRoot)) {
+    plan = { ...plan, roles: rolesUnderReviewHold(plan.roles as AgentRole[]) };
+  }
   const agents = openclawFailed ? [] : swarm.standUp(plan.roles);
   const orchestration = openclawDrove
     ? `ran: Orchestration accepted the session plan. ${notice.detail} A create-file uses the gateway write tool. The gateway still blocks fs_write, apply_patch, and sessions_spawn. General model edits still run in this process.`
@@ -229,6 +249,14 @@ async function executeTurn(input: ChatTurnInput, session: SwarmSession, key: str
     security = messageGate;
     if (!messageGate.allow) {
       coding = { relativePath: "the request", wrote: false, via };
+    } else if (await partnerAgreementOn(input.sandboxRoot) && !(await planIsAccepted(input.sandboxRoot))) {
+      await writePlanChain(input.sandboxRoot, input.message);
+      coding = {
+        relativePath: "plan",
+        wrote: false,
+        via,
+        note: "Plan is waiting. Say accept the plan before edits. SDLC: .ocp/sdlc/intent.md, .ocp/sdlc/spec.md, .ocp/sdlc/plan.md",
+      };
     } else if (input.grokRunner && openclawDrove && (input.openclawWrite || input.openclawDelete || input.openclawRename || input.openclawMkdir || input.openclawRmdir || input.openclawCopy)) {
       const runner = input.grokRunner;
       const write = input.openclawWrite;
@@ -363,6 +391,24 @@ async function executeTurn(input: ChatTurnInput, session: SwarmSession, key: str
         via: "local-sandbox",
         note: "Coding agent did not edit files. General edits need a meter key. A simple create-file message still runs on the local sandbox.",
       };
+    }
+  }
+
+  if ((await partnerAgreementOn(input.sandboxRoot)) && coding?.wrote && (await planIsAccepted(input.sandboxRoot))) {
+    const argv = ["node", "--test"] as const;
+    const decision = commandDecision(argv);
+    const result = decision.allow
+      ? await (input.checkExec ?? defaultCheckExec)([...argv], input.sandboxRoot)
+      : { code: 1, stdout: "", stderr: decision.reason };
+    const mechanical = `QA ${qa?.pass === false ? "fail" : "pass"}. Self-verify node --test exit ${result.code}.`;
+    await writeReviewSplit(input.sandboxRoot, mechanical);
+    const verifyLine = `Self-verify: node --test (exit ${result.code}). Review: mechanical. Human intent and risk are not decided here.`;
+    coding = { ...coding, note: [coding.note, verifyLine].filter((line) => line && line.length > 0).join("\n") };
+    if (result.code !== 0 || (qa && !qa.pass)) {
+      const reason = result.code !== 0 ? `node --test exit ${result.code}` : (qa?.summary ?? "QA fail");
+      await returnToIntent(input.sandboxRoot, reason);
+      coding = { ...coding, note: `${coding.note}\nReview hold: one coding worker. Returned to intent.` };
+      if (!qa || qa.pass) qa = { pass: false, summary: reason };
     }
   }
 
@@ -1033,7 +1079,9 @@ async function codingPrompt(sandboxRoot: string, message: string): Promise<strin
   }
   const filesNote = message.startsWith("Tool observations:") || blocks.length === 0 ? "" : `Sandbox files already on disk:\n${blocks.join("\n")}\n`;
   const history = await priorTurns(sandboxRoot);
-  return `${history}${filesNote}User request:\n${message}\nReply with JSON only: {"steps":[{"tool":"list"|"read"|"grep"|"glob"|"run"|"write"|"patch"|"delete"|"rename"|"copy"|"append"|"mkdir"|"rmdir"|"todo","action":"add or complete","to":"relative destination","query":"text or /regex/","path":"relative","content":"full text for write, or todo text, or a 1-based todo index","diff":"unified diff for patch","argv":["node","--test","relative.test.ts"]}],"done":false}. One reply is one round. After you see Tool observations, send the next round. Set "done" to true when finished. List or read before you edit. Patch a file that already exists. Write only a new file. Append adds text to one existing file and does not create a file. Copy copies one existing file to a new relative path and leaves the source. The orchestration gateway does not append. A todo step uses action add with the task text, or action complete with a 1-based index or id. At most 12 todos. Allowed commands are node --test plus relative paths, pnpm test with no extra arguments, tsc --noEmit plus relative paths, git status, git status -sb, git status --short --branch, git diff plus relative paths, and git log --oneline -n N with N from 1 to 20, and git show HEAD: plus one relative path.`;
+  const planText = (await planIsAccepted(sandboxRoot)) ? await acceptedPlanText(sandboxRoot) : "";
+  const planNote = planText ? `Accepted plan:\n${planText}\n` : "";
+  return `${history}${filesNote}${planNote}User request:\n${message}\nReply with JSON only: {"steps":[{"tool":"list"|"read"|"grep"|"glob"|"run"|"write"|"patch"|"delete"|"rename"|"copy"|"append"|"mkdir"|"rmdir"|"todo","action":"add or complete","to":"relative destination","query":"text or /regex/","path":"relative","content":"full text for write, or todo text, or a 1-based todo index","diff":"unified diff for patch","argv":["node","--test","relative.test.ts"]}],"done":false}. One reply is one round. After you see Tool observations, send the next round. Set "done" to true when finished. List or read before you edit. Patch a file that already exists. Write only a new file. Append adds text to one existing file and does not create a file. Copy copies one existing file to a new relative path and leaves the source. The orchestration gateway does not append. A todo step uses action add with the task text, or action complete with a 1-based index or id. At most 12 todos. Allowed commands are node --test plus relative paths, pnpm test with no extra arguments, tsc --noEmit plus relative paths, git status, git status -sb, git status --short --branch, git diff plus relative paths, and git log --oneline -n N with N from 1 to 20, and git show HEAD: plus one relative path.`;
 }
 
 async function mkdirThroughTurn(

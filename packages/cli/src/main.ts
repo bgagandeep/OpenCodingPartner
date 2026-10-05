@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 import { codingRunnerForEnv, copyViaOpenClaw, deleteViaOpenClaw, discoverStack, mkdirViaOpenClaw, predictWithLaya, renameViaOpenClaw, rmdirViaOpenClaw, runConnectedPath, runDoctor, sendOrchestrationTurn, startSandboxWriteBridge, writeViaOpenClaw } from "@opencodingpartner/bundle";
-import { access, readFile } from "node:fs/promises";
+import { access, copyFile, mkdir, readFile } from "node:fs/promises";
 import { runChatTurn, runDemo, type ChatTurnInput } from "@opencodingpartner/gateway";
 import { playwrightBrowserDriver } from "@opencodingpartner/workers";
 import { routeWithPredict } from "@opencodingpartner/policy";
@@ -107,6 +107,13 @@ export async function main(argv: readonly string[]): Promise<number> {
       "--sandbox",
     );
     const sandbox = value ?? ".sandbox";
+    const repoRoot = path.resolve(fileURLToPath(new URL("../../../", import.meta.url)));
+    await mkdir(sandbox, { recursive: true });
+    try {
+      await access(path.join(sandbox, "PARTNER.md"));
+    } catch {
+      await copyFile(path.join(repoRoot, "PARTNER.md"), path.join(sandbox, "PARTNER.md")).catch(() => undefined);
+    }
     const message = rest.join(" ");
     const turn = (text: string) => runProductTurn(text, sandbox, computerExecute);
     if (message.replace(/^\s+/, "").length === 0) {

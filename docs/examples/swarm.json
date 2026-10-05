@@ -1,0 +1,11 @@
+{
+  "system": "board",
+  "partners": [
+    { "id": "coding", "role": "coding", "kind": "coding" },
+    { "id": "chat", "role": "chat", "kind": "chat", "channel": "slack" }
+  ],
+  "routines": [
+    { "partnerId": "coding", "message": "check the files", "everyMs": 60000 },
+    { "partnerId": "chat", "message": "read the channel", "event": "channel-message" }
+  ]
+}

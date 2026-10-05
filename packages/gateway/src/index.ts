@@ -29,6 +29,7 @@ import { allowComputerUse, computerTabText, markComputerLive, readComputerTab } 
 export { computerTabText, returnComputer, takeoverComputer } from "./computer-tab.js";
 export { fleetIds, isolatePartner, partnerContainerArgv, partnerWorkspace, readPartnerIdentity } from "./fleet.js";
 export { createRoutine, fireDueRoutines, fireEvent, formatRoutineList, listRoutines, pauseRoutine, resumeRoutine } from "./routines.js";
+export { applySwarmManifest, parseSwarmManifest, validateSwarmManifest } from "./swarm-manifest.js";
 export { channelPartnerId, discordTurn, slackTurn, telegramTurn } from "./channels.js";
 import { isolatePartner as openPartnerWorkspace } from "./fleet.js";
 import {

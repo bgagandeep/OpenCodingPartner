@@ -6,7 +6,7 @@ import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 import { codingRunnerForEnv, copyViaOpenClaw, deleteViaOpenClaw, discoverStack, mkdirViaOpenClaw, predictWithLaya, renameViaOpenClaw, rmdirViaOpenClaw, runConnectedPath, runDoctor, sendOrchestrationTurn, startSandboxWriteBridge, writeViaOpenClaw } from "@opencodingpartner/bundle";
 import { access, copyFile, mkdir, readFile } from "node:fs/promises";
-import { computerTabText, createRoutine, fireDueRoutines, fireEvent, formatRoutineList, isolatePartner, listRoutines, pauseRoutine, resumeRoutine, returnComputer, runChatTurn, runDemo, slackTurn, takeoverComputer, telegramTurn, type ChatTurnInput } from "@opencodingpartner/gateway";
+import { applySwarmManifest, computerTabText, createRoutine, fireDueRoutines, fireEvent, formatRoutineList, isolatePartner, listRoutines, parseSwarmManifest, pauseRoutine, resumeRoutine, returnComputer, runChatTurn, runDemo, slackTurn, takeoverComputer, telegramTurn, validateSwarmManifest, type ChatTurnInput } from "@opencodingpartner/gateway";
 import { playwrightBrowserDriver } from "@opencodingpartner/workers";
 import { routeWithPredict } from "@opencodingpartner/policy";
 import { proveCoding, proveComputer } from "./prove.js";
@@ -89,6 +89,33 @@ export async function main(argv: readonly string[]): Promise<number> {
     }
     process.stdout.write(`${await computerTabText(target)}\n`);
     return 0;
+  }
+  if (command === "swarm") {
+    const dryRun = tail.includes("--dry-run");
+    const args = tail.filter((arg) => arg !== "--dry-run");
+    const sub = args[0];
+    const sand = takeFlag(args.slice(1), "--sandbox");
+    const sandbox = sand.value ?? ".sandbox";
+    const fileFlag = takeFlag(sand.rest, "--file");
+    if (!fileFlag.value || (sub !== "validate" && sub !== "apply")) {
+      process.stdout.write("Usage: ocp swarm validate|apply --file docs/examples/swarm.json [--sandbox .sandbox] [--dry-run]\n");
+      return 2;
+    }
+    let manifest;
+    try {
+      manifest = parseSwarmManifest(await readFile(fileFlag.value, "utf8"));
+    } catch (error) {
+      process.stdout.write(`${error instanceof Error ? error.message : "swarm manifest failed"}\n`);
+      return 1;
+    }
+    if (sub === "validate") {
+      const errors = validateSwarmManifest(manifest);
+      process.stdout.write(errors.length === 0 ? `Swarm ${manifest.system} ok\n` : `${errors.join("\n")}\n`);
+      return errors.length === 0 ? 0 : 1;
+    }
+    const result = await applySwarmManifest(sandbox, manifest, { dryRun });
+    process.stdout.write(`${result.text}\n`);
+    return result.ok ? 0 : 1;
   }
   if (command === "routine") {
     const sub = tail[0];

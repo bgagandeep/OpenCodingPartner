@@ -27,12 +27,12 @@ import {
 } from "./sdlc.js";
 import { allowComputerUse, captureExecutedFrame, computerTabText, markComputerLive, readComputerTab } from "./computer-tab.js";
 export { captureComputerFrame, captureExecutedFrame, checkComputerFrame, checkComputerFrames, computerTabText, doctorComputerFrameLine, doctorComputerRunLine, returnComputer, takeoverComputer } from "./computer-tab.js";
-export { fleetDoctorLine, fleetIds, formatFleetStatus, formatFleetStatusJson, isolatePartner, listShared, partnerContainerArgv, partnerWorkspace, readFleetStatus, readPartnerIdentity, readShared, sharedRequest } from "./fleet.js";
+export { fleetDoctorLine, fleetIds, formatFleetStatus, formatFleetStatusJson, globShared, grepShared, isolatePartner, listShared, partnerContainerArgv, partnerWorkspace, readFleetStatus, readPartnerIdentity, readShared, sharedRequest } from "./fleet.js";
 export { startPartnerContainer, stopPartnerContainer } from "./fleet-run.js";
 export { createRoutine, fireDueRoutines, fireEvent, formatRoutineList, listRoutines, pauseRoutine, resumeRoutine } from "./routines.js";
 export { applySwarmManifest, parseSwarmManifest, validateSwarmManifest } from "./swarm-manifest.js";
 export { channelPartnerId, deliverSlackEvent, deliverTelegramUpdate, discordTurn, postSlackReply, postTelegramReply, slackCredentialStatus, slackSignature, slackTurn, telegramCredentialStatus, telegramTurn, verifySlackRequest, verifyTelegramRequest } from "./channels.js";
-import { isolatePartner as openPartnerWorkspace, listShared, readShared, sharedRequest } from "./fleet.js";
+import { globShared, grepShared, isolatePartner as openPartnerWorkspace, listShared, readShared, sharedRequest } from "./fleet.js";
 import { noopAcpBackend, type AcpBackend } from "./acp.js";
 export { acpOptIn, formatSettings, noopAcpBackend } from "./acp.js";
 export { coreIsOpen, readPackaging } from "./packaging.js";
@@ -880,6 +880,22 @@ async function applyToolReply(
         observations.push(read.ok ? `${line}\n${read.detail.slice(0, 4000)}` : line);
         continue;
       }
+      if (onShared && step.tool === "grep") {
+        const found = await grepShared(input.sandboxRoot, step.query ?? step.content ?? "", step.path ?? "shared");
+        const hits = found.ok && found.detail !== "(no matches)" ? found.detail.split("\n").length : 0;
+        const line = `Tool: grep ${step.query ?? step.content ?? ""} (${found.ok ? `${hits} hits` : found.detail})`;
+        log.push(line);
+        observations.push(found.ok ? `${line}\n${found.detail}` : line);
+        continue;
+      }
+      if (onShared && step.tool === "glob") {
+        const found = await globShared(input.sandboxRoot, step.query ?? step.content ?? "");
+        const hits = found.ok && found.detail !== "(no matches)" ? found.detail.split("\n").length : 0;
+        const line = `Tool: glob ${step.query ?? step.content ?? ""} (${found.ok ? `${hits} hits` : found.detail})`;
+        log.push(line);
+        observations.push(found.ok ? `${line}\n${found.detail}` : line);
+        continue;
+      }
       if (onShared) {
         const line = `Tool: ${step.tool} refused (shared is read-only)`;
         log.push(line);
@@ -1210,7 +1226,7 @@ async function codingPrompt(sandboxRoot: string, message: string): Promise<strin
   const planNote = planText ? `Accepted plan:\n${planText}\n` : "";
   const rules = await loadPartnerRules(sandboxRoot);
   const rulesNote = rules ? `Partner rules:\n${rules}\n` : "";
-  return `${history}${filesNote}${planNote}${rulesNote}User request:\n${message}\nReply with JSON only: {"steps":[{"tool":"list"|"read"|"grep"|"glob"|"run"|"write"|"patch"|"delete"|"rename"|"copy"|"append"|"mkdir"|"rmdir"|"todo","action":"add or complete","to":"relative destination","query":"text or /regex/","path":"relative","content":"full text for write, or todo text, or a 1-based todo index","diff":"unified diff for patch","argv":["node","--test","relative.test.ts"]}],"done":false}. One reply is one round. After you see Tool observations, send the next round. Set "done" to true when finished. List or read before you edit. In a partner workspace, list and read of shared or shared/path read the session root and do not copy it. .ocp and gtm are skipped. A write to shared is refused. Patch a file that already exists. Write only a new file. Append adds text to one existing file and does not create a file. When the gateway drove the turn, append uses the sandbox append bridge. A missing plugin appends locally. A refusal does not append locally. Copy copies one existing file to a new relative path and leaves the source. A todo step uses action add with the task text, or action complete with a 1-based index or id. At most 12 todos. When the gateway drove the turn, a todo uses the sandbox todo bridge. A missing plugin updates the list locally. A refusal does not update it locally. Allowed commands are node --test plus relative paths, pnpm test with no extra arguments, tsc --noEmit plus relative paths, git status, git status -sb, git status --short --branch, git diff plus relative paths, and git log --oneline -n N with N from 1 to 20, and git show HEAD: plus one relative path.`;
+  return `${history}${filesNote}${planNote}${rulesNote}User request:\n${message}\nReply with JSON only: {"steps":[{"tool":"list"|"read"|"grep"|"glob"|"run"|"write"|"patch"|"delete"|"rename"|"copy"|"append"|"mkdir"|"rmdir"|"todo","action":"add or complete","to":"relative destination","query":"text or /regex/","path":"relative","content":"full text for write, or todo text, or a 1-based todo index","diff":"unified diff for patch","argv":["node","--test","relative.test.ts"]}],"done":false}. One reply is one round. After you see Tool observations, send the next round. Set "done" to true when finished. List or read before you edit. In a partner workspace, list, read, grep, and glob of shared or shared/path use the session root and do not copy it. .ocp and gtm are skipped. A write to shared is refused. Patch a file that already exists. Write only a new file. Append adds text to one existing file and does not create a file. When the gateway drove the turn, append uses the sandbox append bridge. A missing plugin appends locally. A refusal does not append locally. Copy copies one existing file to a new relative path and leaves the source. A todo step uses action add with the task text, or action complete with a 1-based index or id. At most 12 todos. When the gateway drove the turn, a todo uses the sandbox todo bridge. A missing plugin updates the list locally. A refusal does not update it locally. Allowed commands are node --test plus relative paths, pnpm test with no extra arguments, tsc --noEmit plus relative paths, git status, git status -sb, git status --short --branch, git diff plus relative paths, and git log --oneline -n N with N from 1 to 20, and git show HEAD: plus one relative path.`;
 }
 
 async function mkdirThroughTurn(

@@ -102,6 +102,41 @@ async function frameTime(sandboxRoot: string, relativePath: string): Promise<str
   }
 }
 
+const FRAME_FILE = "gtm/last-frame.png";
+const PNG_SIGNATURE = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
+export async function frameMtimeMs(sandboxRoot: string): Promise<number | undefined> {
+  try {
+    return (await stat(path.join(sandboxRoot, FRAME_FILE))).mtimeMs;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Named self-check computer-frame. The frame must exist, be a PNG, and have a time. After a capture, the time must move. */
+export async function checkComputerFrame(
+  sandboxRoot: string,
+  beforeMs?: number,
+): Promise<{ pass: boolean; summary: string }> {
+  const target = path.join(sandboxRoot, FRAME_FILE);
+  let bytes: Buffer;
+  let mtimeMs: number;
+  try {
+    bytes = await readFile(target);
+    mtimeMs = (await stat(target)).mtimeMs;
+  } catch {
+    return { pass: false, summary: "Computer QA computer-frame: fail. The frame file is missing." };
+  }
+  const png = bytes.length >= PNG_SIGNATURE.length && PNG_SIGNATURE.every((byte, index) => bytes[index] === byte);
+  if (!png) return { pass: false, summary: "Computer QA computer-frame: fail. The frame is not a PNG." };
+  if (!Number.isFinite(mtimeMs)) return { pass: false, summary: "Computer QA computer-frame: fail. The frame time is missing." };
+  if (beforeMs !== undefined && !(mtimeMs > beforeMs)) {
+    return { pass: false, summary: "Computer QA computer-frame: fail. The frame time did not move." };
+  }
+  const moved = beforeMs === undefined ? "the time is set" : "the time moved";
+  return { pass: true, summary: `Computer QA computer-frame: pass. The frame is a PNG and ${moved}.` };
+}
+
 export type FrameCapturer = (url: string) => Promise<Uint8Array>;
 
 async function playwrightCapture(url: string): Promise<Uint8Array> {
@@ -132,15 +167,18 @@ export async function captureComputerFrame(
     const message = error instanceof Error ? error.message : "browser missing";
     return { ok: false, text: `Browser is missing. No frame was written. ${message}` };
   }
-  if (png.length < 8 || png[0] !== 0x89 || png[1] !== 0x50 || png[2] !== 0x4e || png[3] !== 0x47) {
-    return { ok: false, text: "Capture did not return a PNG. No frame was written." };
+  if (png.length < PNG_SIGNATURE.length || !PNG_SIGNATURE.every((byte, index) => png[index] === byte)) {
+    return { ok: false, text: "Computer QA computer-frame: fail. The frame is not a PNG. No frame was written." };
   }
+  const before = await frameMtimeMs(sandboxRoot);
   await mkdir(path.join(sandboxRoot, "gtm"), { recursive: true });
   await writeFile(path.join(sandboxRoot, "gtm", "last-frame.png"), png);
   const next = { ...(run?.body ?? {}), url, screenshot: "gtm/last-frame.png" };
   await writeFile(path.join(sandboxRoot, "gtm", "last-run.json"), `${JSON.stringify(next, null, 2)}\n`);
+  const check = await checkComputerFrame(sandboxRoot, before);
+  if (!check.pass) return { ok: false, text: check.summary };
   const when = await frameTime(sandboxRoot, "gtm/last-frame.png");
-  return { ok: true, text: `Last frame: gtm/last-frame.png\nFrame time: ${when}` };
+  return { ok: true, text: `${check.summary}\nLast frame: gtm/last-frame.png\nFrame time: ${when}` };
 }
 
 /** Point the Computer tab at gtm/last-frame.png when a step screenshot already exists. */

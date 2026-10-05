@@ -25,8 +25,8 @@ import {
   writePlanChain,
   writeReviewSplit,
 } from "./sdlc.js";
-import { allowComputerUse, computerTabText, markComputerLive, publishLastFrame, readComputerTab } from "./computer-tab.js";
-export { captureComputerFrame, computerTabText, returnComputer, takeoverComputer } from "./computer-tab.js";
+import { allowComputerUse, checkComputerFrame, computerTabText, frameMtimeMs, markComputerLive, publishLastFrame, readComputerTab } from "./computer-tab.js";
+export { captureComputerFrame, checkComputerFrame, computerTabText, returnComputer, takeoverComputer } from "./computer-tab.js";
 export { fleetIds, isolatePartner, partnerContainerArgv, partnerWorkspace, readPartnerIdentity } from "./fleet.js";
 export { startPartnerContainer, stopPartnerContainer } from "./fleet-run.js";
 export { createRoutine, fireDueRoutines, fireEvent, formatRoutineList, listRoutines, pauseRoutine, resumeRoutine } from "./routines.js";
@@ -572,8 +572,11 @@ async function executeTurn(input: ChatTurnInput, session: SwarmSession, key: str
       qa = qa ? { pass: qa.pass && claimQa.pass, summary: `${qa.summary}; ${claimQa.summary}` } : claimQa;
     }
     if (execute) {
+      const beforeFrame = await frameMtimeMs(input.sandboxRoot);
       await markComputerLive(input.sandboxRoot);
       await publishLastFrame(input.sandboxRoot);
+      const frameQa = await checkComputerFrame(input.sandboxRoot, beforeFrame);
+      qa = qa ? { pass: qa.pass && frameQa.pass, summary: `${qa.summary}; ${frameQa.summary}` } : frameQa;
     }
     const tabLine = await computerTabText(input.sandboxRoot);
     computer.note = [computer.note, gateNote, tabLine].filter((line) => line && line.length > 0).join("\n");

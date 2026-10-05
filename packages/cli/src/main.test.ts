@@ -225,6 +225,34 @@ test("ocp channel slack stays offline without credentials and posts when they ar
   }
 });
 
+test("ocp computer qa prints pass or fail and does not open a page", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "ocp-computer-qa-"));
+  let captured = "";
+  const original = process.stdout.write.bind(process.stdout);
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    captured += String(chunk);
+    return true;
+  }) as typeof process.stdout.write;
+  try {
+    const missing = await main(["computer", "--sandbox", root, "qa"]);
+    assert.equal(missing, 1);
+    assert.match(captured, /Computer QA computer-frame: fail/);
+    assert.match(captured, /frame file is missing/);
+    assert.match(captured, /Live stream: not in this build/);
+    captured = "";
+    const { mkdirSync, writeFileSync } = await import("node:fs");
+    mkdirSync(path.join(root, "gtm"), { recursive: true });
+    writeFileSync(path.join(root, "gtm", "last-frame.png"), Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10]));
+    const passed = await main(["computer", "--sandbox", root, "qa"]);
+    assert.equal(passed, 0);
+    assert.match(captured, /Computer QA computer-frame: pass/);
+    assert.match(captured, /The frame is a PNG/);
+  } finally {
+    process.stdout.write = original;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("the cli file is the ocp entry when spawned", () => {
   const root = mkdtempSync(path.join(tmpdir(), "ocp-spawn-"));
   try {

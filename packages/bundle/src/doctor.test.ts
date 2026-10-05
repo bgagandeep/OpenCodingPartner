@@ -22,7 +22,9 @@ test("doctor marks missing pieces and does not print a key", async () => {
     assert.match(missing.transcript, /green Meter: proxy/);
     assert.match(missing.transcript, /yellow orchestration \/healthz:/);
     assert.match(missing.transcript, /red Write bridge plugin/);
-    assert.match(missing.transcript, /yellow Playwright: not installed/);
+    assert.match(missing.transcript, /yellow Computer capture: Playwright is not installed/);
+    assert.match(missing.transcript, /This check does not start the browser/);
+    assert.doesNotMatch(missing.transcript, /Computer QA computer-frame/);
     assert.match(missing.transcript, /yellow Slack: missing SLACK_BOT_TOKEN, SLACK_SIGNING_SECRET/);
     assert.doesNotMatch(missing.transcript, /super-secret-value/);
 
@@ -41,7 +43,8 @@ test("doctor marks missing pieces and does not print a key", async () => {
     assert.match(ready.transcript, /yellow Meter: none/);
     assert.match(ready.transcript, /green orchestration \/healthz/);
     assert.match(ready.transcript, /green Write bridge plugin/);
-    assert.match(ready.transcript, /green Playwright/);
+    assert.match(ready.transcript, /green Computer capture: Playwright is installed/);
+    assert.match(ready.transcript, /This check does not start the browser/);
     assert.match(ready.transcript, /yellow Slack: missing SLACK_BOT_TOKEN, SLACK_SIGNING_SECRET/);
     assert.match(ready.transcript, /System-1: fallback/);
     const slack = await runDoctor({

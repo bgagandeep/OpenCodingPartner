@@ -7,7 +7,7 @@ import test from "node:test";
 import { routeWithPredict, type ManagerPlan } from "@opencodingpartner/policy";
 import { grepSandbox, listSandboxDir, writeSandboxFile } from "@opencodingpartner/workers";
 import { DEMO_MESSAGE, applySwarmManifest, clearSessionMemory, coreIsOpen, createRoutine, deliverSlackEvent, fireDueRoutines, fireEvent, isolatePartner, listRoutines, parseSwarmManifest, partnerContainerArgv, pauseRoutine, readPackaging, runChatTurn, runDemo, slackSignature, slackTurn, startPartnerContainer, stopPartnerContainer, verifySlackRequest } from "./index.js";
-import { allowComputerUse, captureComputerFrame, computerTabText } from "./computer-tab.js";
+import { allowComputerUse, captureComputerFrame, checkComputerFrame, computerTabText } from "./computer-tab.js";
 import { REVIEW_HOLD_CODING_CAP, rolesUnderReviewHold } from "./sdlc.js";
 
 test("chat stands up agents, writes, checks QA, gates security, and records GTM", async () => {
@@ -444,7 +444,7 @@ test("computer execute with a fake browser saves evidence and marks the action e
       computerAllowHosts: ["example.com"],
       browserDriver: {
         async start() {
-          const png = Uint8Array.from([137, 80, 78, 71]);
+          const png = Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10]);
           return {
             async open(url: string) {
               assert.equal(url, "https://example.com");
@@ -481,7 +481,7 @@ test("computer execute with a fake browser saves evidence and marks the action e
 test("QA fails a broken page claim and records the screenshot", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "ocp-qa-claim-"));
   try {
-    const png = Uint8Array.from([137, 80, 78, 71]);
+    const png = Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10]);
     const turn = await runChatTurn({
       message: 'Stand up a computer agent and a QA agent. Open https://example.com and expect title "Not the page"',
       sandboxRoot: root,
@@ -591,7 +591,7 @@ test("file QA stops after two failed retries", async () => {
 test("a failed page claim is checked again and stops when the budget is used", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "ocp-fix-page-"));
   try {
-    const png = Uint8Array.from([137, 80, 78, 71]);
+    const png = Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10]);
     let starts = 0;
     const driver = {
       async start() {
@@ -2077,7 +2077,7 @@ test("approve cards deny or redirect, and partner rules block a request", async 
 
 test("a partner computer waits for Approve, then a takeover blocks the browser", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "ocp-computer-gate-"));
-  const png = Uint8Array.from([137, 80, 78, 71]);
+  const png = Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10]);
   try {
     await writeFile(path.join(root, "PARTNER.md"), "partner\n");
     let opened = 0;
@@ -2122,9 +2122,11 @@ test("a partner computer waits for Approve, then a takeover blocks the browser",
     });
     assert.equal(opened, 1);
     assert.match(ran.transcript, /Last frame: gtm\//);
+    assert.match(ran.transcript, /Computer QA computer-frame: pass/);
+    assert.equal(ran.qa?.pass, true);
     assert.equal(ran.computer?.actions.some((action) => action.executed === true), true);
 
-    const { takeoverComputer } = await import("./computer-tab.js");
+    const { returnComputer, takeoverComputer } = await import("./computer-tab.js");
     await takeoverComputer(root);
     const blocked = await runChatTurn({
       message: "sell this page. Open https://example.com/held",
@@ -2135,6 +2137,16 @@ test("a partner computer waits for Approve, then a takeover blocks the browser",
     assert.equal(opened, 1);
     assert.match(blocked.transcript, /human has control/);
     assert.equal(blocked.computer?.actions.every((action) => action.executed === false), true);
+    await returnComputer(root);
+    const handed = await runChatTurn({
+      message: "sell this page. Open https://example.com/back",
+      sandboxRoot: root,
+      computerExecute: true,
+      browserDriver: driver,
+    });
+    assert.equal(opened, 2);
+    assert.match(handed.transcript, /Computer QA computer-frame: pass/);
+    assert.equal(handed.computer?.actions.some((action) => action.executed === true), true);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -2308,6 +2320,7 @@ test("computer capture writes a PNG frame and reports its time", async () => {
     await writeFile(path.join(root, "gtm", "last-run.json"), `${JSON.stringify({ url: "https://example.com", screenshot: "" })}\n`);
     const shot = await captureComputerFrame(root, { capture: async () => png });
     assert.equal(shot.ok, true);
+    assert.match(shot.text, /Computer QA computer-frame: pass/);
     const bytes = await readFile(path.join(root, "gtm", "last-frame.png"));
     assert.equal(bytes[0], 0x89);
     assert.equal(bytes[1], 0x50);
@@ -2322,6 +2335,46 @@ test("computer capture writes a PNG frame and reports its time", async () => {
     assert.match(none.text, /No page is open/);
     await assert.rejects(readFile(path.join(empty, "gtm", "last-frame.png")));
     await rm(empty, { recursive: true, force: true });
+    const stale = await checkComputerFrame(root, Date.now() + 60_000);
+    assert.equal(stale.pass, false);
+    assert.match(stale.summary, /frame time did not move/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a computer turn fails when the frame is not a PNG", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-frame-qa-"));
+  try {
+    const png = Uint8Array.from([137, 80, 78, 71]);
+    const turn = await runChatTurn({
+      message: "Stand up a computer agent and open https://example.com",
+      sandboxRoot: root,
+      computerExecute: true,
+      computerAllowHosts: ["example.com"],
+      browserDriver: {
+        async start() {
+          return {
+            async open() {
+              return { title: "Example Domain", text: "hello", screenshotPng: png };
+            },
+            async readScreen() {
+              return { title: "Example Domain", text: "hello", screenshotPng: png };
+            },
+            async typeInto() {
+              return { title: "Example Domain", text: "hello", screenshotPng: png };
+            },
+            async close() {
+              return undefined;
+            },
+          };
+        },
+      },
+    });
+    assert.equal(turn.computer?.actions.some((action) => action.executed === true), true);
+    assert.equal(turn.qa?.pass, false);
+    assert.match(turn.transcript, /Computer QA computer-frame: fail/);
+    assert.match(turn.transcript, /not a PNG/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

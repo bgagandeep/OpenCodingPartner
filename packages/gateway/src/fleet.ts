@@ -1,6 +1,6 @@
 import { copyFile, mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { securityGate } from "@opencodingpartner/workers";
+import { globSandbox, grepSandbox, securityGate } from "@opencodingpartner/workers";
 
 const ID = /^[a-z0-9][a-z0-9-]{0,31}$/;
 
@@ -101,6 +101,38 @@ export async function readShared(sandboxRoot: string, relativePath: string): Pro
   const gate = securityGate({ relativePath: request.relative, content, sandboxRoot: source });
   if (!gate.allow) return { ok: false, detail: `blocked (${gate.reasons.join(", ")})` };
   return { ok: true, detail: content };
+}
+
+function prefixShared(detail: string): string {
+  if (detail === "(no matches)") return detail;
+  return detail
+    .split("\n")
+    .map((line) => `shared/${line}`)
+    .join("\n");
+}
+
+/** Search the read-only session mount. This does not copy files. Secret files are skipped. */
+export async function grepShared(
+  sandboxRoot: string,
+  query: string,
+  relativePath: string,
+): Promise<{ ok: boolean; detail: string }> {
+  const request = sharedRequest(relativePath);
+  if (!request.shared || !request.relative) return { ok: false, detail: "shared path refused" };
+  const source = await sharedMountSource(sandboxRoot);
+  if (!source) return { ok: false, detail: "shared mount is missing" };
+  const found = await grepSandbox(source, query, request.relative);
+  if (!found.ok) return found;
+  return { ok: true, detail: prefixShared(found.detail) };
+}
+
+/** Glob the read-only session mount. This does not copy files. `.ocp` and `gtm` are skipped. */
+export async function globShared(sandboxRoot: string, pattern: string): Promise<{ ok: boolean; detail: string }> {
+  const source = await sharedMountSource(sandboxRoot);
+  if (!source) return { ok: false, detail: "shared mount is missing" };
+  const found = await globSandbox(source, pattern.replace(/^shared\//, ""));
+  if (!found.ok) return found;
+  return { ok: true, detail: prefixShared(found.detail) };
 }
 
 export async function readPartnerIdentity(workspace: string): Promise<PartnerIdentity | undefined> {

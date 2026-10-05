@@ -25,6 +25,7 @@ export async function runDoctor(deps: DoctorDeps): Promise<DoctorReport> {
   lines.push(await gatewayLine(deps));
   lines.push(await pluginLine(deps.repoRoot));
   lines.push(playwrightLine(deps.playwrightPresent === true));
+  lines.push(slackLine(deps.env));
   lines.push("Prove-it: pnpm exec ocp chat --sandbox .sandbox \"Use the coding worker to create hello.txt with content:");
   lines.push("hello");
   lines.push("\"");
@@ -81,6 +82,12 @@ async function pluginLine(repoRoot: string): Promise<string> {
   } catch {
     return "red Write bridge plugin: integrations/openclaw-sandbox-write is missing. The gateway cannot invoke ocp_sandbox_write until that plugin is present.";
   }
+}
+
+function slackLine(env: NodeJS.ProcessEnv): string {
+  const missing = [env.SLACK_BOT_TOKEN ? "" : "SLACK_BOT_TOKEN", env.SLACK_SIGNING_SECRET ? "" : "SLACK_SIGNING_SECRET"].filter((name) => name.length > 0);
+  if (missing.length === 0) return "green Slack: bot token and signing secret are set. The values are not printed.";
+  return `yellow Slack: missing ${missing.join(", ")}. The offline channel path still runs.`;
 }
 
 function playwrightLine(present: boolean): string {

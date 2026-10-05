@@ -6,7 +6,7 @@ import path from "node:path";
 import test from "node:test";
 import { routeWithPredict, type ManagerPlan } from "@opencodingpartner/policy";
 import { applySandboxTodo, grepSandbox, listSandboxDir, writeSandboxFile } from "@opencodingpartner/workers";
-import { DEMO_MESSAGE, applySwarmManifest, approveDoctorLine, clearSessionMemory, coreIsOpen, createRoutine, deliverSlackEvent, deliverTelegramUpdate, doctorPlanLine, fireDueRoutines, fireEvent, formatApproveQueue, formatFleetStatus, formatFleetStatusJson, formatReviewHolds, formatTodoQueue, isolatePartner, listApproveQueue, listReviewHolds, listRoutines, listTodoQueue, parseSwarmManifest, partnerAgreementDoctorLine, partnerAgreementStatus, partnerContainerArgv, pauseRoutine, readFleetStatus, readPackaging, reviewHoldDoctorLine, runChatTurn, todoDoctorLine, runDemo, slackSignature, slackTurn, startPartnerContainer, stopPartnerContainer, verifySlackRequest, verifyTelegramRequest } from "./index.js";
+import { DEMO_MESSAGE, applySwarmManifest, approveDoctorLine, clearSessionMemory, coreIsOpen, createRoutine, deliverSlackEvent, deliverTelegramUpdate, doctorPackagingLine, doctorPlanLine, fireDueRoutines, fireEvent, formatApproveQueue, formatFleetStatus, formatFleetStatusJson, formatReviewHolds, formatTodoQueue, isolatePartner, listApproveQueue, listReviewHolds, listRoutines, listTodoQueue, parseSwarmManifest, partnerAgreementDoctorLine, partnerAgreementStatus, partnerContainerArgv, pauseRoutine, readFleetStatus, readPackaging, reviewHoldDoctorLine, runChatTurn, todoDoctorLine, runDemo, slackSignature, slackTurn, startPartnerContainer, stopPartnerContainer, verifySlackRequest, verifyTelegramRequest } from "./index.js";
 import { allowComputerUse, captureComputerFrame, checkComputerFrame, computerTabText, doctorComputerControlLine, doctorComputerFrameLine, doctorComputerRunLine } from "./computer-tab.js";
 import { doctorSharedMountLine } from "./fleet.js";
 import { doctorLastCheckLine } from "./last-check.js";
@@ -3393,6 +3393,20 @@ test("a billing key stays inert and the core stays open", async () => {
     assert.equal(packaging.billing, "inert");
     assert.equal(packaging.core, "full");
     assert.equal(coreIsOpen(packaging), true);
+    const line = await doctorPackagingLine(root);
+    assert.match(line, /green Billing: inert/);
+    assert.match(line, /Seats: 4 design only/);
+    assert.match(line, /Credits: 10 design only/);
+    assert.match(line, /Ads are off/);
+    assert.match(line, /No charge is made/);
+    assert.doesNotMatch(line, /later/);
+    assert.doesNotMatch(line, /hunter2/);
+    await writeFile(path.join(root, ".ocp/settings.json"), `${JSON.stringify({ packaging: { seats: 4 }, billingKey: "sk-live-hunter2" })}\n`);
+    assert.doesNotMatch(await doctorPackagingLine(root), /hunter2/);
+    await writeFile(path.join(root, ".ocp/settings.json"), "not-json\n");
+    const broken = await doctorPackagingLine(root);
+    assert.match(broken, /yellow Billing: the settings file could not be read/);
+    assert.doesNotMatch(broken, /not-json/);
     const turn = await runChatTurn({
       message: "Use the coding worker to create hello.txt with content:\nhello\n",
       sandboxRoot: root,

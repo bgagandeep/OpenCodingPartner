@@ -72,14 +72,6 @@ function runGitArgv(cwd: string, argv: readonly string[]): Promise<{ code: numbe
   });
 }
 
-function runGitStatus(cwd: string): Promise<{ code: number; output: string; missing: boolean }> {
-  return runGitArgv(cwd, ["git", "status", "-sb"]);
-}
-
-function runGitLog(cwd: string, count: number): Promise<{ code: number; output: string; missing: boolean }> {
-  return runGitArgv(cwd, ["git", "log", "--oneline", "-n", String(count)]);
-}
-
 function redactListName(name: string): string {
   const gate = securityGate({ relativePath: "name.txt", content: name, sandboxRoot: "." });
   return gate.reasons.includes("secret pattern") ? "[redacted]" : name;
@@ -524,12 +516,18 @@ export async function main(argv: readonly string[]): Promise<number> {
     const partner = takeFlag(sand.rest, "--partner");
     const countFlag = takeFlag(partner.rest, "--n");
     const sub = countFlag.rest[0];
+    const diffPath = countFlag.rest.slice(1).join(" ");
     const count = countFlag.value === undefined ? 10 : Number(countFlag.value);
     const logOk = sub === "log" && countFlag.rest.length === 1 && Number.isInteger(count) && count >= 1 && count <= 20;
     const statusOk = sub === "status" && countFlag.value === undefined && countFlag.rest.length === 1;
-    if (!logOk && !statusOk) {
-      process.stdout.write("Usage: ocp git status [--sandbox .sandbox] [--partner name]\n       ocp git log [--n N] [--sandbox .sandbox] [--partner name]\n");
+    const diffOk = sub === "diff" && countFlag.value === undefined && countFlag.rest.length <= 2;
+    if (!logOk && !statusOk && !diffOk) {
+      process.stdout.write("Usage: ocp git status [--sandbox .sandbox] [--partner name]\n       ocp git log [--n N] [--sandbox .sandbox] [--partner name]\n       ocp git diff [--sandbox .sandbox] [--partner name] [path]\n");
       return 2;
+    }
+    if (diffOk && diffPath && refusedSandboxRead(diffPath)) {
+      process.stdout.write("path refused\n");
+      return 1;
     }
     let root = sandbox;
     try {
@@ -539,15 +537,21 @@ export async function main(argv: readonly string[]): Promise<number> {
       return 1;
     }
     await mkdir(root, { recursive: true });
-    const result = logOk ? await runGitLog(root, count) : await runGitStatus(root);
-    const name = logOk ? "git log" : "git status";
+    const argv = diffOk
+      ? (diffPath ? ["git", "diff", diffPath] : ["git", "diff"])
+      : logOk
+        ? ["git", "log", "--oneline", "-n", String(count)]
+        : ["git", "status", "-sb"];
+    const result = await runGitArgv(root, argv);
+    const name = diffOk ? "git diff" : logOk ? "git log" : "git status";
     if (result.missing) {
       process.stdout.write(`${name} did not run.\n`);
       return 1;
     }
     const text = result.output.trim();
-    const lines = text
-      ? text.split("\n").filter((line) => logOk || (!line.includes(".ocp") && !line.includes("gtm"))).map(redactListName)
+    const capped = text.length > 2000 ? `${text.slice(0, 2000)}\n(truncated)` : text;
+    const lines = capped
+      ? capped.split("\n").filter((line) => logOk || (!line.includes(".ocp") && !line.includes("gtm"))).map(redactListName)
       : [`${name} exit ${result.code}`];
     process.stdout.write(`${lines.filter((line) => line.length > 0).join("\n")}\n`);
     return result.code === 0 ? 0 : 1;
@@ -651,7 +655,7 @@ export async function main(argv: readonly string[]): Promise<number> {
     return 0;
   }
   process.stdout.write(
-    "Open Coding Partner chat\n\n  ocp chat --sandbox .sandbox\n  ocp chat --sandbox .sandbox \"Use the coding worker to create hello.txt with content:\nhello\n\"\n  ocp chat --sandbox .sandbox --computer-execute \"Open https://example.com\"\n  ocp demo --sandbox .sandbox\n  ocp doctor\n  ocp check --sandbox .sandbox\n  ocp read --sandbox .sandbox path\n  ocp list --sandbox .sandbox\n  ocp grep --text \"...\" --sandbox .sandbox\n  ocp glob --pattern \"*.txt\" --sandbox .sandbox\n  ocp git status --sandbox .sandbox\n  ocp git log --sandbox .sandbox\n  ocp prove coding\n  ocp prove computer\n  ocp computer --sandbox .sandbox\n  ocp computer --sandbox .sandbox takeover\n  ocp computer --sandbox .sandbox return\n  ocp computer --sandbox .sandbox qa\n\nThe Computer tab shows the sandbox desktop status and the last frame path. There is no live pixel stream in this build. takeover hands the browser to you. return hands it back to the partner. ocp computer qa checks the frame file and does not open a page.\nOrchestration owns the session plan. After it accepts the plan, it invokes the sandbox write bridge. The transcript says Write path: orchestration. Delete and rename use the same bridge when the gateway drove the turn. When the gateway is down, the transcript says Write path: local sandbox. fs_write, apply_patch, and sessions_spawn stay blocked.\nThe computer agent opens a browser only with --computer-execute or OCP_COMPUTER_EXECUTE=1, and only after an Approve card when the sandbox has PARTNER.md. It opens a named http(s) URL, reads the screen, and types into one selector when you ask. A live stream is not in this build.\n",
+    "Open Coding Partner chat\n\n  ocp chat --sandbox .sandbox\n  ocp chat --sandbox .sandbox \"Use the coding worker to create hello.txt with content:\nhello\n\"\n  ocp chat --sandbox .sandbox --computer-execute \"Open https://example.com\"\n  ocp demo --sandbox .sandbox\n  ocp doctor\n  ocp check --sandbox .sandbox\n  ocp read --sandbox .sandbox path\n  ocp list --sandbox .sandbox\n  ocp grep --text \"...\" --sandbox .sandbox\n  ocp glob --pattern \"*.txt\" --sandbox .sandbox\n  ocp git status --sandbox .sandbox\n  ocp git log --sandbox .sandbox\n  ocp git diff --sandbox .sandbox\n  ocp prove coding\n  ocp prove computer\n  ocp computer --sandbox .sandbox\n  ocp computer --sandbox .sandbox takeover\n  ocp computer --sandbox .sandbox return\n  ocp computer --sandbox .sandbox qa\n\nThe Computer tab shows the sandbox desktop status and the last frame path. There is no live pixel stream in this build. takeover hands the browser to you. return hands it back to the partner. ocp computer qa checks the frame file and does not open a page.\nOrchestration owns the session plan. After it accepts the plan, it invokes the sandbox write bridge. The transcript says Write path: orchestration. Delete and rename use the same bridge when the gateway drove the turn. When the gateway is down, the transcript says Write path: local sandbox. fs_write, apply_patch, and sessions_spawn stay blocked.\nThe computer agent opens a browser only with --computer-execute or OCP_COMPUTER_EXECUTE=1, and only after an Approve card when the sandbox has PARTNER.md. It opens a named http(s) URL, reads the screen, and types into one selector when you ask. A live stream is not in this build.\n",
   );
   return command === undefined || command === "--help" || command === "-h" ? 0 : 2;
 }

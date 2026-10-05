@@ -16,6 +16,7 @@ export interface DoctorDeps {
   frameLine?: string;
   dockerLine?: string;
   reviewLine?: string;
+  planLine?: string;
   agreementLine?: string;
   todoLine?: string;
   runLine?: string;
@@ -47,6 +48,7 @@ export async function runDoctor(deps: DoctorDeps): Promise<DoctorReport> {
   lines.push(deps.frameLine ?? "yellow Computer frame: none at gtm/last-frame.png. This check does not start the browser.");
   lines.push(deps.dockerLine ?? dockerLine(false));
   lines.push(deps.reviewLine ?? "green Review hold: none. One coding worker is not forced.");
+  lines.push(deps.planLine ?? "green Plan: none. This check does not accept the plan and does not print it.");
   lines.push(deps.agreementLine ?? "yellow Partner agreement: PARTNER.md is missing. Edits do not wait for approve. This check does not copy the file or decide a card.");
   lines.push(deps.todoLine ?? "green Todos: none open. This check does not change the list.");
   lines.push(deps.runLine ?? "yellow Computer run: none. This check does not open a page.");

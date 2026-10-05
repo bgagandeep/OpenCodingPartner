@@ -333,6 +333,50 @@ export function reviewHoldDoctorLine(count: number): string {
   return `yellow Review hold: ${count}. One coding worker until the plan is accepted again. This check does not accept the plan.`;
 }
 
+type PlanRead = "none" | "accepted" | "waiting" | "unreadable";
+
+async function readPlanState(sandboxRoot: string): Promise<PlanRead> {
+  let raw: string;
+  try {
+    raw = await readFile(sdlcPath(sandboxRoot, "plan.json"), "utf8");
+  } catch {
+    return "none";
+  }
+  try {
+    const parsed = JSON.parse(raw) as { accepted?: unknown };
+    if (parsed.accepted === true) return "accepted";
+    if (parsed.accepted === false) return "waiting";
+    return "unreadable";
+  } catch {
+    return "unreadable";
+  }
+}
+
+/** Doctor line for whether the plan is accepted. This does not accept it and does not print it. */
+export async function doctorPlanLine(sessionRoot: string): Promise<string> {
+  const tail = "This check does not accept the plan and does not print it.";
+  const bits: string[] = [];
+  let waiting = false;
+  const session = await readPlanState(sessionRoot);
+  if (session === "unreadable") return `yellow Plan: this session file could not be read. ${tail}`;
+  if (session === "accepted") bits.push("session accepted");
+  if (session === "waiting") {
+    bits.push("session not accepted");
+    waiting = true;
+  }
+  for (const partner of await namedPartnerWorkspaces(sessionRoot)) {
+    const plan = await readPlanState(partner.workspace);
+    if (plan === "unreadable") return `yellow Plan: ${partner.id} file could not be read. ${tail}`;
+    if (plan === "accepted") bits.push(`${partner.id} accepted`);
+    if (plan === "waiting") {
+      bits.push(`${partner.id} not accepted`);
+      waiting = true;
+    }
+  }
+  if (bits.length === 0) return `green Plan: none. ${tail}`;
+  return `${waiting ? "yellow" : "green"} Plan: ${bits.join(". ")}. ${tail}`;
+}
+
 export async function formatApproveCards(sandboxRoot: string): Promise<string> {
   const cards = await readCards(sandboxRoot);
   if (cards.length === 0) return "";

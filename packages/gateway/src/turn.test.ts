@@ -6,7 +6,7 @@ import path from "node:path";
 import test from "node:test";
 import { routeWithPredict, type ManagerPlan } from "@opencodingpartner/policy";
 import { applySandboxTodo, grepSandbox, listSandboxDir, writeSandboxFile } from "@opencodingpartner/workers";
-import { DEMO_MESSAGE, applySwarmManifest, approveDoctorLine, clearSessionMemory, coreIsOpen, createRoutine, deliverSlackEvent, deliverTelegramUpdate, fireDueRoutines, fireEvent, formatApproveQueue, formatFleetStatus, formatFleetStatusJson, formatReviewHolds, formatTodoQueue, isolatePartner, listApproveQueue, listReviewHolds, listRoutines, listTodoQueue, parseSwarmManifest, partnerAgreementDoctorLine, partnerAgreementStatus, partnerContainerArgv, pauseRoutine, readFleetStatus, readPackaging, reviewHoldDoctorLine, runChatTurn, todoDoctorLine, runDemo, slackSignature, slackTurn, startPartnerContainer, stopPartnerContainer, verifySlackRequest, verifyTelegramRequest } from "./index.js";
+import { DEMO_MESSAGE, applySwarmManifest, approveDoctorLine, clearSessionMemory, coreIsOpen, createRoutine, deliverSlackEvent, deliverTelegramUpdate, doctorPlanLine, fireDueRoutines, fireEvent, formatApproveQueue, formatFleetStatus, formatFleetStatusJson, formatReviewHolds, formatTodoQueue, isolatePartner, listApproveQueue, listReviewHolds, listRoutines, listTodoQueue, parseSwarmManifest, partnerAgreementDoctorLine, partnerAgreementStatus, partnerContainerArgv, pauseRoutine, readFleetStatus, readPackaging, reviewHoldDoctorLine, runChatTurn, todoDoctorLine, runDemo, slackSignature, slackTurn, startPartnerContainer, stopPartnerContainer, verifySlackRequest, verifyTelegramRequest } from "./index.js";
 import { allowComputerUse, captureComputerFrame, checkComputerFrame, computerTabText, doctorComputerControlLine, doctorComputerFrameLine, doctorComputerRunLine } from "./computer-tab.js";
 import { doctorSharedMountLine } from "./fleet.js";
 import { doctorLastCheckLine } from "./last-check.js";
@@ -2622,6 +2622,37 @@ test("todo list shows open and done items and the doctor line does not print the
     assert.match(doctor, /does not change the list/);
     assert.doesNotMatch(doctor, /password=hunter2/);
     assert.doesNotMatch(doctor, /write the test/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("doctor says whether the plan is accepted and does not print it", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-plan-doctor-"));
+  try {
+    assert.match(await doctorPlanLine(root), /green Plan: none/);
+    await mkdir(path.join(root, ".ocp/sdlc"), { recursive: true });
+    const body = { accepted: false, note: "password=hunter2" };
+    await writeFile(path.join(root, ".ocp/sdlc/plan.json"), `${JSON.stringify(body)}\n`);
+    const waiting = await doctorPlanLine(root);
+    assert.match(waiting, /yellow Plan: session not accepted/);
+    assert.match(waiting, /does not print it/);
+    assert.match(waiting, /does not accept the plan/);
+    assert.doesNotMatch(waiting, /hunter2/);
+    body.accepted = true;
+    await writeFile(path.join(root, ".ocp/sdlc/plan.json"), `${JSON.stringify(body)}\n`);
+    assert.match(await doctorPlanLine(root), /green Plan: session accepted/);
+    assert.equal(JSON.parse(await readFile(path.join(root, ".ocp/sdlc/plan.json"), "utf8")).note, "password=hunter2");
+    await isolatePartner(root, "coding");
+    await mkdir(path.join(root, ".ocp/fleet/coding/.ocp/sdlc"), { recursive: true });
+    await writeFile(path.join(root, ".ocp/fleet/coding/.ocp/sdlc/plan.json"), `${JSON.stringify({ accepted: false })}\n`);
+    const mixed = await doctorPlanLine(root);
+    assert.match(mixed, /yellow Plan: session accepted\. coding not accepted/);
+    assert.doesNotMatch(mixed, /hunter2/);
+    await writeFile(path.join(root, ".ocp/fleet/coding/.ocp/sdlc/plan.json"), "not-json\n");
+    const broken = await doctorPlanLine(root);
+    assert.match(broken, /yellow Plan: coding file could not be read/);
+    assert.doesNotMatch(broken, /not-json/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

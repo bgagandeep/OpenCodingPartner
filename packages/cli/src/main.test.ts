@@ -426,6 +426,45 @@ test("ocp approve accept clears a review hold and leaves the intent", async () =
   }
 });
 
+test("ocp check runs the sandbox check and does not store the output", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "ocp-check-cli-"));
+  let captured = "";
+  const original = process.stdout.write.bind(process.stdout);
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    captured += String(chunk);
+    return true;
+  }) as typeof process.stdout.write;
+  try {
+    const { mkdirSync, writeFileSync, readFileSync } = await import("node:fs");
+    const testFile = "import test from \"node:test\";\nimport assert from \"node:assert/strict\";\ntest(\"adds\", () => { assert.equal(1, 2, \"password=hunter2\"); });\n";
+    writeFileSync(path.join(root, "add.test.mjs"), testFile);
+    const bad = await main(["check", "--sandbox", root, "bash"]);
+    assert.equal(bad, 2);
+    assert.match(captured, /Usage: ocp check/);
+    captured = "";
+    assert.equal(await main(["check", "--sandbox", root]), 1);
+    assert.match(captured, /node --test exit 1/);
+    assert.doesNotMatch(captured, /hunter2/);
+    const saved = JSON.parse(readFileSync(path.join(root, ".ocp/last-check.json"), "utf8")) as { code: number; kind: string };
+    assert.equal(saved.code, 1);
+    assert.equal(saved.kind, "node --test");
+    assert.doesNotMatch(JSON.stringify(saved), /hunter2/);
+    mkdirSync(path.join(root, ".ocp/fleet/coding"), { recursive: true });
+    writeFileSync(path.join(root, ".ocp/fleet/coding/add.test.mjs"), "import test from \"node:test\";\nimport assert from \"node:assert/strict\";\ntest(\"adds\", () => { assert.equal(1 + 1, 2); });\n");
+    captured = "";
+    assert.equal(await main(["check", "--sandbox", root, "--partner", "coding"]), 0);
+    assert.match(captured, /node --test exit 0/);
+    const partner = JSON.parse(readFileSync(path.join(root, ".ocp/fleet/coding/.ocp/last-check.json"), "utf8")) as { code: number; kind: string };
+    assert.equal(partner.code, 0);
+    assert.equal(partner.kind, "node --test");
+    const session = JSON.parse(readFileSync(path.join(root, ".ocp/last-check.json"), "utf8")) as { code: number };
+    assert.equal(session.code, 1);
+  } finally {
+    process.stdout.write = original;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("ocp todo list shows the checklist and does not change it", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "ocp-todo-cli-"));
   let captured = "";

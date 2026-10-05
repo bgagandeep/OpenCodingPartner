@@ -28,7 +28,7 @@ import {
 import { allowComputerUse, captureExecutedFrame, computerTabText, markComputerLive, readComputerTab } from "./computer-tab.js";
 export { captureComputerFrame, captureExecutedFrame, checkComputerFrame, checkComputerFrames, computerTabText, doctorComputerControlLine, doctorComputerFrameLine, doctorComputerRunLine, doctorComputerStatusLine, returnComputer, takeoverComputer } from "./computer-tab.js";
 export { doctorSharedMountLine, fleetDoctorLine, fleetIds, formatFleetStatus, formatFleetStatusJson, globShared, grepShared, isolatePartner, listShared, partnerContainerArgv, partnerWorkspace, readFleetStatus, readPartnerIdentity, readShared, sharedRequest } from "./fleet.js";
-export { doctorLastCheckLine, recordLastCheck } from "./last-check.js";
+export { allowedCheckArgv, doctorLastCheckLine, recordLastCheck, runAllowedCheck } from "./last-check.js";
 export { doctorLastQaLine, recordLastQa } from "./last-qa.js";
 export { doctorLastWriteLine, recordLastWrite } from "./last-write.js";
 export { startPartnerContainer, stopPartnerContainer } from "./fleet-run.js";

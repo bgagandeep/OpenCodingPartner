@@ -76,7 +76,8 @@ test("doctor marks missing pieces and does not print a key", async () => {
       fetchImpl: async () => new Response("ok", { status: 200 }),
       playwrightPresent: true,
     });
-    assert.match(slack.transcript, /green Slack: bot token and signing secret are set/);
+    assert.match(slack.transcript, /yellow Slack: the bot token was not accepted/);
+    assert.match(slack.transcript, /does not post a message/);
     assert.doesNotMatch(slack.transcript, /xoxb-secret-value/);
     assert.doesNotMatch(slack.transcript, /signing-secret-value/);
     assert.match(slack.transcript, /yellow Telegram: missing TELEGRAM_BOT_TOKEN, TELEGRAM_WEBHOOK_SECRET/);
@@ -87,7 +88,8 @@ test("doctor marks missing pieces and does not print a key", async () => {
       fetchImpl: async () => new Response("ok", { status: 200 }),
       playwrightPresent: true,
     });
-    assert.match(telegram.transcript, /green Telegram: bot token and webhook secret are set/);
+    assert.match(telegram.transcript, /yellow Telegram: the bot token was not accepted/);
+    assert.match(telegram.transcript, /does not post a message/);
     assert.doesNotMatch(telegram.transcript, /123:telegram-secret/);
     assert.doesNotMatch(telegram.transcript, /webhook-secret-value/);
     assert.match(telegram.transcript, /green Write bridge plugin: the gateway offered ocp_sandbox_todo/);
@@ -130,6 +132,51 @@ test("doctor asks whether the gateway offers the todo tool and does not send a b
     assert.match(body, /"tool":"ocp_sandbox_todo"/);
     assert.match(body, /"action":"status"/);
     assert.doesNotMatch(body, /bridgeUrl/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("doctor asks Slack and Telegram whether the bot token is accepted and does not post", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-doctor-channel-"));
+  try {
+    const calls: string[] = [];
+    const accepted = await runDoctor({
+      env: {
+        SLACK_BOT_TOKEN: "xoxb-live-secret",
+        SLACK_SIGNING_SECRET: "signing-live-secret",
+        TELEGRAM_BOT_TOKEN: "999:telegram-live-secret",
+        TELEGRAM_WEBHOOK_SECRET: "webhook-live-secret",
+      },
+      bins: {},
+      repoRoot: root,
+      fetchImpl: async (url, init) => {
+        const target = String(url);
+        calls.push(target);
+        if (target === "https://slack.com/api/auth.test") {
+          const header = new Headers(init?.headers).get("authorization") ?? "";
+          if (header !== "Bearer xoxb-live-secret") return new Response('{"ok":false}', { status: 200 });
+          return new Response('{"ok":true}', { status: 200 });
+        }
+        if (target.startsWith("https://api.telegram.org/bot") && target.endsWith("/getMe")) {
+          return new Response('{"ok":true}', { status: 200 });
+        }
+        if (target.endsWith("/healthz")) return new Response("ok", { status: 200 });
+        return new Response("ok", { status: 200 });
+      },
+    });
+    assert.match(accepted.transcript, /green Slack: the bot token was accepted/);
+    assert.match(accepted.transcript, /signing secret is set and was not sent/);
+    assert.match(accepted.transcript, /green Telegram: the bot token was accepted/);
+    assert.match(accepted.transcript, /webhook secret is set and was not sent/);
+    assert.match(accepted.transcript, /does not post a message/);
+    assert.doesNotMatch(accepted.transcript, /xoxb-live-secret/);
+    assert.doesNotMatch(accepted.transcript, /signing-live-secret/);
+    assert.doesNotMatch(accepted.transcript, /telegram-live-secret/);
+    assert.doesNotMatch(accepted.transcript, /webhook-live-secret/);
+    assert.equal(calls.includes("https://slack.com/api/auth.test"), true);
+    assert.equal(calls.some((url) => url.startsWith("https://api.telegram.org/bot") && url.endsWith("/getMe")), true);
+    assert.equal(calls.some((url) => url.includes("chat.postMessage") || url.includes("sendMessage")), false);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

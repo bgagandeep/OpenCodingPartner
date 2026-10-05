@@ -681,6 +681,52 @@ test("ocp grep prints a short hit and skips a secret file", async () => {
   }
 });
 
+test("ocp glob names matching files and does not print contents", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "ocp-glob-cli-"));
+  let captured = "";
+  const original = process.stdout.write.bind(process.stdout);
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    captured += String(chunk);
+    return true;
+  }) as typeof process.stdout.write;
+  try {
+    const { mkdirSync, writeFileSync } = await import("node:fs");
+    const missing = await main(["glob", "--sandbox", root]);
+    assert.equal(missing, 2);
+    assert.match(captured, /Usage: ocp glob/);
+    writeFileSync(path.join(root, "hello.txt"), "password=hunter2\n");
+    writeFileSync(path.join(root, "password=hunter2.txt"), "hidden\n");
+    mkdirSync(path.join(root, ".ocp"), { recursive: true });
+    writeFileSync(path.join(root, ".ocp/note.txt"), "board note\n");
+    mkdirSync(path.join(root, "gtm"), { recursive: true });
+    writeFileSync(path.join(root, "gtm/last-run.json"), "{}\n");
+    captured = "";
+    assert.equal(await main(["glob", "--sandbox", root, "--pattern", "*.txt"]), 0);
+    assert.match(captured, /hello.txt/);
+    assert.match(captured, /\[redacted\]/);
+    assert.doesNotMatch(captured, /hunter2/);
+    assert.doesNotMatch(captured, /board note/);
+    assert.doesNotMatch(captured, /\.ocp/);
+    assert.doesNotMatch(captured, /gtm/);
+    captured = "";
+    assert.equal(await main(["glob", "--sandbox", root, "--pattern", "../secret"]), 1);
+    assert.match(captured, /pattern is not a relative glob/);
+    assert.doesNotMatch(captured, /hunter2/);
+    mkdirSync(path.join(root, ".ocp/fleet/coding"), { recursive: true });
+    writeFileSync(path.join(root, ".ocp/fleet/coding/note.txt"), "partner body\n");
+    captured = "";
+    assert.equal(await main(["glob", "--sandbox", root, "--partner", "coding", "--pattern", "*.txt"]), 0);
+    assert.match(captured, /note.txt/);
+    assert.doesNotMatch(captured, /partner body/);
+    captured = "";
+    assert.equal(await main(["glob", "--sandbox", root, "--pattern", "note.txt"]), 0);
+    assert.match(captured, /\(no matches\)/);
+  } finally {
+    process.stdout.write = original;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("ocp fleet status lists a partner and can print json", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "ocp-fleet-cli-"));
   let captured = "";

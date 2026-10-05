@@ -6,7 +6,7 @@ import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 import { codingRunnerForEnv, copyViaOpenClaw, deleteViaOpenClaw, discoverStack, mkdirViaOpenClaw, predictWithLaya, renameViaOpenClaw, rmdirViaOpenClaw, runConnectedPath, runDoctor, sendOrchestrationTurn, startSandboxWriteBridge, writeViaOpenClaw } from "@opencodingpartner/bundle";
 import { access, copyFile, mkdir, readFile } from "node:fs/promises";
-import { acpOptIn, applySwarmManifest, computerTabText, createRoutine, fireDueRoutines, fireEvent, formatRoutineList, formatSettings, isolatePartner, listRoutines, parseSwarmManifest, pauseRoutine, readPackaging, resumeRoutine, returnComputer, runChatTurn, runDemo, slackTurn, startPartnerContainer, stopPartnerContainer, takeoverComputer, telegramTurn, validateSwarmManifest, type ChatTurnInput } from "@opencodingpartner/gateway";
+import { acpOptIn, applySwarmManifest, captureComputerFrame, computerTabText, createRoutine, fireDueRoutines, fireEvent, formatRoutineList, formatSettings, isolatePartner, listRoutines, parseSwarmManifest, pauseRoutine, readPackaging, resumeRoutine, returnComputer, runChatTurn, runDemo, slackTurn, startPartnerContainer, stopPartnerContainer, takeoverComputer, telegramTurn, validateSwarmManifest, type ChatTurnInput } from "@opencodingpartner/gateway";
 import { playwrightBrowserDriver } from "@opencodingpartner/workers";
 import { routeWithPredict } from "@opencodingpartner/policy";
 import { proveCoding, proveComputer } from "./prove.js";
@@ -83,8 +83,12 @@ export async function main(argv: readonly string[]): Promise<number> {
     const action = partnerFlag.rest[0];
     if (action === "takeover") await takeoverComputer(target);
     else if (action === "return") await returnComputer(target);
-    else if (action) {
-      process.stdout.write("Usage: ocp computer [--sandbox .sandbox] [--partner name] [takeover|return]\n");
+    else if (action === "capture") {
+      const shot = await captureComputerFrame(target);
+      process.stdout.write(`${shot.text}\n`);
+      if (!shot.ok) return 1;
+    } else if (action) {
+      process.stdout.write("Usage: ocp computer [--sandbox .sandbox] [--partner name] [takeover|return|capture]\n");
       return 2;
     }
     process.stdout.write(`${await computerTabText(target)}\n`);

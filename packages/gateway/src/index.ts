@@ -157,7 +157,8 @@ function idempotencyKey(input: ChatTurnInput, sessionKey: string): string {
   const mode = input.codingVia ?? (input.grokRunner ? "grok-build" : "local-sandbox");
   const remote = input.openclawWrite ? "openclaw-write" : "no-openclaw-write";
   const computer = input.computerExecute === true ? "computer-live" : "computer-plan";
-  return `${sessionKey}\n${path.resolve(input.sandboxRoot)}\n${mode}\n${remote}\n${computer}\n${input.message}`;
+  const partner = input.partnerId ?? "";
+  return `${sessionKey}\n${path.resolve(input.sandboxRoot)}\n${partner}\n${mode}\n${remote}\n${computer}\n${input.message}`;
 }
 
 export function runChatTurn(input: ChatTurnInput): Promise<ChatTurnResult> {

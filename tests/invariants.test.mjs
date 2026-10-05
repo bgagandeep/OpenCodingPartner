@@ -23,14 +23,19 @@ function walk(dir, out = []) {
 const docs = ["README.md", "ARCHITECTURE.md", "ROADMAP.md", "CONTRIBUTING.md", "THIRD_PARTY_NOTICES.md", "NOTICE"].map(read).join("\n");
 
 test("product docs name the tools and keep ads and payments off", () => {
-  assert.match(docs, /openclaw\/openclaw/);
+  assert.match(read("THIRD_PARTY_NOTICES.md"), /openclaw\/openclaw/);
   assert.match(docs, /MIT/);
-  assert.match(docs, /xai-org\/grok-build/);
+  assert.match(read("THIRD_PARTY_NOTICES.md"), /xai-org\/grok-build/);
   assert.match(docs, /Apache-2\.0/);
-  assert.match(docs, /convaiinnovations\/laya/);
+  assert.match(read("THIRD_PARTY_NOTICES.md"), /convaiinnovations\/laya/);
   assert.match(docs, /System-1/);
-  assert.match(read("ARCHITECTURE.md"), /OpenClaw/);
-  assert.match(read("ARCHITECTURE.md"), /Grok Build/);
+  assert.match(read("README.md"), /Open Coding Partner/);
+  for (const name of ["ARCHITECTURE.md", "ROADMAP.md", "CONTRIBUTING.md"]) {
+    const page = read(name);
+    assert.doesNotMatch(page, /OpenClaw|Grok Build|LiteLLM|\bLaya\b|Claude Code|Hermes|Trinity/);
+  }
+  const readmeBody = read("README.md").split("## Credits")[0];
+  assert.doesNotMatch(readmeBody, /OpenClaw|Grok Build|LiteLLM|\bLaya\b|Claude Code|Hermes|Trinity/);
   assert.match(docs, /chat agent/);
   assert.match(docs, /orchestration agent swarm/);
   assert.match(docs, /coding agent/);

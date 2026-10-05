@@ -41,7 +41,7 @@ test("a real Laya choice wins over the fallback router", async () => {
   }));
   assert.equal(decision.route, "status");
   assert.deepEqual(decision.roles, []);
-  assert.equal(decision.note, "System-1: real Laya.");
+  assert.equal(decision.note, "System-1: real.");
   const parsed = parseLayaAnswers({
     answers: { route: { choice: "multi-agent", confidence: 0.9 } },
   });

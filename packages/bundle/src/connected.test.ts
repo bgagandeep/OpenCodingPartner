@@ -22,7 +22,7 @@ test("predict.py is selected when the Laya python is present", async () => {
     await chmod(python, 0o755);
     const raw = await predictWithLaya(python, path.join(root, "predict.py"), "add a function", []);
     const decision = await routeWithPredict("add a function and a test", async () => raw);
-    assert.equal(decision.note, "System-1: real Laya.");
+    assert.equal(decision.note, "System-1: real.");
     assert.equal(decision.route, "status");
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -53,7 +53,7 @@ test("LiteLLM env wins over OpenAI and XAI and does not print the key", async ()
     },
   );
   assert.equal(meter.via, "litellm");
-  assert.equal(meter.label, "LiteLLM");
+  assert.equal(meter.label, "proxy");
   assert.equal(meter.baseUrl, LITELLM_LOCAL_BASE_URL);
   const root = await mkdtemp(path.join(tmpdir(), "ocp-litellm-"));
   try {
@@ -73,11 +73,11 @@ test("LiteLLM env wins over OpenAI and XAI and does not print the key", async ()
 
   const openai = resolveCodingMeter({ grokBin: "/tmp/grok" }, { OPENAI_API_KEY: "sk", OPENAI_BASE_URL: "https://openrouter.ai/api/v1", XAI_API_KEY: "xai" });
   assert.equal(openai.via, "openai-compatible");
-  assert.equal(openai.label, "OpenAI-compatible");
+  assert.equal(openai.label, "compatible");
 
   const grok = resolveCodingMeter({ grokBin: "/tmp/grok" }, { XAI_API_KEY: "xai" });
   assert.equal(grok.via, "grok-build");
-  assert.equal(grok.label, "Grok Build");
+  assert.equal(grok.label, "worker");
 
   const none = resolveCodingMeter({}, {});
   assert.equal(none.runner, undefined);
@@ -483,7 +483,7 @@ test("gateway down and missing grok are both skipped", async () => {
     },
   });
   assert.equal(report.code, 0);
-  assert.match(report.transcript, /OpenClaw gateway: skipped/);
+  assert.match(report.transcript, /Orchestration gateway: skipped/);
   assert.match(report.transcript, /Chat turn: skipped/);
   assert.match(report.transcript, /Coding\/QA: skipped \(set XAI_API_KEY/);
 });
@@ -507,7 +507,7 @@ test("a live gateway receives the chat turn and grok runs only with a key", asyn
         throw new Error("grok must not run without XAI_API_KEY");
       },
     });
-    assert.match(skipped.transcript, /Chat turn: ran\. OpenClaw chat completions accepted session agent:board:main/);
+    assert.match(skipped.transcript, /Chat turn: ran\. Orchestration accepted session agent:board:main/);
     assert.match(skipped.transcript, /skipped \(set XAI_API_KEY/);
     assert.equal(skipped.code, 0);
 
@@ -522,7 +522,7 @@ test("a live gateway receives the chat turn and grok runs only with a key", asyn
     });
     assert.equal(ran.code, 0);
     assert.match(ran.transcript, /Chat turn: ran/);
-    assert.match(ran.transcript, /Coding\/QA on Grok Build: ran/);
+    assert.match(ran.transcript, /Coding\/QA on the coding worker: ran/);
     assert.doesNotMatch(ran.transcript, /xai-test-secret/);
     assert.doesNotMatch(ran.transcript, /gateway-secret/);
     const chat = calls.find((args) => args.includes("sessions.send"));

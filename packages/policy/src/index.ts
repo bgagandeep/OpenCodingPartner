@@ -103,12 +103,12 @@ export function wantsAgents(state: string): boolean {
   );
 }
 
-const FALLBACK_NOTE = "System-1: fallback. Laya is not installed or the call failed.";
-const REAL_NOTE = "System-1: real Laya.";
+const FALLBACK_NOTE = "System-1: fallback.";
+const REAL_NOTE = "System-1: real.";
 
 /** System-1 route only. This function does not write files or run tools. */
 export function routeMessage(message: string): RouteDecision {
-  return decisionFromAnswers(mockPredict(message, ROUTE_QUESTIONS), "System-1: fallback. Laya is not installed.");
+  return decisionFromAnswers(mockPredict(message, ROUTE_QUESTIONS), "System-1: fallback.");
 }
 
 export type LayaPredict = (state: string, questions: readonly LayaQuestion[]) => Promise<unknown>;

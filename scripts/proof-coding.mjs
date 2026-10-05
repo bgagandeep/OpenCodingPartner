@@ -14,7 +14,7 @@ process.stdout.write("  examples/proof-multifile/src/math.test.ts\n");
 
 if (!hasOpenAi && !hasXai) {
   process.stdout.write(
-    "No meter key is set. This command did not call a model and did not pretend to edit files.\nSet OPENAI_API_KEY and OPENAI_BASE_URL (LiteLLM or OpenRouter), or XAI_API_KEY, then run pnpm proof:coding again. That writes the files into .sandbox-proof/.\n",
+    "No meter key is set. This command did not call a model and did not pretend to edit files.\nSet OPENAI_API_KEY and OPENAI_BASE_URL, or XAI_API_KEY, then run pnpm proof:coding again. That writes the files into .sandbox-proof/.\n",
   );
   process.exit(2);
 }

@@ -48,7 +48,7 @@ test("ocp doctor prints a status and does not print the meter key", async () => 
     const code = await main(["doctor"]);
     assert.ok(code === 0 || code === 1);
     assert.match(captured, /ocp doctor/);
-    assert.match(captured, /Meter: LiteLLM/);
+    assert.match(captured, /Meter: proxy/);
     assert.doesNotMatch(captured, /doctor-secret-value/);
   } finally {
     if (previous === undefined) delete process.env.LITELLM_API_KEY;
@@ -111,7 +111,7 @@ test("ocp prove computer passes with a fake browser and does not print a key", a
     assert.match(captured, /check #agree/);
     assert.match(captured, /executed: true/);
     assert.match(captured, /not a full go-to-market run/);
-    assert.match(captured, /OpenClaw did not run the browser/);
+    assert.match(captured, /Orchestration did not run the browser/);
     assert.doesNotMatch(captured, /OpenClaw ran the browser/);
     assert.doesNotMatch(captured, /prove-computer-secret/);
   } finally {

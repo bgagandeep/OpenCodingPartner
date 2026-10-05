@@ -44,12 +44,12 @@ import {
 } from "@opencodingpartner/workers";
 
 export const DEMO_MESSAGE = `Stand up a coding agent, a QA agent, a security agent, and a computer agent.
-Use Grok Build to create PRODUCT.md with content:
+Use the coding worker to create PRODUCT.md with content:
 OpenCodingPartner helps a team build and sell.
 `;
 
 export const DEMO_BLOCKED_MESSAGE = `Stand up a coding agent and a security agent.
-Use Grok Build to create ../secret.txt with content:
+Use the coding worker to create ../secret.txt with content:
 password=hunter2
 `;
 
@@ -174,15 +174,15 @@ async function executeTurn(input: ChatTurnInput, session: SwarmSession, key: str
   };
   const notice = input.orchestration
     ? await input.orchestration(plan)
-    : { state: "skipped" as const, detail: "OpenClaw gateway was not used. The local swarm ran this turn.", driver: "local-swarm" as const };
+    : { state: "skipped" as const, detail: "The orchestration gateway was not used. The local swarm ran this turn.", driver: "local-swarm" as const };
   const openclawDrove = notice.driver === "openclaw" && notice.state === "ran";
   const openclawFailed = notice.driver === "openclaw" && notice.state === "failed";
   if (openclawDrove) plan = { ...plan, source: "openclaw" };
   const agents = openclawFailed ? [] : swarm.standUp(plan.roles);
   const orchestration = openclawDrove
-    ? `ran: OpenClaw accepted the session plan. ${notice.detail} A create-file uses the gateway write tool. The gateway still blocks fs_write, apply_patch, and sessions_spawn. General model edits still run in this process.`
+    ? `ran: Orchestration accepted the session plan. ${notice.detail} A create-file uses the gateway write tool. The gateway still blocks fs_write, apply_patch, and sessions_spawn. General model edits still run in this process.`
     : openclawFailed
-      ? `failed: OpenClaw gateway was up but did not accept the session plan. ${notice.detail} The local swarm did not take over.`
+      ? `failed: The orchestration gateway was up but did not accept the session plan. ${notice.detail} The local swarm did not take over.`
       : `${notice.state}: ${notice.detail}`;
 
   if (openclawFailed) {
@@ -275,11 +275,11 @@ async function executeTurn(input: ChatTurnInput, session: SwarmSession, key: str
           via: "openclaw-write",
           note:
             kept.length > 0
-              ? "Write path: OpenClaw-driven. The gateway invoked the sandbox write bridge."
-              : "Write path: OpenClaw-driven. The write bridge did not land the file. This process did not copy it into the sandbox.",
+              ? "Write path: orchestration. The gateway invoked the sandbox write bridge."
+              : "Write path: orchestration. The write bridge did not land the file. This process did not copy it into the sandbox.",
         };
         if (blocked.length > 0) {
-          coding.note = `Security agent blocked ${blocked.join(", ")} before the OpenClaw write.`;
+          coding.note = `Security agent blocked ${blocked.join(", ")} before the orchestration write.`;
         }
         if (agents.some((agent) => agent.role === "qa")) {
           qa = await swarm.dispatch("qa", () => reviewChangedFiles(input.sandboxRoot, kept, grok.exitCode === 0));
@@ -361,7 +361,7 @@ async function executeTurn(input: ChatTurnInput, session: SwarmSession, key: str
         relativePath: "general edit",
         wrote: false,
         via: "local-sandbox",
-        note: "Coding agent did not edit files. General edits need LITELLM_API_KEY, or OPENAI_API_KEY and OPENAI_BASE_URL, or XAI_API_KEY and Grok Build. A simple create-file message still runs on the local sandbox.",
+        note: "Coding agent did not edit files. General edits need a meter key. A simple create-file message still runs on the local sandbox.",
       };
     }
   }
@@ -377,8 +377,8 @@ async function executeTurn(input: ChatTurnInput, session: SwarmSession, key: str
         wrote,
         via: "openclaw-write",
         note: wrote
-          ? "Write path: OpenClaw-driven. The gateway invoked the sandbox write bridge."
-          : "Write path: OpenClaw-driven. The write bridge did not land the file. This process did not write it locally.",
+          ? "Write path: orchestration. The gateway invoked the sandbox write bridge."
+          : "Write path: orchestration. The write bridge did not land the file. This process did not write it locally.",
       };
       if (agents.some((agent) => agent.role === "qa")) {
         qa = await swarm.dispatch("qa", () => qaCheckFile(input.sandboxRoot, instruction.relativePath, instruction.content));
@@ -399,7 +399,7 @@ async function executeTurn(input: ChatTurnInput, session: SwarmSession, key: str
         relativePath: instruction.relativePath,
         wrote: true,
         via: "local-sandbox",
-        note: "Write path: local sandbox. The OpenClaw gateway did not drive this write.",
+        note: "Write path: local sandbox. The orchestration gateway did not drive this write.",
       };
       if (agents.some((agent) => agent.role === "qa")) {
         qa = await swarm.dispatch("qa", () =>
@@ -516,7 +516,7 @@ export function formatTranscript(result: ChatTurnResult): string {
         ? `Coding agent wrote ${result.coding.relativePath} via ${result.coding.via}`
         : `Coding agent did not write ${result.coding.relativePath}`,
     );
-    lines.push(result.coding.via === "openclaw-write" ? "Write path: OpenClaw-driven." : "Write path: local sandbox.");
+    lines.push(result.coding.via === "openclaw-write" ? "Write path: orchestration." : "Write path: local sandbox.");
     if (result.coding.note) lines.push(result.coding.note);
     lines.push(meterLine(result.coding.via));
   }
@@ -614,7 +614,7 @@ async function applyCodingPass(
           relativePath: kept.length > 0 ? kept.join(", ") : "no files",
           wrote: grok.exitCode === 0 && kept.length > 0,
           via: "openclaw-write",
-          note: "Write path: OpenClaw-driven. The gateway invoked the sandbox write bridge.",
+          note: "Write path: orchestration. The gateway invoked the sandbox write bridge.",
         },
         qa,
         security,
@@ -676,9 +676,9 @@ async function addFileExpectations(
 }
 
 function meterLine(via: CodingVia): string {
-  if (via === "litellm") return "Meter: LiteLLM";
-  if (via === "openai-compatible") return "Meter: OpenAI-compatible";
-  if (via === "grok-build") return "Meter: Grok Build";
+  if (via === "litellm") return "Meter: proxy";
+  if (via === "openai-compatible") return "Meter: compatible";
+  if (via === "grok-build") return "Meter: worker";
   if (via === "scripted") return "Meter: scripted";
   return "Meter: none";
 }
@@ -785,7 +785,7 @@ async function applyToolReply(
           const landed = await input.openclawWrite(step.path, content);
           const onDisk = landed.ok && (await fileMatches(input.sandboxRoot, step.path, content));
           if (!onDisk) {
-            const line = `Tool: ${step.tool} ${step.path} (OpenClaw write did not land)`;
+            const line = `Tool: ${step.tool} ${step.path} (orchestration write did not land)`;
             log.push(line);
             observations.push(line);
             continue;
@@ -892,17 +892,17 @@ async function applyToolReply(
   }
   const note = [
     ...log,
-    openclawDrove ? "Write path: OpenClaw-driven. The gateway invoked the sandbox write bridge." : "Write path: local sandbox.",
-    deletedRemote ? "Delete path: OpenClaw-driven." : "",
+    openclawDrove ? "Write path: orchestration. The gateway invoked the sandbox write bridge." : "Write path: local sandbox.",
+    deletedRemote ? "Delete path: orchestration." : "",
     deletedLocal ? "Delete path: local sandbox." : "",
-    renamedRemote ? "Rename path: OpenClaw-driven." : "",
+    renamedRemote ? "Rename path: orchestration." : "",
     renamedLocal ? "Rename path: local sandbox." : "",
-    copiedRemote ? "Copy path: OpenClaw-driven." : "",
+    copiedRemote ? "Copy path: orchestration." : "",
     copiedLocal ? "Copy path: local sandbox." : "",
     appendedLocal ? "Append path: local sandbox." : "",
-    madeDirRemote ? "Mkdir path: OpenClaw-driven." : "",
+    madeDirRemote ? "Mkdir path: orchestration." : "",
     madeDirLocal ? "Mkdir path: local sandbox." : "",
-    removedDirRemote ? "Rmdir path: OpenClaw-driven." : "",
+    removedDirRemote ? "Rmdir path: orchestration." : "",
     removedDirLocal ? "Rmdir path: local sandbox." : "",
     todoBlock,
     blocked.length > 0 ? `Security agent removed ${blocked.join(", ")} after the edit.` : "",
@@ -1033,7 +1033,7 @@ async function codingPrompt(sandboxRoot: string, message: string): Promise<strin
   }
   const filesNote = message.startsWith("Tool observations:") || blocks.length === 0 ? "" : `Sandbox files already on disk:\n${blocks.join("\n")}\n`;
   const history = await priorTurns(sandboxRoot);
-  return `${history}${filesNote}User request:\n${message}\nReply with JSON only: {"steps":[{"tool":"list"|"read"|"grep"|"glob"|"run"|"write"|"patch"|"delete"|"rename"|"copy"|"append"|"mkdir"|"rmdir"|"todo","action":"add or complete","to":"relative destination","query":"text or /regex/","path":"relative","content":"full text for write, or todo text, or a 1-based todo index","diff":"unified diff for patch","argv":["node","--test","relative.test.ts"]}],"done":false}. One reply is one round. After you see Tool observations, send the next round. Set "done" to true when finished. List or read before you edit. Patch a file that already exists. Write only a new file. Append adds text to one existing file and does not create a file. Copy copies one existing file to a new relative path and leaves the source. OpenClaw does not append. A todo step uses action add with the task text, or action complete with a 1-based index or id. At most 12 todos. Allowed commands are node --test plus relative paths, pnpm test with no extra arguments, tsc --noEmit plus relative paths, git status, git status -sb, git status --short --branch, git diff plus relative paths, and git log --oneline -n N with N from 1 to 20, and git show HEAD: plus one relative path.`;
+  return `${history}${filesNote}User request:\n${message}\nReply with JSON only: {"steps":[{"tool":"list"|"read"|"grep"|"glob"|"run"|"write"|"patch"|"delete"|"rename"|"copy"|"append"|"mkdir"|"rmdir"|"todo","action":"add or complete","to":"relative destination","query":"text or /regex/","path":"relative","content":"full text for write, or todo text, or a 1-based todo index","diff":"unified diff for patch","argv":["node","--test","relative.test.ts"]}],"done":false}. One reply is one round. After you see Tool observations, send the next round. Set "done" to true when finished. List or read before you edit. Patch a file that already exists. Write only a new file. Append adds text to one existing file and does not create a file. Copy copies one existing file to a new relative path and leaves the source. The orchestration gateway does not append. A todo step uses action add with the task text, or action complete with a 1-based index or id. At most 12 todos. Allowed commands are node --test plus relative paths, pnpm test with no extra arguments, tsc --noEmit plus relative paths, git status, git status -sb, git status --short --branch, git diff plus relative paths, and git log --oneline -n N with N from 1 to 20, and git show HEAD: plus one relative path.`;
 }
 
 async function mkdirThroughTurn(
@@ -1047,7 +1047,7 @@ async function mkdirThroughTurn(
       return { ok: true, via: "openclaw", detail: remote.detail };
     }
     if (remote.ok || !remote.missing) {
-      return { ok: false, via: "openclaw", detail: remote.ok ? "OpenClaw mkdir did not create the directory." : remote.detail };
+      return { ok: false, via: "openclaw", detail: remote.ok ? "Orchestration mkdir did not create the directory." : remote.detail };
     }
   }
   const local = await mkdirSandboxDir(input.sandboxRoot, relativePath);
@@ -1065,7 +1065,7 @@ async function rmdirThroughTurn(
       return { ok: true, via: "openclaw", detail: remote.detail };
     }
     if (remote.ok || !remote.missing) {
-      return { ok: false, via: "openclaw", detail: remote.ok ? "OpenClaw rmdir did not remove the directory." : remote.detail };
+      return { ok: false, via: "openclaw", detail: remote.ok ? "Orchestration rmdir did not remove the directory." : remote.detail };
     }
   }
   const local = await rmdirSandboxDir(input.sandboxRoot, relativePath);
@@ -1092,7 +1092,7 @@ async function deleteThroughTurn(
       return { ok: true, via: "openclaw", detail: remote.detail };
     }
     if (remote.ok || !remote.missing) {
-      return { ok: false, via: "openclaw", detail: remote.ok ? "OpenClaw delete did not remove the file." : remote.detail };
+      return { ok: false, via: "openclaw", detail: remote.ok ? "Orchestration delete did not remove the file." : remote.detail };
     }
   }
   const local = await deleteSandboxFile(input.sandboxRoot, relativePath);
@@ -1111,7 +1111,7 @@ async function copyThroughTurn(
       return { ok: true, via: "openclaw", detail: remote.detail };
     }
     if (remote.ok || !remote.missing) {
-      return { ok: false, via: "openclaw", detail: remote.ok ? "OpenClaw copy did not copy the file." : remote.detail };
+      return { ok: false, via: "openclaw", detail: remote.ok ? "Orchestration copy did not copy the file." : remote.detail };
     }
   }
   const local = await copySandboxFile(input.sandboxRoot, fromPath, toPath);
@@ -1130,7 +1130,7 @@ async function renameThroughTurn(
       return { ok: true, via: "openclaw", detail: remote.detail };
     }
     if (remote.ok || !remote.missing) {
-      return { ok: false, via: "openclaw", detail: remote.ok ? "OpenClaw rename did not move the file." : remote.detail };
+      return { ok: false, via: "openclaw", detail: remote.ok ? "Orchestration rename did not move the file." : remote.detail };
     }
   }
   const local = await renameSandboxFile(input.sandboxRoot, fromPath, toPath);
@@ -1171,7 +1171,7 @@ function labelFor(agent: StoodUpAgent): string {
 }
 
 function runtimeLabel(agent: StoodUpAgent): string {
-  if (agent.runtime === "grok-build") return "Grok Build";
+  if (agent.runtime === "grok-build") return "coding worker";
   if (agent.runtime === "computer-use") return "the computer-use seam";
   return "the policy seam";
 }

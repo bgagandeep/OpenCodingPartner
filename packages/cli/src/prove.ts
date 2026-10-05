@@ -87,7 +87,7 @@ export async function proveCoding(): Promise<{ code: number; text: string }> {
     }
     if (!turn.transcript.includes("Mkdir path: local sandbox.")) reasons.push("mkdir was not local");
     if (!turn.transcript.includes("Copy path: local sandbox.")) reasons.push("copy was not local");
-    if (turn.transcript.includes("Copy path: OpenClaw-driven.")) reasons.push("copy claimed OpenClaw");
+    if (turn.transcript.includes("Copy path: orchestration.")) reasons.push("copy claimed orchestration");
     if (turn.qa?.pass !== true) reasons.push("the check did not pass");
     if (reasons.length > 0) {
       return {
@@ -97,7 +97,7 @@ export async function proveCoding(): Promise<{ code: number; text: string }> {
     }
     return {
       code: 0,
-      text: `ocp prove coding\nPassed. A scripted runner made src/, wrote ${MATH}, globbed it, patched add, copied it to ${COPY}, and node --test exited 0.\nThe copy is local. OpenClaw did not copy the file. No live meter ran. No API key was used.\n\n${turn.transcript}`,
+      text: `ocp prove coding\nPassed. A scripted runner made src/, wrote ${MATH}, globbed it, patched add, copied it to ${COPY}, and node --test exited 0.\nThe copy is local. Orchestration did not copy the file. No live meter ran. No API key was used.\n\n${turn.transcript}`,
     };
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -156,7 +156,7 @@ function fakeBrowser(): BrowserDriver {
 
 /**
  * One scripted computer chain. A fake browser driver does the work.
- * Playwright is not required. OpenClaw does not run the browser.
+ * Playwright is not required. Orchestration does not run the browser.
  */
 export async function proveComputer(): Promise<{ code: number; text: string }> {
   const root = await mkdtemp(path.join(tmpdir(), "ocp-prove-computer-"));
@@ -193,19 +193,19 @@ export async function proveComputer(): Promise<{ code: number; text: string }> {
     if (!turn.transcript.includes("verify lower")) {
       reasons.push("transcript did not show the page check");
     }
-    if (/OpenClaw (opened|ran the browser)/i.test(turn.transcript)) {
-      reasons.push("transcript claimed OpenClaw ran the browser");
+    if (/orchestration (opened|ran the browser)/i.test(turn.transcript) || /OpenClaw (opened|ran the browser)/i.test(turn.transcript)) {
+      reasons.push("transcript claimed the browser was run by orchestration");
     }
     if (turn.qa?.pass !== true) reasons.push("the page check did not pass");
     if (reasons.length > 0) {
       return {
         code: 1,
-        text: `ocp prove computer\nFailed. ${reasons[0]}\nThis proof uses a fake browser driver. OpenClaw does not run the browser. It does not print keys.\n`,
+        text: `ocp prove computer\nFailed. ${reasons[0]}\nThis proof uses a fake browser driver. Orchestration does not run the browser. It does not print keys.\n`,
       };
     }
     return {
       code: 0,
-      text: `ocp prove computer\nPassed. A fake browser driver opened https://example.com, scrolled, pressed Enter, hovered #buy, double-clicked #buy, right-clicked #buy, filled #email, selected #plan option Pro, checked #agree, and the page text matched.\nThis is one scripted chain, not a full go-to-market run. OpenClaw did not run the browser. Playwright was not required. No API key was used.\n\n${turn.transcript}`,
+      text: `ocp prove computer\nPassed. A fake browser driver opened https://example.com, scrolled, pressed Enter, hovered #buy, double-clicked #buy, right-clicked #buy, filled #email, selected #plan option Pro, checked #agree, and the page text matched.\nThis is one scripted chain, not a full go-to-market run. Orchestration did not run the browser. Playwright was not required. No API key was used.\n\n${turn.transcript}`,
     };
   } finally {
     await rm(root, { recursive: true, force: true });

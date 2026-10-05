@@ -89,8 +89,7 @@ test("a general ask offline does not pretend to edit files", async () => {
       sandboxRoot: root,
     });
     assert.equal(turn.coding?.wrote, false);
-    assert.match(turn.transcript, /General edits need LITELLM_API_KEY/);
-    assert.match(turn.transcript, /XAI_API_KEY/);
+    assert.match(turn.transcript, /General edits need a meter key/);
     assert.match(turn.transcript, /Meter: none/);
     await assert.rejects(readFile(path.join(root, "README.md"), "utf8"));
   } finally {
@@ -165,7 +164,7 @@ test("OpenClaw drives a general edit and QA checks the kept files", async () => 
         },
       },
     });
-    assert.match(turn.transcript, /OpenClaw accepted the session plan/);
+    assert.match(turn.transcript, /Orchestration accepted the session plan/);
     assert.match(turn.transcript, /General model edits still run in this process/);
     assert.match(turn.transcript, /via grok-build/);
     assert.doesNotMatch(turn.transcript, /write tool landed/);
@@ -292,7 +291,7 @@ test("a real Laya status choice is the only plan OpenClaw stands up", async () =
     assert.equal(sent?.sessionKey, "agent:board:main");
     assert.deepEqual(turn.agents, []);
     assert.equal(turn.coding, null);
-    assert.match(turn.transcript, /System-1: real Laya/);
+    assert.match(turn.transcript, /System-1: real/);
     assert.match(turn.transcript, /Manager plan \(openclaw\)/);
     await assert.rejects(readFile(path.join(root, "README.md"), "utf8"));
   } finally {
@@ -358,7 +357,7 @@ test("an accepted plan writes a create-file through the OpenClaw write tool", as
     assert.equal(turn.coding?.wrote, true);
     assert.equal(turn.coding?.via, "openclaw-write");
     assert.equal(await readFile(path.join(root, "hello.txt"), "utf8"), content);
-    assert.match(turn.transcript, /Write path: OpenClaw-driven/);
+    assert.match(turn.transcript, /Write path: orchestration/);
     assert.match(turn.transcript, /blocks fs_write/);
     assert.doesNotMatch(turn.transcript, /fs_write landed/);
     assert.equal(turn.qa?.pass, true);
@@ -426,7 +425,7 @@ test("a general edit under an accepted plan lands only through the OpenClaw writ
     assert.equal(turn.coding?.via, "openclaw-write");
     assert.equal(turn.coding?.wrote, true);
     assert.equal(await readFile(path.join(root, "README.md"), "utf8"), "# Install\n");
-    assert.match(turn.transcript, /Write path: OpenClaw-driven/);
+    assert.match(turn.transcript, /Write path: orchestration/);
     assert.doesNotMatch(turn.transcript, /Write path: local sandbox/);
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -775,7 +774,7 @@ test("a coding turn writes a file and then deletes it", async () => {
     assert.match(turn.transcript, /Tool: write src\/old.ts/);
     assert.match(turn.transcript, /Tool: delete src\/old.ts/);
     assert.match(turn.transcript, /Delete path: local sandbox/);
-    assert.doesNotMatch(turn.transcript, /OpenClaw-driven/);
+    assert.doesNotMatch(turn.transcript, /path: orchestration/);
     await assert.rejects(readFile(path.join(root, "src/old.ts"), "utf8"));
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -987,7 +986,7 @@ test("a coding turn writes a file and then renames it", async () => {
     });
     assert.match(turn.transcript, /Tool: rename src\/old.ts → src\/lib\/old.ts/);
     assert.match(turn.transcript, /Rename path: local sandbox/);
-    assert.doesNotMatch(turn.transcript, /Rename path: OpenClaw-driven/);
+    assert.doesNotMatch(turn.transcript, /Rename path: orchestration/);
     await assert.rejects(readFile(path.join(root, "src/old.ts"), "utf8"));
     assert.match(await readFile(path.join(root, "src/lib/old.ts"), "utf8"), /export const old/);
   } finally {
@@ -1075,7 +1074,7 @@ test("a coding turn copies a file and leaves the source", async () => {
   }
 });
 
-test("an OpenClaw-driven turn copies a file through the bridge", async () => {
+test("an orchestration turn copies a file through the bridge", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "ocp-remote-copy-"));
   try {
     await writeSandboxFile(root, "src/old.ts", "export const old = 1;\n");
@@ -1105,7 +1104,7 @@ test("an OpenClaw-driven turn copies a file through the bridge", async () => {
       },
     });
     assert.deepEqual(calls, ["src/old.ts src/lib/old.ts"]);
-    assert.match(turn.transcript, /Copy path: OpenClaw-driven/);
+    assert.match(turn.transcript, /Copy path: orchestration/);
     assert.doesNotMatch(turn.transcript, /Copy path: local sandbox/);
     assert.match(await readFile(path.join(root, "src/old.ts"), "utf8"), /export const old/);
     assert.match(await readFile(path.join(root, "src/lib/old.ts"), "utf8"), /export const old/);
@@ -1131,7 +1130,7 @@ test("an OpenClaw-driven turn copies a file through the bridge", async () => {
       openclawCopy: async () => ({ ok: false, missing: false, detail: "target already exists" }),
     });
     assert.doesNotMatch(refused.transcript, /Copy path: local sandbox/);
-    assert.doesNotMatch(refused.transcript, /Copy path: OpenClaw-driven/);
+    assert.doesNotMatch(refused.transcript, /Copy path: orchestration/);
     await assert.rejects(readFile(path.join(blocked, "src/lib/old.ts"), "utf8"));
     await rm(blocked, { recursive: true, force: true });
   } finally {
@@ -1162,7 +1161,7 @@ test("a missing OpenClaw copy plugin falls back to the local sandbox", async () 
       openclawCopy: async () => ({ ok: false, missing: true, detail: "plugin missing" }),
     });
     assert.match(turn.transcript, /Copy path: local sandbox/);
-    assert.doesNotMatch(turn.transcript, /Copy path: OpenClaw-driven/);
+    assert.doesNotMatch(turn.transcript, /Copy path: orchestration/);
     assert.match(await readFile(path.join(root, "src/old.ts"), "utf8"), /export const old/);
     assert.match(await readFile(path.join(root, "src/lib/old.ts"), "utf8"), /export const old/);
   } finally {
@@ -1170,7 +1169,7 @@ test("a missing OpenClaw copy plugin falls back to the local sandbox", async () 
   }
 });
 
-test("an OpenClaw-driven turn deletes and renames through the bridge", async () => {
+test("an orchestration turn deletes and renames through the bridge", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "ocp-remote-move-"));
   try {
     await writeSandboxFile(root, "src/old.ts", "export const old = 1;\n");
@@ -1212,8 +1211,8 @@ test("an OpenClaw-driven turn deletes and renames through the bridge", async () 
       },
     });
     assert.deepEqual(calls, ["delete src/old.ts", "rename src/keep.ts src/lib/keep.ts"]);
-    assert.match(turn.transcript, /Delete path: OpenClaw-driven/);
-    assert.match(turn.transcript, /Rename path: OpenClaw-driven/);
+    assert.match(turn.transcript, /Delete path: orchestration/);
+    assert.match(turn.transcript, /Rename path: orchestration/);
     assert.doesNotMatch(turn.transcript, /Delete path: local sandbox/);
     assert.doesNotMatch(turn.transcript, /Rename path: local sandbox/);
     await assert.rejects(readFile(path.join(root, "src/old.ts"), "utf8"));
@@ -1247,14 +1246,14 @@ test("a missing OpenClaw delete plugin falls back to the local sandbox", async (
       openclawDelete: async () => ({ ok: false, missing: true, detail: "plugin missing" }),
     });
     assert.match(turn.transcript, /Delete path: local sandbox/);
-    assert.doesNotMatch(turn.transcript, /Delete path: OpenClaw-driven/);
+    assert.doesNotMatch(turn.transcript, /Delete path: orchestration/);
     await assert.rejects(readFile(path.join(root, "src/old.ts"), "utf8"));
   } finally {
     await rm(root, { recursive: true, force: true });
   }
 });
 
-test("an OpenClaw-driven turn creates a directory through the bridge", async () => {
+test("an orchestration turn creates a directory through the bridge", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "ocp-remote-mkdir-"));
   try {
     const calls: string[] = [];
@@ -1282,7 +1281,7 @@ test("an OpenClaw-driven turn creates a directory through the bridge", async () 
       },
     });
     assert.deepEqual(calls, ["src/lib"]);
-    assert.match(turn.transcript, /Mkdir path: OpenClaw-driven/);
+    assert.match(turn.transcript, /Mkdir path: orchestration/);
     assert.doesNotMatch(turn.transcript, /Mkdir path: local sandbox/);
     const { stat } = await import("node:fs/promises");
     assert.equal((await stat(path.join(root, "src/lib"))).isDirectory(), true);
@@ -1307,7 +1306,7 @@ test("an OpenClaw-driven turn creates a directory through the bridge", async () 
       openclawMkdir: async () => ({ ok: false, missing: false, detail: "blocked (path escape)" }),
     });
     assert.doesNotMatch(refused.transcript, /Mkdir path: local sandbox/);
-    assert.doesNotMatch(refused.transcript, /Mkdir path: OpenClaw-driven/);
+    assert.doesNotMatch(refused.transcript, /Mkdir path: orchestration/);
     await assert.rejects(stat(path.join(blocked, "src/kept")));
     await rm(blocked, { recursive: true, force: true });
   } finally {
@@ -1337,7 +1336,7 @@ test("a missing OpenClaw mkdir plugin falls back to the local sandbox", async ()
       openclawMkdir: async () => ({ ok: false, missing: true, detail: "plugin missing" }),
     });
     assert.match(turn.transcript, /Mkdir path: local sandbox/);
-    assert.doesNotMatch(turn.transcript, /Mkdir path: OpenClaw-driven/);
+    assert.doesNotMatch(turn.transcript, /Mkdir path: orchestration/);
     const { stat } = await import("node:fs/promises");
     assert.equal((await stat(path.join(root, "src/lib"))).isDirectory(), true);
   } finally {
@@ -1345,7 +1344,7 @@ test("a missing OpenClaw mkdir plugin falls back to the local sandbox", async ()
   }
 });
 
-test("an OpenClaw-driven turn removes an empty directory through the bridge", async () => {
+test("an orchestration turn removes an empty directory through the bridge", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "ocp-remote-rmdir-"));
   try {
     const { mkdir } = await import("node:fs/promises");
@@ -1375,7 +1374,7 @@ test("an OpenClaw-driven turn removes an empty directory through the bridge", as
       },
     });
     assert.deepEqual(calls, ["src/empty"]);
-    assert.match(turn.transcript, /Rmdir path: OpenClaw-driven/);
+    assert.match(turn.transcript, /Rmdir path: orchestration/);
     assert.doesNotMatch(turn.transcript, /Rmdir path: local sandbox/);
     const { stat } = await import("node:fs/promises");
     await assert.rejects(stat(path.join(root, "src/empty")));
@@ -1401,7 +1400,7 @@ test("an OpenClaw-driven turn removes an empty directory through the bridge", as
       openclawRmdir: async () => ({ ok: false, missing: false, detail: "directory is not empty" }),
     });
     assert.doesNotMatch(refused.transcript, /Rmdir path: local sandbox/);
-    assert.doesNotMatch(refused.transcript, /Rmdir path: OpenClaw-driven/);
+    assert.doesNotMatch(refused.transcript, /Rmdir path: orchestration/);
     assert.equal((await stat(path.join(blocked, "src/kept"))).isDirectory(), true);
     await rm(blocked, { recursive: true, force: true });
   } finally {
@@ -1433,7 +1432,7 @@ test("a missing OpenClaw rmdir plugin falls back to the local sandbox", async ()
       openclawRmdir: async () => ({ ok: false, missing: true, detail: "plugin missing" }),
     });
     assert.match(turn.transcript, /Rmdir path: local sandbox/);
-    assert.doesNotMatch(turn.transcript, /Rmdir path: OpenClaw-driven/);
+    assert.doesNotMatch(turn.transcript, /Rmdir path: orchestration/);
     await assert.rejects(stat(path.join(root, "src/empty")));
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -1465,7 +1464,7 @@ test("a coding turn creates a directory and then writes a file in it", async () 
     });
     assert.match(turn.transcript, /Tool: mkdir src\/lib/);
     assert.match(turn.transcript, /Mkdir path: local sandbox/);
-    assert.doesNotMatch(turn.transcript, /OpenClaw-driven/);
+    assert.doesNotMatch(turn.transcript, /path: orchestration/);
     assert.match(await readFile(path.join(root, "src/lib/helper.ts"), "utf8"), /export const helper/);
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -1494,7 +1493,7 @@ test("a coding turn removes an empty directory it just made", async () => {
     });
     assert.match(turn.transcript, /Tool: rmdir src\/empty/);
     assert.match(turn.transcript, /Rmdir path: local sandbox/);
-    assert.doesNotMatch(turn.transcript, /OpenClaw-driven/);
+    assert.doesNotMatch(turn.transcript, /path: orchestration/);
     const { stat } = await import("node:fs/promises");
     await assert.rejects(stat(path.join(root, "src/empty")));
   } finally {
@@ -1722,7 +1721,7 @@ test("a failed check still uses the fix loop after tool rounds stop", async () =
   }
 });
 
-test("an OpenClaw-driven tool write uses the write bridge", async () => {
+test("an orchestration tool write uses the write bridge", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "ocp-tools-bridge-"));
   try {
     const writes: string[] = [];
@@ -1754,7 +1753,7 @@ test("an OpenClaw-driven tool write uses the write bridge", async () => {
     assert.deepEqual(writes, ["src/note.txt"]);
     assert.equal(turn.coding?.via, "openclaw-write");
     assert.match(turn.transcript, /Tool: write src\/note.txt/);
-    assert.match(turn.transcript, /Write path: OpenClaw-driven/);
+    assert.match(turn.transcript, /Write path: orchestration/);
     assert.equal(await readFile(path.join(root, "src/note.txt"), "utf8"), "from the bridge\n");
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -1787,9 +1786,9 @@ test("a follow-up turn sees the files from the previous turn", async () => {
     const second = await runChatTurn({ message: "add tests in src/math.test.ts that import from math", sandboxRoot: root, grokRunner: runner });
     const third = await runChatTurn({ message: "fix the failing assert", sandboxRoot: root, grokRunner: runner });
     assert.equal(first.session.key, second.session.key);
-    assert.match(first.transcript, /Meter: Grok Build/);
-    assert.match(second.transcript, /Meter: Grok Build/);
-    assert.match(third.transcript, /Meter: Grok Build/);
+    assert.match(first.transcript, /Meter: worker/);
+    assert.match(second.transcript, /Meter: worker/);
+    assert.match(third.transcript, /Meter: worker/);
     assert.match(prompts[1] ?? "", /Sandbox files already on disk/);
     assert.match(prompts[1] ?? "", /src\/math.ts/);
     assert.doesNotMatch(prompts[1] ?? "", /hunter2/);

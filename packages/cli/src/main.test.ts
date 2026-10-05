@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
+import { slackSignature } from "@opencodingpartner/gateway";
 import { main } from "./main.js";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
@@ -329,6 +330,64 @@ test("ocp channel telegram stays offline without credentials and posts when they
     else process.env.TELEGRAM_BOT_TOKEN = token;
     if (secret === undefined) delete process.env.TELEGRAM_WEBHOOK_SECRET;
     else process.env.TELEGRAM_WEBHOOK_SECRET = secret;
+    process.stdout.write = original;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("ocp channel slack receive rejects a bad signature and accepts a signed event", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "ocp-slack-receive-"));
+  let captured = "";
+  const original = process.stdout.write.bind(process.stdout);
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    captured += String(chunk);
+    return true;
+  }) as typeof process.stdout.write;
+  const token = process.env.SLACK_BOT_TOKEN;
+  const signing = process.env.SLACK_SIGNING_SECRET;
+  delete process.env.SLACK_BOT_TOKEN;
+  delete process.env.SLACK_SIGNING_SECRET;
+  const originalFetch = globalThis.fetch;
+  const { writeFileSync } = await import("node:fs");
+  const bodyPath = path.join(root, "event.json");
+  const raw = JSON.stringify({ type: "event_callback", event: { text: "hello", channel: "dev", ts: "1.2" } });
+  writeFileSync(bodyPath, raw);
+  const now = Date.now();
+  const timestamp = String(Math.floor(now / 1000));
+  try {
+    const missing = await main(["channel", "slack", "receive", "--sandbox", root, "--body", bodyPath, "--timestamp", timestamp, "--signature", "v0=nope"]);
+    assert.equal(missing, 1);
+    assert.match(captured, /Slack live: missing SLACK_BOT_TOKEN, SLACK_SIGNING_SECRET/);
+    assert.match(captured, /The update was not accepted/);
+    assert.doesNotMatch(captured, /Chat agent/);
+    captured = "";
+    process.env.SLACK_BOT_TOKEN = "xoxb-receive-secret";
+    process.env.SLACK_SIGNING_SECRET = "signing-receive-secret";
+    const rejected = await main(["channel", "slack", "receive", "--sandbox", root, "--body", bodyPath, "--timestamp", timestamp, "--signature", "v0=nope"]);
+    assert.equal(rejected, 1);
+    assert.match(captured, /bad signature/);
+    assert.match(captured, /The update was not accepted/);
+    assert.doesNotMatch(captured, /Chat agent/);
+    assert.doesNotMatch(captured, /signing-receive-secret/);
+    captured = "";
+    const signature = slackSignature("signing-receive-secret", timestamp, raw);
+    let posted = "";
+    globalThis.fetch = (async (_url: string | URL | Request, init?: RequestInit) => {
+      posted = String(init?.body ?? "");
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    }) as typeof fetch;
+    const accepted = await main(["channel", "slack", "receive", "--sandbox", root, "--body", bodyPath, "--timestamp", timestamp, "--signature", signature]);
+    assert.equal(accepted, 0);
+    assert.match(captured, /Chat agent/);
+    assert.match(posted, /"channel":"dev"/);
+    assert.doesNotMatch(captured, /xoxb-receive-secret/);
+    assert.doesNotMatch(captured, /signing-receive-secret/);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (token === undefined) delete process.env.SLACK_BOT_TOKEN;
+    else process.env.SLACK_BOT_TOKEN = token;
+    if (signing === undefined) delete process.env.SLACK_SIGNING_SECRET;
+    else process.env.SLACK_SIGNING_SECRET = signing;
     process.stdout.write = original;
     rmSync(root, { recursive: true, force: true });
   }

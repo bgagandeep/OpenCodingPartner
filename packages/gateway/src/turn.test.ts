@@ -2659,6 +2659,7 @@ test("doctor names a missing partner agreement and does not print a block rule",
     await writeFile(path.join(root, "PARTNER.rules"), "block: password=hunter2\n");
     const partial = partnerAgreementDoctorLine(await partnerAgreementStatus(root));
     assert.match(partial, /yellow Partner agreement: coding missing PARTNER.md/);
+    assert.match(partial, /1 block rule/);
     assert.doesNotMatch(partial, /password=hunter2/);
     await writeFile(path.join(root, ".ocp/fleet/coding/PARTNER.md"), "partner\n");
     const ready = partnerAgreementDoctorLine(await partnerAgreementStatus(root));
@@ -2666,6 +2667,18 @@ test("doctor names a missing partner agreement and does not print a block rule",
     assert.match(ready, /1 block rule/);
     assert.match(ready, /does not copy the file/);
     assert.doesNotMatch(ready, /password=hunter2/);
+    await writeFile(
+      path.join(root, ".ocp/fleet/coding/.ocp/mount.json"),
+      `${JSON.stringify({ shared: "/shared", source: root, mode: "read-only" })}\n`,
+    );
+    await writeFile(path.join(root, ".ocp/fleet/coding/PARTNER.rules"), "block: local-token\n");
+    const both = partnerAgreementDoctorLine(await partnerAgreementStatus(root));
+    assert.match(both, /green Partner agreement: present\. session 1 block rule\. coding 2 block rules/);
+    assert.match(both, /does not copy the file/);
+    assert.doesNotMatch(both, /hunter2/);
+    assert.doesNotMatch(both, /local-token/);
+    assert.equal(await readFile(path.join(root, "PARTNER.rules"), "utf8"), "block: password=hunter2\n");
+    assert.equal(await readFile(path.join(root, ".ocp/fleet/coding/PARTNER.rules"), "utf8"), "block: local-token\n");
   } finally {
     await rm(root, { recursive: true, force: true });
   }

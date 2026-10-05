@@ -371,6 +371,22 @@ export interface PartnerAgreementStatus {
   session: boolean;
   blockRules: number;
   missing: string[];
+  partnerBlockRules: { id: string; count: number }[];
+}
+
+function blockRuleClause(label: string, count: number): string {
+  const noun = count === 1 ? "1 block rule" : `${count} block rules`;
+  return label ? `${label} ${noun}` : noun;
+}
+
+function blockRuleSentence(status: PartnerAgreementStatus): string {
+  const labeled = status.partnerBlockRules.some((partner) => partner.count > 0);
+  const bits: string[] = [];
+  if (status.blockRules > 0) bits.push(blockRuleClause(labeled ? "session" : "", status.blockRules));
+  for (const partner of status.partnerBlockRules) {
+    if (partner.count > 0) bits.push(blockRuleClause(partner.id, partner.count));
+  }
+  return bits.length === 0 ? "" : ` ${bits.join(". ")}.`;
 }
 
 /** Whether this sandbox and each partner workspace will wait for approve. This does not copy PARTNER.md. */
@@ -378,20 +394,25 @@ export async function partnerAgreementStatus(sessionRoot: string): Promise<Partn
   const session = await partnerAgreementOn(sessionRoot);
   const blockRules = session ? countBlockRules(await loadPartnerRules(sessionRoot)) : 0;
   const missing: string[] = [];
+  const partnerBlockRules: { id: string; count: number }[] = [];
   for (const partner of await namedPartnerWorkspaces(sessionRoot)) {
-    if (!(await partnerAgreementOn(partner.workspace))) missing.push(partner.id);
+    if (!(await partnerAgreementOn(partner.workspace))) {
+      missing.push(partner.id);
+      continue;
+    }
+    partnerBlockRules.push({ id: partner.id, count: countBlockRules(await loadPartnerRules(partner.workspace)) });
   }
-  return { session, blockRules, missing };
+  return { session, blockRules, missing, partnerBlockRules };
 }
 
 export function partnerAgreementDoctorLine(status: PartnerAgreementStatus): string {
   const tail = "This check does not copy the file or decide a card.";
+  const rules = blockRuleSentence(status);
   if (!status.session) {
     return `yellow Partner agreement: PARTNER.md is missing. Edits do not wait for approve. ${tail}`;
   }
-  const rules = status.blockRules === 0 ? "" : status.blockRules === 1 ? " 1 block rule." : ` ${status.blockRules} block rules.`;
   if (status.missing.length > 0) {
-    return `yellow Partner agreement: ${status.missing.join(", ")} missing PARTNER.md. That workspace does not wait for approve. ${tail}`;
+    return `yellow Partner agreement: ${status.missing.join(", ")} missing PARTNER.md.${rules} That workspace does not wait for approve. ${tail}`;
   }
   return `green Partner agreement: present.${rules} Edits wait for approve. ${tail}`;
 }

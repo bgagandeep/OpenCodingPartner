@@ -37,6 +37,7 @@ import { noopAcpBackend, type AcpBackend } from "./acp.js";
 export { acpOptIn, formatSettings, noopAcpBackend } from "./acp.js";
 export { coreIsOpen, readPackaging } from "./packaging.js";
 export { approveDoctorLine, formatApproveQueue, formatApproveQueueJson, formatReviewHolds, listApproveQueue, listReviewHolds, partnerAgreementDoctorLine, partnerAgreementStatus, reviewHoldDoctorLine } from "./sdlc.js";
+export { formatTodoQueue, formatTodoQueueJson, listTodoQueue, todoDoctorLine } from "./todos.js";
 import {
   applyUnifiedDiff,
   commandDecision,

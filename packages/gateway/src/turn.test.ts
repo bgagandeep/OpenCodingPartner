@@ -6,7 +6,7 @@ import path from "node:path";
 import test from "node:test";
 import { routeWithPredict, type ManagerPlan } from "@opencodingpartner/policy";
 import { applySandboxTodo, grepSandbox, listSandboxDir, writeSandboxFile } from "@opencodingpartner/workers";
-import { DEMO_MESSAGE, applySwarmManifest, approveDoctorLine, clearSessionMemory, coreIsOpen, createRoutine, deliverSlackEvent, deliverTelegramUpdate, fireDueRoutines, fireEvent, formatApproveQueue, formatFleetStatus, formatFleetStatusJson, formatReviewHolds, isolatePartner, listApproveQueue, listReviewHolds, listRoutines, parseSwarmManifest, partnerAgreementDoctorLine, partnerAgreementStatus, partnerContainerArgv, pauseRoutine, readFleetStatus, readPackaging, reviewHoldDoctorLine, runChatTurn, runDemo, slackSignature, slackTurn, startPartnerContainer, stopPartnerContainer, verifySlackRequest, verifyTelegramRequest } from "./index.js";
+import { DEMO_MESSAGE, applySwarmManifest, approveDoctorLine, clearSessionMemory, coreIsOpen, createRoutine, deliverSlackEvent, deliverTelegramUpdate, fireDueRoutines, fireEvent, formatApproveQueue, formatFleetStatus, formatFleetStatusJson, formatReviewHolds, formatTodoQueue, isolatePartner, listApproveQueue, listReviewHolds, listRoutines, listTodoQueue, parseSwarmManifest, partnerAgreementDoctorLine, partnerAgreementStatus, partnerContainerArgv, pauseRoutine, readFleetStatus, readPackaging, reviewHoldDoctorLine, runChatTurn, todoDoctorLine, runDemo, slackSignature, slackTurn, startPartnerContainer, stopPartnerContainer, verifySlackRequest, verifyTelegramRequest } from "./index.js";
 import { allowComputerUse, captureComputerFrame, checkComputerFrame, computerTabText, doctorComputerFrameLine } from "./computer-tab.js";
 import { REVIEW_HOLD_CODING_CAP, rolesUnderReviewHold } from "./sdlc.js";
 
@@ -2476,6 +2476,34 @@ test("a swarm manifest validates, dry-runs, and applies partner workspaces", asy
     const refused = await applySwarmManifest(root, bad, { dryRun: true });
     assert.equal(refused.ok, false);
     assert.match(refused.text, /at least 1000 ms/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("todo list shows open and done items and the doctor line does not print the text", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-todo-list-"));
+  try {
+    assert.match(formatTodoQueue(await listTodoQueue(root)), /Todos: none/);
+    await mkdir(path.join(root, ".ocp/fleet/coding/.ocp"), { recursive: true });
+    await writeFile(path.join(root, ".ocp/fleet/coding/.ocp/identity.json"), `${JSON.stringify({ id: "coding" })}\n`);
+    await writeFile(
+      path.join(root, ".ocp/todos.json"),
+      `${JSON.stringify({ todos: [{ id: "1", text: "write the test", done: false }, { id: "2", text: "password=hunter2", done: true }] })}\n`,
+    );
+    await writeFile(
+      path.join(root, ".ocp/fleet/coding/.ocp/todos.json"),
+      `${JSON.stringify({ todos: [{ id: "1", text: "patch add", done: false }] })}\n`,
+    );
+    const items = await listTodoQueue(root);
+    assert.equal(items.length, 3);
+    assert.match(formatTodoQueue(items), /session \. 1 open write the test/);
+    assert.match(formatTodoQueue(items), /coding \.ocp\/fleet\/coding 1 open patch add/);
+    const doctor = todoDoctorLine(items.filter((item) => !item.done).length);
+    assert.match(doctor, /yellow Todos: 2 open/);
+    assert.match(doctor, /does not change the list/);
+    assert.doesNotMatch(doctor, /password=hunter2/);
+    assert.doesNotMatch(doctor, /write the test/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

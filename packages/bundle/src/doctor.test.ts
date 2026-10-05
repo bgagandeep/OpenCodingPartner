@@ -34,6 +34,8 @@ test("doctor marks missing pieces and does not print a key", async () => {
     assert.match(missing.transcript, /green Review hold: none/);
     assert.match(missing.transcript, /yellow Partner agreement: PARTNER.md is missing/);
     assert.match(missing.transcript, /does not copy the file/);
+    assert.match(missing.transcript, /green Todos: none open/);
+    assert.match(missing.transcript, /does not change the list/);
     assert.match(missing.transcript, /yellow Docker: docker is not available/);
     assert.match(missing.transcript, /does not start containers/);
     assert.match(missing.transcript, /yellow Fleet: no partners/);

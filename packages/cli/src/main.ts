@@ -7,7 +7,7 @@ import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 import { codingRunnerForEnv, appendViaOpenClaw, copyViaOpenClaw, deleteViaOpenClaw, discoverStack, dockerLine, mkdirViaOpenClaw, predictWithLaya, renameViaOpenClaw, rmdirViaOpenClaw, runConnectedPath, runDoctor, sendOrchestrationTurn, startSandboxWriteBridge, todoViaOpenClaw, writeViaOpenClaw } from "@opencodingpartner/bundle";
 import { access, copyFile, mkdir, readFile } from "node:fs/promises";
-import { acpOptIn, applySwarmManifest, approveDoctorLine, captureComputerFrame, checkComputerFrame, checkComputerFrames, computerTabText, doctorComputerFrameLine, createRoutine, fireDueRoutines, fireEvent, formatApproveQueue, formatApproveQueueJson, formatReviewHolds, formatRoutineList, formatSettings, fleetDoctorLine, formatFleetStatus, formatFleetStatusJson, isolatePartner, listApproveQueue, listReviewHolds, listRoutines, partnerAgreementDoctorLine, partnerAgreementStatus, parseSwarmManifest, pauseRoutine, postSlackReply, postTelegramReply, readFleetStatus, readPackaging, resumeRoutine, returnComputer, reviewHoldDoctorLine, runChatTurn, runDemo, slackCredentialStatus, slackTurn, startPartnerContainer, stopPartnerContainer, takeoverComputer, telegramCredentialStatus, telegramTurn, deliverSlackEvent, deliverTelegramUpdate, validateSwarmManifest, type ChatTurnInput } from "@opencodingpartner/gateway";
+import { acpOptIn, applySwarmManifest, approveDoctorLine, captureComputerFrame, checkComputerFrame, checkComputerFrames, computerTabText, doctorComputerFrameLine, createRoutine, fireDueRoutines, fireEvent, formatApproveQueue, formatApproveQueueJson, formatReviewHolds, formatRoutineList, formatTodoQueue, formatTodoQueueJson, formatSettings, fleetDoctorLine, formatFleetStatus, formatFleetStatusJson, isolatePartner, listApproveQueue, listReviewHolds, listRoutines, listTodoQueue, partnerAgreementDoctorLine, partnerAgreementStatus, parseSwarmManifest, pauseRoutine, postSlackReply, postTelegramReply, readFleetStatus, readPackaging, resumeRoutine, returnComputer, reviewHoldDoctorLine, runChatTurn, todoDoctorLine, runDemo, slackCredentialStatus, slackTurn, startPartnerContainer, stopPartnerContainer, takeoverComputer, telegramCredentialStatus, telegramTurn, deliverSlackEvent, deliverTelegramUpdate, validateSwarmManifest, type ChatTurnInput } from "@opencodingpartner/gateway";
 import { playwrightBrowserDriver } from "@opencodingpartner/workers";
 import { routeWithPredict } from "@opencodingpartner/policy";
 import { proveCoding, proveComputer } from "./prove.js";
@@ -266,6 +266,20 @@ export async function main(argv: readonly string[]): Promise<number> {
     process.stdout.write(`${formatApproveQueue(items)}${formatReviewHolds(holds)}`);
     return 0;
   }
+  if (command === "todo") {
+    const json = tail.includes("--json");
+    const args = tail.filter((arg) => arg !== "--json");
+    const sub = args[0];
+    const sand = takeFlag(args.slice(1), "--sandbox");
+    if (sub !== "list") {
+      process.stdout.write("Usage: ocp todo list [--sandbox .sandbox] [--json]\n");
+      return 2;
+    }
+    const sandbox = sand.value ?? ".sandbox";
+    const items = await listTodoQueue(sandbox);
+    process.stdout.write(json ? formatTodoQueueJson(items) : formatTodoQueue(items));
+    return 0;
+  }
   if (command === "doctor") {
     const sand = takeFlag(tail, "--sandbox");
     const sandbox = sand.value ?? ".sandbox";
@@ -303,6 +317,7 @@ export async function main(argv: readonly string[]): Promise<number> {
       dockerLine: dockerLine(await dockerAnswers()),
       reviewLine: reviewHoldDoctorLine((await listReviewHolds(sandbox)).length),
       agreementLine: partnerAgreementDoctorLine(await partnerAgreementStatus(sandbox)),
+      todoLine: todoDoctorLine((await listTodoQueue(sandbox)).filter((item) => !item.done).length),
     });
     process.stdout.write(report.transcript);
     return report.code;

@@ -6,7 +6,7 @@ import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 import { codingRunnerForEnv, appendViaOpenClaw, copyViaOpenClaw, deleteViaOpenClaw, discoverStack, mkdirViaOpenClaw, predictWithLaya, renameViaOpenClaw, rmdirViaOpenClaw, runConnectedPath, runDoctor, sendOrchestrationTurn, startSandboxWriteBridge, writeViaOpenClaw } from "@opencodingpartner/bundle";
 import { access, copyFile, mkdir, readFile } from "node:fs/promises";
-import { acpOptIn, applySwarmManifest, approveDoctorLine, captureComputerFrame, checkComputerFrame, computerTabText, createRoutine, fireDueRoutines, fireEvent, formatApproveQueue, formatApproveQueueJson, formatRoutineList, formatSettings, fleetDoctorLine, formatFleetStatus, formatFleetStatusJson, isolatePartner, listApproveQueue, listRoutines, parseSwarmManifest, pauseRoutine, postSlackReply, postTelegramReply, readFleetStatus, readPackaging, resumeRoutine, returnComputer, runChatTurn, runDemo, slackCredentialStatus, slackTurn, startPartnerContainer, stopPartnerContainer, takeoverComputer, telegramCredentialStatus, telegramTurn, validateSwarmManifest, type ChatTurnInput } from "@opencodingpartner/gateway";
+import { acpOptIn, applySwarmManifest, approveDoctorLine, captureComputerFrame, checkComputerFrame, computerTabText, createRoutine, fireDueRoutines, fireEvent, formatApproveQueue, formatApproveQueueJson, formatRoutineList, formatSettings, fleetDoctorLine, formatFleetStatus, formatFleetStatusJson, isolatePartner, listApproveQueue, listRoutines, parseSwarmManifest, pauseRoutine, postSlackReply, postTelegramReply, readFleetStatus, readPackaging, resumeRoutine, returnComputer, runChatTurn, runDemo, slackCredentialStatus, slackTurn, startPartnerContainer, stopPartnerContainer, takeoverComputer, telegramCredentialStatus, telegramTurn, deliverSlackEvent, deliverTelegramUpdate, validateSwarmManifest, type ChatTurnInput } from "@opencodingpartner/gateway";
 import { playwrightBrowserDriver } from "@opencodingpartner/workers";
 import { routeWithPredict } from "@opencodingpartner/policy";
 import { proveCoding, proveComputer } from "./prove.js";
@@ -202,12 +202,15 @@ export async function main(argv: readonly string[]): Promise<number> {
   }
   if (command === "channel") {
     const kind = tail[0];
+    if ((kind === "slack" || kind === "telegram") && tail[1] === "receive") {
+      return receiveChannel(kind, tail.slice(2));
+    }
     const sand = takeFlag(tail.slice(1), "--sandbox");
     const sandbox = sand.value ?? ".sandbox";
     const text = takeFlag(sand.rest, "--text");
     const channel = takeFlag(text.rest, "--channel");
     if ((kind !== "slack" && kind !== "telegram") || !text.value || !channel.value) {
-      process.stdout.write("Usage: ocp channel slack|telegram --sandbox .sandbox --text \"...\" --channel name\n");
+      process.stdout.write("Usage: ocp channel slack|telegram --sandbox .sandbox --text \"...\" --channel name\n       ocp channel slack receive --sandbox .sandbox --body event.json --timestamp SECONDS --signature v0=...\n       ocp channel telegram receive --sandbox .sandbox --body update.json --secret-header VALUE\n");
       return 2;
     }
     const adapt = kind === "slack" ? slackTurn : telegramTurn;
@@ -381,6 +384,71 @@ async function runProductTurn(message: string, sandbox: string, computerExecute:
   } finally {
     await bridge.close();
   }
+}
+
+async function receiveChannel(kind: "slack" | "telegram", argv: readonly string[]): Promise<number> {
+  const sand = takeFlag(argv, "--sandbox");
+  const sandbox = sand.value ?? ".sandbox";
+  const bodyFlag = takeFlag(sand.rest, "--body");
+  const timestamp = takeFlag(bodyFlag.rest, "--timestamp");
+  const signature = takeFlag(timestamp.rest, "--signature");
+  const header = takeFlag(signature.rest, "--secret-header");
+  if (!bodyFlag.value || (kind === "slack" && (!timestamp.value || !signature.value)) || (kind === "telegram" && !header.value)) {
+    process.stdout.write("Usage: ocp channel slack receive --sandbox .sandbox --body event.json --timestamp SECONDS --signature v0=...\n       ocp channel telegram receive --sandbox .sandbox --body update.json --secret-header VALUE\n");
+    return 2;
+  }
+  const rawBody = await readFile(bodyFlag.value, "utf8");
+  const run = async (message: string, partnerId: string) => {
+    const turn = await runProductTurn(message, sandbox, false, partnerId);
+    return turn.transcript;
+  };
+  if (kind === "slack") {
+    const creds = slackCredentialStatus(process.env);
+    if (!creds.ready) {
+      process.stdout.write(`Slack live: missing ${creds.missing.join(", ")}. The update was not accepted.\n`);
+      return 1;
+    }
+    const result = await deliverSlackEvent({
+      rawBody,
+      timestamp: timestamp.value ?? "",
+      signature: signature.value ?? "",
+      signingSecret: process.env.SLACK_SIGNING_SECRET ?? "",
+      botToken: process.env.SLACK_BOT_TOKEN ?? "",
+      nowMs: Date.now(),
+    }, run);
+    return writeChannelDelivery("Slack", result);
+  }
+  const creds = telegramCredentialStatus(process.env);
+  if (!creds.ready) {
+    process.stdout.write(`Telegram live: missing ${creds.missing.join(", ")}. The update was not accepted.\n`);
+    return 1;
+  }
+  const result = await deliverTelegramUpdate({
+    rawBody,
+    secretHeader: header.value ?? "",
+    webhookSecret: process.env.TELEGRAM_WEBHOOK_SECRET ?? "",
+    botToken: process.env.TELEGRAM_BOT_TOKEN ?? "",
+  }, run);
+  return writeChannelDelivery("Telegram", result);
+}
+
+function writeChannelDelivery(name: "Slack" | "Telegram", result: { ok: boolean; reply: string; posted: boolean }): number {
+  const refused = new Set([
+    "missing signature",
+    "bad signature",
+    "stale timestamp",
+    "missing secret",
+    "bad secret",
+    "Slack event had no text.",
+    "Telegram update had no text.",
+  ]);
+  if (refused.has(result.reply)) {
+    process.stdout.write(`${result.reply}\nThe update was not accepted.\n`);
+    return 1;
+  }
+  if (!result.posted) process.stdout.write(`${name} post was not sent.\n`);
+  process.stdout.write(result.reply);
+  return result.ok ? 0 : 1;
 }
 
 const entry = process.argv[1];

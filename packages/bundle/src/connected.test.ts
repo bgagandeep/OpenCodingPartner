@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { routeWithPredict } from "@opencodingpartner/policy";
 import { runOnGrokBuild } from "@opencodingpartner/workers";
-import { appendViaOpenClaw, copyViaOpenClaw, deleteViaOpenClaw, LITELLM_LOCAL_BASE_URL, mkdirViaOpenClaw, renameViaOpenClaw, resolveCodingMeter, rmdirViaOpenClaw, runConnectedPath, writeViaOpenClaw } from "./connected.js";
+import { appendViaOpenClaw, copyViaOpenClaw, deleteViaOpenClaw, LITELLM_LOCAL_BASE_URL, mkdirViaOpenClaw, renameViaOpenClaw, resolveCodingMeter, rmdirViaOpenClaw, runConnectedPath, todoViaOpenClaw, writeViaOpenClaw } from "./connected.js";
 import { startSandboxWriteBridge } from "./write-bridge.js";
 import { predictWithLaya } from "./laya.js";
 
@@ -545,6 +545,86 @@ test("the gateway invokes append and does not send fs_append", async () => {
     );
     assert.equal(missing.missing, true);
     assert.equal(await readFile(path.join(root, "src", "note.txt"), "utf8"), "one\ntwo\n");
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+    await bridge.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("the gateway invokes the todo list and does not send fs_write", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-todo-http-"));
+  const bridge = await startSandboxWriteBridge(root);
+  const seen: { tool?: string }[] = [];
+  const server = createServer(async (req, res) => {
+    if (req.url === "/healthz") {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end('{"ok":true}');
+      return;
+    }
+    const chunks: Buffer[] = [];
+    for await (const chunk of req) chunks.push(chunk as Buffer);
+    const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as {
+      tool?: string;
+      args?: { bridgeUrl?: string; action?: string; content?: string };
+    };
+    seen.push({ tool: body.tool });
+    if (body.tool === "fs_write" || body.tool === "fs_append") {
+      res.writeHead(404, { "content-type": "application/json" });
+      res.end('{"ok":false}');
+      return;
+    }
+    if (body.args?.bridgeUrl && body.tool === "ocp_sandbox_todo") {
+      const forwarded = await fetch(body.args.bridgeUrl, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action: body.args.action, content: body.args.content }),
+      });
+      res.writeHead(forwarded.status, { "content-type": "application/json" });
+      res.end(await forwarded.text());
+      return;
+    }
+    res.writeHead(404, { "content-type": "application/json" });
+    res.end('{"ok":false}');
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+  const port = (server.address() as AddressInfo).port;
+  const deps = { env: { OCP_WRITE_BRIDGE_URL: bridge.url }, bins: {}, gatewayHttp: `http://127.0.0.1:${port}` };
+  try {
+    const added = await todoViaOpenClaw(deps, root, "add", "write the test");
+    assert.equal(added.ok, true);
+    assert.equal(added.missing, false);
+    const done = await todoViaOpenClaw(deps, root, "complete", "1");
+    assert.equal(done.ok, true);
+    const stored = JSON.parse(await readFile(path.join(root, ".ocp/todos.json"), "utf8")) as { todos: { text: string; done: boolean }[] };
+    assert.equal(stored.todos[0]?.text, "write the test");
+    assert.equal(stored.todos[0]?.done, true);
+    const secret = await todoViaOpenClaw(deps, root, "add", "password=hunter2");
+    assert.equal(secret.ok, false);
+    assert.equal(secret.missing, false);
+    const escaped = await todoViaOpenClaw(deps, root, "add", "../secret");
+    assert.equal(escaped.ok, false);
+    assert.equal(escaped.missing, false);
+    const again = JSON.parse(await readFile(path.join(root, ".ocp/todos.json"), "utf8")) as { todos: { text: string }[] };
+    assert.equal(again.todos.length, 1);
+    assert.equal(seen.some((call) => call.tool === "fs_write" || call.tool === "fs_append"), false);
+    assert.equal(seen.some((call) => call.tool === "ocp_sandbox_todo"), true);
+    const missing = await todoViaOpenClaw(
+      {
+        env: { OCP_WRITE_BRIDGE_URL: bridge.url },
+        bins: {},
+        gatewayHttp: `http://127.0.0.1:${port}`,
+        fetchImpl: async (url) => {
+          if (String(url).endsWith("/healthz")) return new Response('{"ok":true}', { status: 200 });
+          return new Response('{"ok":false}', { status: 404 });
+        },
+      },
+      root,
+      "add",
+      "local later",
+    );
+    assert.equal(missing.missing, true);
+    assert.equal(again.todos.length, 1);
   } finally {
     await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
     await bridge.close();

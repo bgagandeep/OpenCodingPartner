@@ -108,6 +108,22 @@ export default function register(api) {
     },
   });
   api.registerTool({
+    name: "ocp_sandbox_todo",
+    description: "Add or complete one sandbox todo through the OpenCodingPartner write bridge.",
+    parameters: {
+      type: "object",
+      properties: {
+        bridgeUrl: { type: "string" },
+        action: { type: "string" },
+        content: { type: "string" },
+      },
+      required: ["bridgeUrl", "action", "content"],
+    },
+    async execute(_id, args) {
+      return postBridge(args.bridgeUrl, { action: args.action, content: args.content });
+    },
+  });
+  api.registerTool({
     name: "ocp_sandbox_rename",
     description: "Rename one sandbox file through the OpenCodingPartner write bridge.",
     parameters: {

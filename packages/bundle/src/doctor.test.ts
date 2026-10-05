@@ -27,6 +27,7 @@ test("doctor marks missing pieces and does not print a key", async () => {
     assert.match(missing.transcript, /This check does not start the browser/);
     assert.doesNotMatch(missing.transcript, /Computer QA computer-frame/);
     assert.match(missing.transcript, /yellow Slack: missing SLACK_BOT_TOKEN, SLACK_SIGNING_SECRET/);
+    assert.match(missing.transcript, /yellow Telegram: missing TELEGRAM_BOT_TOKEN, TELEGRAM_WEBHOOK_SECRET/);
     assert.doesNotMatch(missing.transcript, /super-secret-value/);
 
     await mkdir(path.join(root, "integrations/openclaw-sandbox-write"), { recursive: true });
@@ -58,6 +59,17 @@ test("doctor marks missing pieces and does not print a key", async () => {
     assert.match(slack.transcript, /green Slack: bot token and signing secret are set/);
     assert.doesNotMatch(slack.transcript, /xoxb-secret-value/);
     assert.doesNotMatch(slack.transcript, /signing-secret-value/);
+    assert.match(slack.transcript, /yellow Telegram: missing TELEGRAM_BOT_TOKEN, TELEGRAM_WEBHOOK_SECRET/);
+    const telegram = await runDoctor({
+      env: { TELEGRAM_BOT_TOKEN: "123:telegram-secret", TELEGRAM_WEBHOOK_SECRET: "webhook-secret-value" },
+      bins: { layaPython: "/tmp/python", layaHfHome: "/tmp/hf" },
+      repoRoot: root,
+      fetchImpl: async () => new Response("ok", { status: 200 }),
+      playwrightPresent: true,
+    });
+    assert.match(telegram.transcript, /green Telegram: bot token and webhook secret are set/);
+    assert.doesNotMatch(telegram.transcript, /123:telegram-secret/);
+    assert.doesNotMatch(telegram.transcript, /webhook-secret-value/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

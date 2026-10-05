@@ -6,7 +6,7 @@ import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 import { codingRunnerForEnv, copyViaOpenClaw, deleteViaOpenClaw, discoverStack, mkdirViaOpenClaw, predictWithLaya, renameViaOpenClaw, rmdirViaOpenClaw, runConnectedPath, runDoctor, sendOrchestrationTurn, startSandboxWriteBridge, writeViaOpenClaw } from "@opencodingpartner/bundle";
 import { access, copyFile, mkdir, readFile } from "node:fs/promises";
-import { applySwarmManifest, computerTabText, createRoutine, fireDueRoutines, fireEvent, formatRoutineList, isolatePartner, listRoutines, parseSwarmManifest, pauseRoutine, resumeRoutine, returnComputer, runChatTurn, runDemo, slackTurn, takeoverComputer, telegramTurn, validateSwarmManifest, type ChatTurnInput } from "@opencodingpartner/gateway";
+import { acpOptIn, applySwarmManifest, computerTabText, createRoutine, fireDueRoutines, fireEvent, formatRoutineList, formatSettings, isolatePartner, listRoutines, parseSwarmManifest, pauseRoutine, resumeRoutine, returnComputer, runChatTurn, runDemo, slackTurn, takeoverComputer, telegramTurn, validateSwarmManifest, type ChatTurnInput } from "@opencodingpartner/gateway";
 import { playwrightBrowserDriver } from "@opencodingpartner/workers";
 import { routeWithPredict } from "@opencodingpartner/policy";
 import { proveCoding, proveComputer } from "./prove.js";
@@ -186,6 +186,13 @@ export async function main(argv: readonly string[]): Promise<number> {
     process.stdout.write(result.reply);
     return 0;
   }
+  if (command === "settings") {
+    const { value } = takeFlag(tail, "--sandbox");
+    const sandbox = value ?? ".sandbox";
+    const on = await acpOptIn(sandbox, process.env);
+    process.stdout.write(formatSettings(on));
+    return 0;
+  }
   if (command === "doctor") {
     const repoRoot = path.resolve(fileURLToPath(new URL("../../../", import.meta.url)));
     let stack: { openclawBin?: string; grokBin?: string; layaPython?: string; layaHfHome?: string } | undefined;
@@ -278,6 +285,7 @@ async function runProductTurn(message: string, sandbox: string, computerExecute:
     computerUrl: process.env.OCP_COMPUTER_URL,
     computerAllowHosts: process.env.OCP_COMPUTER_ALLOW_HOSTS?.split(","),
     partnerId,
+    acp: await acpOptIn(sandbox, process.env),
     browserDriver: computerExecute ? playwrightBrowserDriver() : undefined,
     orchestration: (plan) => sendOrchestrationTurn(message, { env, bins }, plan),
     openclawWrite: (relativePath, content) => writeViaOpenClaw({ env, bins }, sandbox, relativePath, content),

@@ -152,6 +152,28 @@ test("ocp computer shows the sandbox tab and takeover", async () => {
   }
 });
 
+test("ocp settings shows advanced ACP off and does not name the backend", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "ocp-settings-"));
+  let captured = "";
+  const original = process.stdout.write.bind(process.stdout);
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    captured += String(chunk);
+    return true;
+  }) as typeof process.stdout.write;
+  const previous = process.env.OCP_ACP;
+  delete process.env.OCP_ACP;
+  try {
+    assert.equal(await main(["settings", "--sandbox", root]), 0);
+    assert.match(captured, /Advanced ACP: off/);
+    assert.doesNotMatch(captured, /Hermes/);
+  } finally {
+    if (previous === undefined) delete process.env.OCP_ACP;
+    else process.env.OCP_ACP = previous;
+    process.stdout.write = original;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("the cli file is the ocp entry when spawned", () => {
   const root = mkdtempSync(path.join(tmpdir(), "ocp-spawn-"));
   try {

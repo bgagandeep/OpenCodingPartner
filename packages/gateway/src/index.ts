@@ -34,6 +34,7 @@ export { channelPartnerId, discordTurn, slackTurn, telegramTurn } from "./channe
 import { isolatePartner as openPartnerWorkspace } from "./fleet.js";
 import { noopAcpBackend, type AcpBackend } from "./acp.js";
 export { acpOptIn, formatSettings, noopAcpBackend } from "./acp.js";
+export { coreIsOpen, readPackaging } from "./packaging.js";
 import {
   applyUnifiedDiff,
   commandDecision,

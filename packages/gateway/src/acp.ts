@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { formatPackaging, type Packaging } from "./packaging.js";
 
 /** A later JSON-RPC stdio session. This build does not spawn a process. */
 export interface AcpTurnRequest {
@@ -37,6 +38,6 @@ export async function acpOptIn(sandboxRoot: string, env: NodeJS.ProcessEnv): Pro
   }
 }
 
-export function formatSettings(acp: boolean): string {
-  return `Settings\nAdvanced ACP: ${acp ? "on" : "off"}\nThe optional backend is named in Credits. It is not installed. Packaging and payments are later.\n`;
+export function formatSettings(acp: boolean, packaging: Packaging): string {
+  return `Settings\nAdvanced ACP: ${acp ? "on" : "off"}\n${formatPackaging(packaging)}\nThe optional backend is named in Credits. It is not installed.\n`;
 }

@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
-import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { routeWithPredict, type ManagerPlan } from "@opencodingpartner/policy";
 import { grepSandbox, listSandboxDir, writeSandboxFile } from "@opencodingpartner/workers";
-import { DEMO_MESSAGE, applySwarmManifest, clearSessionMemory, createRoutine, fireDueRoutines, fireEvent, isolatePartner, listRoutines, parseSwarmManifest, partnerContainerArgv, pauseRoutine, runChatTurn, runDemo, slackTurn } from "./index.js";
+import { DEMO_MESSAGE, applySwarmManifest, clearSessionMemory, coreIsOpen, createRoutine, fireDueRoutines, fireEvent, isolatePartner, listRoutines, parseSwarmManifest, partnerContainerArgv, pauseRoutine, readPackaging, runChatTurn, runDemo, slackTurn } from "./index.js";
 import { computerTabText } from "./computer-tab.js";
 import { REVIEW_HOLD_CODING_CAP, rolesUnderReviewHold } from "./sdlc.js";
 
@@ -2148,6 +2148,32 @@ test("a swarm manifest validates, dry-runs, and applies partner workspaces", asy
     const refused = await applySwarmManifest(root, bad, { dryRun: true });
     assert.equal(refused.ok, false);
     assert.match(refused.text, /at least 1000 ms/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a billing key stays inert and the core stays open", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-pack-"));
+  try {
+    await mkdir(path.join(root, ".ocp"), { recursive: true });
+    await writeFile(
+      path.join(root, ".ocp", "settings.json"),
+      `${JSON.stringify({ packaging: { plan: "seats", seats: 4, credits: 10, billing: "later" } })}\n`,
+    );
+    const packaging = await readPackaging(root);
+    assert.equal(packaging.plan, "oss");
+    assert.equal(packaging.seats, 4);
+    assert.equal(packaging.credits, 10);
+    assert.equal(packaging.billing, "inert");
+    assert.equal(packaging.core, "full");
+    assert.equal(coreIsOpen(packaging), true);
+    const turn = await runChatTurn({
+      message: "Use the coding worker to create hello.txt with content:\nhello\n",
+      sandboxRoot: root,
+    });
+    assert.equal(turn.coding?.wrote, true);
+    assert.equal(await readFile(path.join(root, "hello.txt"), "utf8"), "hello\n");
   } finally {
     await rm(root, { recursive: true, force: true });
   }

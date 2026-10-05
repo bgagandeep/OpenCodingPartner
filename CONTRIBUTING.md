@@ -20,7 +20,7 @@ Multi-agent is the product. Do not turn the product into a one-worker tool. The 
 
 Do not vendor the connected stack. Cite the real upstreams only in `THIRD_PARTY_NOTICES.md` and Credits. Do not claim a partnership.
 
-Ads are off. Payments are off in the core. Do not add payment code to the core.
+Ads are off. Payments are off in the core. Do not add payment code to the core. A billing key in settings stays inert. The core stays open.
 
 The computer-agent stub must not claim a live browser ran. Mark recorded actions as not executed until a real worker runs them.
 

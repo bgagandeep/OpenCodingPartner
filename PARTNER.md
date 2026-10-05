@@ -21,6 +21,10 @@ While `.ocp/sdlc/review-hold` exists, orchestration stands up one coding worker.
 
 `ocp computer` shows the sandbox desktop: who has control, and the last frame path. There is no live pixel stream in this build. `ocp computer --partner coding` shows that partner's own workspace. `ocp computer takeover` gives you the mouse and keyboard handoff. The partner does not run the browser while you hold it. `ocp computer return` gives control back. Starting the browser waits on an Approve card.
 
+## Routines and channels
+
+A routine in `.ocp/routines.json` can wake a partner on an interval or an event name while you are away. `ocp routine run` fires the ones that are due. Slack or Telegram text arrives as a partner turn. `approve` and `deny` in that text decide the Approve card. This build does not call those networks.
+
 ## Partner rules
 
 Write rules in `PARTNER.rules` at the sandbox root, or in `.ocp/rules`. The coding worker sees both in its prompt. A line `block: text` stops the turn when the message contains that text.

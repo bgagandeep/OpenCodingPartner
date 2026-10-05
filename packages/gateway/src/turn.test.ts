@@ -9,6 +9,7 @@ import { applySandboxTodo, grepSandbox, listSandboxDir, writeSandboxFile } from 
 import { DEMO_MESSAGE, applySwarmManifest, approveDoctorLine, clearSessionMemory, coreIsOpen, createRoutine, deliverSlackEvent, deliverTelegramUpdate, fireDueRoutines, fireEvent, formatApproveQueue, formatFleetStatus, formatFleetStatusJson, formatReviewHolds, formatTodoQueue, isolatePartner, listApproveQueue, listReviewHolds, listRoutines, listTodoQueue, parseSwarmManifest, partnerAgreementDoctorLine, partnerAgreementStatus, partnerContainerArgv, pauseRoutine, readFleetStatus, readPackaging, reviewHoldDoctorLine, runChatTurn, todoDoctorLine, runDemo, slackSignature, slackTurn, startPartnerContainer, stopPartnerContainer, verifySlackRequest, verifyTelegramRequest } from "./index.js";
 import { allowComputerUse, captureComputerFrame, checkComputerFrame, computerTabText, doctorComputerControlLine, doctorComputerFrameLine, doctorComputerRunLine } from "./computer-tab.js";
 import { doctorSharedMountLine } from "./fleet.js";
+import { doctorLastCheckLine } from "./last-check.js";
 import { REVIEW_HOLD_CODING_CAP, rolesUnderReviewHold } from "./sdlc.js";
 
 test("chat stands up agents, writes, checks QA, gates security, and records GTM", async () => {
@@ -2774,6 +2775,48 @@ test("fleet start dry-run and a missing Docker do not claim a running container"
     });
     assert.equal(stopped.ok, true);
     assert.match(await computerTabText(path.join(root, ".ocp/fleet/coding")), /Container: stopped/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a coding check records its exit code and doctor does not print the output", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-last-check-"));
+  try {
+    assert.match(await doctorLastCheckLine(root), /green Last check: none/);
+    const turn = await runChatTurn({
+      message: "fix the checklist",
+      sandboxRoot: root,
+      grokRunner: {
+        async run() {
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify({
+              done: true,
+              steps: [
+                { tool: "run", argv: ["node", "--test", "src/a.test.ts"] },
+                { tool: "run", argv: ["git", "status", "-sb"] },
+              ],
+            }),
+          };
+        },
+      },
+      checkExec: async (argv) => ({
+        code: argv[0] === "node" ? 1 : 0,
+        stdout: "",
+        stderr: "password=hunter2",
+      }),
+    });
+    assert.match(turn.transcript, /Tool: run node --test src\/a.test.ts \(exit 1/);
+    const saved = JSON.parse(await readFile(path.join(root, ".ocp/last-check.json"), "utf8")) as { code: number; kind: string };
+    assert.equal(saved.code, 1);
+    assert.equal(saved.kind, "node --test");
+    assert.doesNotMatch(JSON.stringify(saved), /password=hunter2/);
+    const line = await doctorLastCheckLine(root);
+    assert.match(line, /yellow Last check: session node --test exit 1/);
+    assert.match(line, /does not print its output/);
+    assert.doesNotMatch(line, /password=hunter2/);
+    assert.doesNotMatch(line, /src\/a.test.ts/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

@@ -2120,6 +2120,32 @@ test("a partner sandbox waits for the plan, then edits and runs node --test", as
   }
 });
 
+test("a partner turn uses the shared session block rule and does not copy it", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-shared-rules-"));
+  try {
+    await writeFile(path.join(root, "PARTNER.md"), "partner\n");
+    await writeFile(path.join(root, "PARTNER.rules"), "block: paid\n");
+    const workspace = await isolatePartner(root, "coding");
+    const blocked = await runChatTurn({
+      message: "add a paid plan",
+      sandboxRoot: root,
+      partnerId: "coding",
+      grokRunner: {
+        async run() {
+          return { exitCode: 0, stdout: JSON.stringify({ done: true, steps: [{ tool: "write", path: "src/paid.txt", content: "no\n" }] }) };
+        },
+      },
+    });
+    assert.match(blocked.transcript, /Partner rule blocked this request \(paid\)/);
+    assert.equal(blocked.coding?.wrote, false);
+    await assert.rejects(readFile(path.join(workspace, "PARTNER.rules"), "utf8"));
+    await assert.rejects(readFile(path.join(workspace, "src", "paid.txt"), "utf8"));
+    assert.equal(await readFile(path.join(root, "PARTNER.rules"), "utf8"), "block: paid\n");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("approve cards deny or redirect, and partner rules block a request", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "ocp-approve-"));
   try {

@@ -165,6 +165,10 @@ test("ocp settings shows advanced ACP off and does not name the backend", async 
   try {
     assert.equal(await main(["settings", "--sandbox", root]), 0);
     assert.match(captured, /Advanced ACP: off/);
+    assert.match(captured, /Packaging: free OSS core/);
+    assert.match(captured, /Billing: inert/);
+    assert.match(captured, /Core: full/);
+    assert.match(captured, /No charge is made/);
     assert.doesNotMatch(captured, /Hermes/);
   } finally {
     if (previous === undefined) delete process.env.OCP_ACP;

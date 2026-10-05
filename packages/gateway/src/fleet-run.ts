@@ -13,7 +13,7 @@ export interface FleetExecResult {
 
 export type FleetExec = (argv: readonly string[]) => Promise<FleetExecResult>;
 
-const DOCTOR_HINT = "Docker is not available. The container was not started. Install Docker, then run ocp fleet start again. ocp doctor does not start containers.";
+const DOCTOR_HINT = "Docker is not available. The container was not started. Install Docker, then run ocp fleet start again. ocp doctor says whether docker answered and does not start containers.";
 
 export function dockerExec(argv: readonly string[]): Promise<FleetExecResult> {
   return new Promise((resolve) => {

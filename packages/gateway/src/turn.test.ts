@@ -2445,7 +2445,7 @@ test("fleet start dry-run and a missing Docker do not claim a running container"
     });
     assert.equal(missing.ok, false);
     assert.match(missing.text, /Docker is not available/);
-    assert.match(missing.text, /ocp doctor does not start containers/);
+    assert.match(missing.text, /ocp doctor says whether docker answered and does not start containers/);
     assert.match(await computerTabText(path.join(root, ".ocp/fleet/coding")), /Container: not started/);
 
     await writeFile(path.join(root, "PARTNER.md"), "partner\n");

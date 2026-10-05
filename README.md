@@ -16,7 +16,7 @@ pnpm bundle:install
 pnpm exec ocp doctor
 ```
 
-`ocp doctor` prints green, yellow, or red. `ocp doctor --sandbox .sandbox` checks that sandbox: partner fleet, pending Approve cards, and whether `gtm/last-frame.png` is a PNG. It does not start the browser, does not start containers, does not decide a card, and does not print keys or the request text.
+`ocp doctor` prints green, yellow, or red. `ocp doctor --sandbox .sandbox` checks that sandbox: partner fleet, pending Approve cards, and whether `gtm/last-frame.png` is a PNG. It does not start the browser, does not start containers, does not decide a card, and does not print keys or the request text. It also says whether the `docker` command answered. A missing Docker install is yellow. `ocp fleet start` still does not run during doctor.
 
 - System-1: green when `.bundle/laya` python and `.bundle/laya/hf` are present. The next chat can say `System-1: real.` Yellow means the transcript will say `System-1: fallback.` System python is not System-1.
 - Meter: set one of these, in this order. `LITELLM_API_KEY` or `LITELLM_MASTER_KEY` (optional `LITELLM_BASE_URL`, default `http://127.0.0.1:4000/v1`). Else `OPENAI_API_KEY` and `OPENAI_BASE_URL`. Else `XAI_API_KEY` with the `grok` binary. Yellow `Meter: none` means a general edit will refuse. A simple create-file still writes on the local sandbox.

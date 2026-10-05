@@ -29,12 +29,14 @@ import { allowComputerUse, captureExecutedFrame, computerTabText, markComputerLi
 export { captureComputerFrame, captureExecutedFrame, checkComputerFrame, checkComputerFrames, computerTabText, doctorComputerControlLine, doctorComputerFrameLine, doctorComputerRunLine, returnComputer, takeoverComputer } from "./computer-tab.js";
 export { doctorSharedMountLine, fleetDoctorLine, fleetIds, formatFleetStatus, formatFleetStatusJson, globShared, grepShared, isolatePartner, listShared, partnerContainerArgv, partnerWorkspace, readFleetStatus, readPartnerIdentity, readShared, sharedRequest } from "./fleet.js";
 export { doctorLastCheckLine, recordLastCheck } from "./last-check.js";
+export { doctorLastQaLine, recordLastQa } from "./last-qa.js";
 export { startPartnerContainer, stopPartnerContainer } from "./fleet-run.js";
 export { createRoutine, fireDueRoutines, fireEvent, formatRoutineList, listRoutines, pauseRoutine, resumeRoutine } from "./routines.js";
 export { applySwarmManifest, parseSwarmManifest, validateSwarmManifest } from "./swarm-manifest.js";
 export { channelPartnerId, deliverSlackEvent, deliverTelegramUpdate, discordTurn, postSlackReply, postTelegramReply, slackCredentialStatus, slackSignature, slackTurn, telegramCredentialStatus, telegramTurn, verifySlackRequest, verifyTelegramRequest } from "./channels.js";
 import { globShared, grepShared, isolatePartner as openPartnerWorkspace, listShared, readShared, sharedRequest } from "./fleet.js";
 import { recordLastCheck } from "./last-check.js";
+import { recordLastQa } from "./last-qa.js";
 import { noopAcpBackend, type AcpBackend } from "./acp.js";
 export { acpOptIn, formatSettings, noopAcpBackend } from "./acp.js";
 export { coreIsOpen, readPackaging } from "./packaging.js";
@@ -623,6 +625,7 @@ async function executeTurn(input: ChatTurnInput, session: SwarmSession, key: str
       transcript: "",
     }),
   };
+  if (qa) await recordLastQa(input.sandboxRoot, qa.pass);
   await rememberTurn(session.key, input.sandboxRoot, input.message, coding, qa, security);
   completed.set(key, result);
   return result;

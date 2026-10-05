@@ -22,6 +22,7 @@ export interface DoctorDeps {
   controlLine?: string;
   mountLine?: string;
   checkLine?: string;
+  qaLine?: string;
 }
 
 export interface DoctorReport {
@@ -50,6 +51,7 @@ export async function runDoctor(deps: DoctorDeps): Promise<DoctorReport> {
   lines.push(deps.controlLine ?? "green Computer control: partner. This check does not take or return the browser.");
   lines.push(deps.mountLine ?? "green Shared mount: no partners. This check does not copy files.");
   lines.push(deps.checkLine ?? "green Last check: none. This check does not run a command and does not print its output.");
+  lines.push(deps.qaLine ?? "green Last QA: none. This check does not review files and does not print the QA summary.");
   lines.push("Prove-it: pnpm exec ocp chat --sandbox .sandbox \"Use the coding worker to create hello.txt with content:");
   lines.push("hello");
   lines.push("\"");

@@ -60,6 +60,43 @@ export async function sharedMountSource(sandboxRoot: string): Promise<string | u
   }
 }
 
+/** Doctor line for each partner shared mount. This does not print the source path and does not copy files. */
+export async function doctorSharedMountLine(sessionRoot: string): Promise<string> {
+  const tail = "This check does not copy files.";
+  let names: string[] = [];
+  try {
+    names = await readdir(path.join(sessionRoot, ".ocp", "fleet"));
+  } catch {
+    return `green Shared mount: no partners. ${tail}`;
+  }
+  const partners: { id: string; workspace: string }[] = [];
+  for (const name of names) {
+    const workspace = path.join(sessionRoot, ".ocp", "fleet", name);
+    const identity = await readPartnerIdentity(workspace);
+    if (identity) partners.push({ id: identity.id, workspace });
+  }
+  partners.sort((left, right) => left.id.localeCompare(right.id));
+  if (partners.length === 0) return `green Shared mount: no partners. ${tail}`;
+  const session = path.resolve(sessionRoot);
+  const bad: string[] = [];
+  for (const partner of partners) {
+    let body: { source?: unknown; mode?: unknown };
+    try {
+      body = JSON.parse(await readFile(path.join(partner.workspace, ".ocp", "mount.json"), "utf8")) as { source?: unknown; mode?: unknown };
+    } catch {
+      bad.push(`${partner.id} has no shared mount`);
+      continue;
+    }
+    const source = typeof body.source === "string" && body.source ? path.resolve(body.source) : "";
+    if (body.mode !== "read-only" || source !== session) bad.push(`${partner.id} does not point at this session`);
+  }
+  if (bad.length === 0) {
+    const count = partners.length === 1 ? "1 partner" : `${partners.length} partners`;
+    return `green Shared mount: ${count} read-only at this session. ${tail}`;
+  }
+  return `yellow Shared mount: ${bad.join(". ")}. ${tail}`;
+}
+
 function insideSource(source: string, relative: string): string | undefined {
   const root = path.resolve(source);
   const target = path.resolve(root, relative);

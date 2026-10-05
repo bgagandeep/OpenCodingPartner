@@ -8,6 +8,7 @@ import { routeWithPredict, type ManagerPlan } from "@opencodingpartner/policy";
 import { applySandboxTodo, grepSandbox, listSandboxDir, writeSandboxFile } from "@opencodingpartner/workers";
 import { DEMO_MESSAGE, applySwarmManifest, approveDoctorLine, clearSessionMemory, coreIsOpen, createRoutine, deliverSlackEvent, deliverTelegramUpdate, fireDueRoutines, fireEvent, formatApproveQueue, formatFleetStatus, formatFleetStatusJson, formatReviewHolds, formatTodoQueue, isolatePartner, listApproveQueue, listReviewHolds, listRoutines, listTodoQueue, parseSwarmManifest, partnerAgreementDoctorLine, partnerAgreementStatus, partnerContainerArgv, pauseRoutine, readFleetStatus, readPackaging, reviewHoldDoctorLine, runChatTurn, todoDoctorLine, runDemo, slackSignature, slackTurn, startPartnerContainer, stopPartnerContainer, verifySlackRequest, verifyTelegramRequest } from "./index.js";
 import { allowComputerUse, captureComputerFrame, checkComputerFrame, computerTabText, doctorComputerControlLine, doctorComputerFrameLine, doctorComputerRunLine } from "./computer-tab.js";
+import { doctorSharedMountLine } from "./fleet.js";
 import { REVIEW_HOLD_CODING_CAP, rolesUnderReviewHold } from "./sdlc.js";
 
 test("chat stands up agents, writes, checks QA, gates security, and records GTM", async () => {
@@ -2773,6 +2774,28 @@ test("fleet start dry-run and a missing Docker do not claim a running container"
     });
     assert.equal(stopped.ok, true);
     assert.match(await computerTabText(path.join(root, ".ocp/fleet/coding")), /Container: stopped/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("doctor names a shared mount that does not point at this session", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-doctor-mount-"));
+  try {
+    assert.match(await doctorSharedMountLine(root), /green Shared mount: no partners/);
+    await isolatePartner(root, "coding");
+    const ready = await doctorSharedMountLine(root);
+    assert.match(ready, /green Shared mount: 1 partner read-only at this session/);
+    assert.match(ready, /does not copy files/);
+    const elsewhere = path.join(root, "elsewhere-secret");
+    await writeFile(
+      path.join(root, ".ocp/fleet/coding/.ocp/mount.json"),
+      `${JSON.stringify({ shared: "/shared", source: elsewhere, mode: "read-only" })}\n`,
+    );
+    const wrong = await doctorSharedMountLine(root);
+    assert.match(wrong, /yellow Shared mount: coding does not point at this session/);
+    assert.match(wrong, /does not copy files/);
+    assert.doesNotMatch(wrong, /elsewhere-secret/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

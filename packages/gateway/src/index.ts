@@ -27,7 +27,7 @@ import {
 } from "./sdlc.js";
 import { allowComputerUse, captureExecutedFrame, computerTabText, markComputerLive, readComputerTab } from "./computer-tab.js";
 export { captureComputerFrame, captureExecutedFrame, checkComputerFrame, checkComputerFrames, computerTabText, doctorComputerControlLine, doctorComputerFrameLine, doctorComputerRunLine, returnComputer, takeoverComputer } from "./computer-tab.js";
-export { fleetDoctorLine, fleetIds, formatFleetStatus, formatFleetStatusJson, globShared, grepShared, isolatePartner, listShared, partnerContainerArgv, partnerWorkspace, readFleetStatus, readPartnerIdentity, readShared, sharedRequest } from "./fleet.js";
+export { doctorSharedMountLine, fleetDoctorLine, fleetIds, formatFleetStatus, formatFleetStatusJson, globShared, grepShared, isolatePartner, listShared, partnerContainerArgv, partnerWorkspace, readFleetStatus, readPartnerIdentity, readShared, sharedRequest } from "./fleet.js";
 export { startPartnerContainer, stopPartnerContainer } from "./fleet-run.js";
 export { createRoutine, fireDueRoutines, fireEvent, formatRoutineList, listRoutines, pauseRoutine, resumeRoutine } from "./routines.js";
 export { applySwarmManifest, parseSwarmManifest, validateSwarmManifest } from "./swarm-manifest.js";

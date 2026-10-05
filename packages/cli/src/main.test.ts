@@ -1274,7 +1274,7 @@ test("ocp write creates one new file and does not overwrite", async () => {
     return true;
   }) as typeof process.stdout.write;
   try {
-    const { existsSync, mkdirSync, writeFileSync } = await import("node:fs");
+    const { existsSync, mkdirSync } = await import("node:fs");
     assert.equal(await main(["write", "--sandbox", root]), 2);
     assert.match(captured, /Usage: ocp write/);
     captured = "";

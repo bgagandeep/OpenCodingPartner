@@ -31,7 +31,7 @@ export { doctorSharedMountLine, fleetDoctorLine, fleetIds, formatFleetStatus, fo
 export { doctorLastCheckLine, recordLastCheck } from "./last-check.js";
 export { doctorLastQaLine, recordLastQa } from "./last-qa.js";
 export { startPartnerContainer, stopPartnerContainer } from "./fleet-run.js";
-export { createRoutine, fireDueRoutines, fireEvent, formatRoutineList, listRoutines, pauseRoutine, resumeRoutine } from "./routines.js";
+export { createRoutine, doctorRoutineLine, fireDueRoutines, fireEvent, formatRoutineList, listRoutines, pauseRoutine, resumeRoutine } from "./routines.js";
 export { applySwarmManifest, parseSwarmManifest, validateSwarmManifest } from "./swarm-manifest.js";
 export { channelPartnerId, deliverSlackEvent, deliverTelegramUpdate, discordTurn, postSlackReply, postTelegramReply, slackCredentialStatus, slackSignature, slackTurn, telegramCredentialStatus, telegramTurn, verifySlackRequest, verifyTelegramRequest } from "./channels.js";
 import { globShared, grepShared, isolatePartner as openPartnerWorkspace, listShared, readShared, sharedRequest } from "./fleet.js";

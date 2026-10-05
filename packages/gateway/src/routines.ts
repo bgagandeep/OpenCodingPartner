@@ -116,6 +116,56 @@ export async function fireDueRoutines(
   return replies;
 }
 
+function routineShape(value: unknown): value is Routine {
+  if (!value || typeof value !== "object") return false;
+  const routine = value as Routine;
+  if (routine.status !== "active" && routine.status !== "paused") return false;
+  if (!routine.trigger || typeof routine.trigger !== "object") return false;
+  if (routine.trigger.kind === "interval") {
+    return Number.isInteger(routine.trigger.everyMs) && Number.isFinite(routine.trigger.nextRunAt);
+  }
+  if (routine.trigger.kind === "event") return typeof routine.trigger.name === "string";
+  return false;
+}
+
+/** Count routines for doctor. This does not run one and does not print its message. */
+export async function doctorRoutineLine(sessionRoot: string, now = Date.now()): Promise<string> {
+  const tail = "This check does not run a routine and does not print its message.";
+  let raw: string;
+  try {
+    raw = await readFile(file(sessionRoot), "utf8");
+  } catch {
+    return `green Routines: none. ${tail}`;
+  }
+  let routines: unknown[];
+  try {
+    const body = JSON.parse(raw) as { routines?: unknown };
+    if (!Array.isArray(body.routines)) return `yellow Routines: the file could not be read. ${tail}`;
+    routines = body.routines;
+  } catch {
+    return `yellow Routines: the file could not be read. ${tail}`;
+  }
+  if (routines.length === 0) return `green Routines: none. ${tail}`;
+  const parsed = routines.filter(routineShape);
+  if (parsed.length !== routines.length) return `yellow Routines: the file could not be read. ${tail}`;
+  let active = 0;
+  let paused = 0;
+  let due = 0;
+  for (const routine of parsed) {
+    if (routine.status === "paused") {
+      paused += 1;
+      continue;
+    }
+    active += 1;
+    if (routine.trigger.kind === "interval" && routine.trigger.nextRunAt <= now) due += 1;
+  }
+  const bits: string[] = [];
+  if (active > 0) bits.push(`${active} active`);
+  if (paused > 0) bits.push(`${paused} paused`);
+  if (due > 0) bits.push(`${due} due`);
+  return `${active > 0 ? "yellow" : "green"} Routines: ${bits.join(", ")}. ${tail}`;
+}
+
 /** Run active routines waiting on this event name. */
 export async function fireEvent(
   sessionRoot: string,

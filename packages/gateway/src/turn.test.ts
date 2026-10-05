@@ -11,6 +11,7 @@ import { allowComputerUse, captureComputerFrame, checkComputerFrame, computerTab
 import { doctorSharedMountLine } from "./fleet.js";
 import { doctorLastCheckLine } from "./last-check.js";
 import { doctorLastQaLine } from "./last-qa.js";
+import { doctorRoutineLine } from "./routines.js";
 import { REVIEW_HOLD_CODING_CAP, rolesUnderReviewHold } from "./sdlc.js";
 
 test("chat stands up agents, writes, checks QA, gates security, and records GTM", async () => {
@@ -2825,6 +2826,36 @@ test("a coding turn records QA pass or fail and doctor does not print the summar
     const broken = await doctorLastQaLine(root);
     assert.match(broken, /yellow Last QA: coding file could not be read/);
     assert.doesNotMatch(broken, /not-json/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("doctor counts routines and does not print the message or run one", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-routine-doctor-"));
+  try {
+    assert.match(await doctorRoutineLine(root), /green Routines: none/);
+    await createRoutine(root, { partnerId: "coding", message: "password=hunter2", everyMs: 60_000, now: 0 });
+    await createRoutine(root, { partnerId: "coding", message: "secret event", event: "build-finished", now: 0 });
+    const waiting = await doctorRoutineLine(root, 0);
+    assert.match(waiting, /yellow Routines: 2 active/);
+    assert.doesNotMatch(waiting, /due/);
+    assert.match(waiting, /does not print its message/);
+    assert.doesNotMatch(waiting, /hunter2/);
+    assert.doesNotMatch(waiting, /build-finished/);
+    const due = await doctorRoutineLine(root, 60_000);
+    assert.match(due, /yellow Routines: 2 active, 1 due/);
+    assert.doesNotMatch(due, /hunter2/);
+    await pauseRoutine(root, "routine-1");
+    await pauseRoutine(root, "routine-2");
+    const paused = await doctorRoutineLine(root, 60_000);
+    assert.match(paused, /green Routines: 2 paused/);
+    assert.doesNotMatch(paused, /hunter2/);
+    await writeFile(path.join(root, ".ocp/routines.json"), "not-json\n");
+    const broken = await doctorRoutineLine(root);
+    assert.match(broken, /yellow Routines: the file could not be read/);
+    assert.doesNotMatch(broken, /not-json/);
+    assert.equal((await listRoutines(root)).length, 0);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

@@ -389,6 +389,43 @@ test("ocp approve accept deny and redirect run the chat turn", async () => {
   }
 });
 
+test("ocp approve accept clears a review hold and leaves the intent", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "ocp-accept-again-cli-"));
+  let captured = "";
+  const original = process.stdout.write.bind(process.stdout);
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    captured += String(chunk);
+    return true;
+  }) as typeof process.stdout.write;
+  try {
+    const { mkdirSync, writeFileSync, readFileSync } = await import("node:fs");
+    const intent = "add a helper\n";
+    writeFileSync(path.join(root, "PARTNER.md"), "partner\n");
+    mkdirSync(path.join(root, ".ocp/sdlc"), { recursive: true });
+    writeFileSync(path.join(root, ".ocp/sdlc/intent.md"), intent);
+    writeFileSync(path.join(root, ".ocp/sdlc/plan.json"), `${JSON.stringify({ accepted: false, check: ["node", "--test"] })}\n`);
+    writeFileSync(path.join(root, ".ocp/sdlc/review-hold"), "password=hunter2\n");
+    captured = "";
+    assert.equal(await main(["approve", "list", "--sandbox", root]), 0);
+    assert.match(captured, /does not accept the plan/);
+    assert.equal(readFileSync(path.join(root, ".ocp/sdlc/review-hold"), "utf8"), "password=hunter2\n");
+    captured = "";
+    assert.equal(await main(["approve", "accept", "--sandbox", root]), 0);
+    assert.match(captured, /Plan accepted again/);
+    assert.doesNotMatch(captured, /hunter2/);
+    const plan = JSON.parse(readFileSync(path.join(root, ".ocp/sdlc/plan.json"), "utf8")) as { accepted?: boolean };
+    assert.equal(plan.accepted, true);
+    assert.throws(() => readFileSync(path.join(root, ".ocp/sdlc/review-hold"), "utf8"));
+    assert.equal(readFileSync(path.join(root, ".ocp/sdlc/intent.md"), "utf8"), intent);
+    captured = "";
+    assert.equal(await main(["approve", "list", "--sandbox", root]), 0);
+    assert.match(captured, /Review hold: none/);
+  } finally {
+    process.stdout.write = original;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("ocp todo list shows the checklist and does not change it", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "ocp-todo-cli-"));
   let captured = "";

@@ -3499,6 +3499,48 @@ test("a failed partner check returns to intent and holds one coding worker", asy
   }
 });
 
+test("approve again accepts the plan and clears the review hold without rewriting intent", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-accept-again-"));
+  try {
+    await writeFile(path.join(root, "PARTNER.md"), "partner\n");
+    const intent = "add a helper\nReturned from review: node --test exit 1\n";
+    await mkdir(path.join(root, ".ocp/sdlc"), { recursive: true });
+    await writeFile(path.join(root, ".ocp/sdlc/intent.md"), intent);
+    await writeFile(path.join(root, ".ocp/sdlc/plan.json"), `${JSON.stringify({ accepted: false, check: ["node", "--test"] }, null, 2)}\n`);
+    await writeFile(path.join(root, ".ocp/sdlc/review-hold"), "password=hunter2\n");
+    await writeFile(
+      path.join(root, ".ocp/approvals.json"),
+      `${JSON.stringify({ cards: [{ id: "plan-1", kind: "plan", title: "Edit after this plan", detail: "add a helper", status: "approved" }] }, null, 2)}\n`,
+    );
+    const again = await runChatTurn({ message: "approve", sandboxRoot: root });
+    assert.match(again.transcript, /Plan accepted again\. The review hold is clear/);
+    assert.doesNotMatch(again.transcript, /hunter2/);
+    assert.equal(again.coding?.wrote, false);
+    const plan = JSON.parse(await readFile(path.join(root, ".ocp/sdlc/plan.json"), "utf8")) as { accepted?: boolean };
+    assert.equal(plan.accepted, true);
+    await assert.rejects(readFile(path.join(root, ".ocp/sdlc/review-hold"), "utf8"));
+    assert.equal(await readFile(path.join(root, ".ocp/sdlc/intent.md"), "utf8"), intent);
+    const cards = JSON.parse(await readFile(path.join(root, ".ocp/approvals.json"), "utf8")) as { cards: { status: string }[] };
+    assert.equal(cards.cards[0]?.status, "approved");
+
+    const workspace = await isolatePartner(root, "coding");
+    await mkdir(path.join(workspace, ".ocp/sdlc"), { recursive: true });
+    await writeFile(path.join(workspace, ".ocp/sdlc/intent.md"), intent);
+    await writeFile(path.join(workspace, ".ocp/sdlc/plan.json"), `${JSON.stringify({ accepted: false, check: ["node", "--test"] }, null, 2)}\n`);
+    await writeFile(path.join(workspace, ".ocp/sdlc/review-hold"), "password=hunter2\n");
+    const partner = await runChatTurn({ message: "approve", sandboxRoot: root, partnerId: "coding" });
+    assert.match(partner.transcript, /Plan accepted again\. The review hold is clear/);
+    assert.doesNotMatch(partner.transcript, /hunter2/);
+    const partnerPlan = JSON.parse(await readFile(path.join(workspace, ".ocp/sdlc/plan.json"), "utf8")) as { accepted?: boolean };
+    assert.equal(partnerPlan.accepted, true);
+    await assert.rejects(readFile(path.join(workspace, ".ocp/sdlc/review-hold"), "utf8"));
+    assert.equal(await readFile(path.join(workspace, ".ocp/sdlc/intent.md"), "utf8"), intent);
+    assert.equal(await readFile(path.join(root, ".ocp/sdlc/intent.md"), "utf8"), intent);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("demo command path writes the product file and blocks the secret", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "ocp-demo-"));
   try {

@@ -10,6 +10,7 @@ export interface DoctorDeps {
   gatewayHttp?: string;
   fetchImpl?: typeof fetch;
   playwrightPresent?: boolean;
+  fleetLine?: string;
 }
 
 export interface DoctorReport {
@@ -27,6 +28,7 @@ export async function runDoctor(deps: DoctorDeps): Promise<DoctorReport> {
   lines.push(playwrightLine(deps.playwrightPresent === true));
   lines.push(slackLine(deps.env));
   lines.push(telegramLine(deps.env));
+  lines.push(deps.fleetLine ?? "yellow Fleet: no partners. This check does not start containers. No telemetry is sent.");
   lines.push("Prove-it: pnpm exec ocp chat --sandbox .sandbox \"Use the coding worker to create hello.txt with content:");
   lines.push("hello");
   lines.push("\"");

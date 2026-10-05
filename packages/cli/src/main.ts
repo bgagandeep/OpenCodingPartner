@@ -6,7 +6,7 @@ import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 import { codingRunnerForEnv, appendViaOpenClaw, copyViaOpenClaw, deleteViaOpenClaw, discoverStack, mkdirViaOpenClaw, predictWithLaya, renameViaOpenClaw, rmdirViaOpenClaw, runConnectedPath, runDoctor, sendOrchestrationTurn, startSandboxWriteBridge, writeViaOpenClaw } from "@opencodingpartner/bundle";
 import { access, copyFile, mkdir, readFile } from "node:fs/promises";
-import { acpOptIn, applySwarmManifest, captureComputerFrame, checkComputerFrame, computerTabText, createRoutine, fireDueRoutines, fireEvent, formatRoutineList, formatSettings, isolatePartner, listRoutines, parseSwarmManifest, pauseRoutine, postSlackReply, postTelegramReply, readPackaging, resumeRoutine, returnComputer, runChatTurn, runDemo, slackCredentialStatus, slackTurn, startPartnerContainer, stopPartnerContainer, takeoverComputer, telegramCredentialStatus, telegramTurn, validateSwarmManifest, type ChatTurnInput } from "@opencodingpartner/gateway";
+import { acpOptIn, applySwarmManifest, captureComputerFrame, checkComputerFrame, computerTabText, createRoutine, fireDueRoutines, fireEvent, formatRoutineList, formatSettings, fleetDoctorLine, formatFleetStatus, formatFleetStatusJson, isolatePartner, listRoutines, parseSwarmManifest, pauseRoutine, postSlackReply, postTelegramReply, readFleetStatus, readPackaging, resumeRoutine, returnComputer, runChatTurn, runDemo, slackCredentialStatus, slackTurn, startPartnerContainer, stopPartnerContainer, takeoverComputer, telegramCredentialStatus, telegramTurn, validateSwarmManifest, type ChatTurnInput } from "@opencodingpartner/gateway";
 import { playwrightBrowserDriver } from "@opencodingpartner/workers";
 import { routeWithPredict } from "@opencodingpartner/policy";
 import { proveCoding, proveComputer } from "./prove.js";
@@ -127,14 +127,20 @@ export async function main(argv: readonly string[]): Promise<number> {
     return result.ok ? 0 : 1;
   }
   if (command === "fleet") {
+    const json = tail.includes("--json");
     const dryRun = tail.includes("--dry-run");
-    const args = tail.filter((arg) => arg !== "--dry-run");
+    const args = tail.filter((arg) => arg !== "--dry-run" && arg !== "--json");
     const sub = args[0];
     const sand = takeFlag(args.slice(1), "--sandbox");
     const sandbox = sand.value ?? ".sandbox";
+    if (sub === "status") {
+      const rows = await readFleetStatus(sandbox);
+      process.stdout.write(json ? formatFleetStatusJson(rows) : formatFleetStatus(rows));
+      return 0;
+    }
     const partner = takeFlag(sand.rest, "--partner");
     if (!partner.value || (sub !== "start" && sub !== "stop")) {
-      process.stdout.write("Usage: ocp fleet start|stop --partner name [--sandbox .sandbox] [--dry-run]\n");
+      process.stdout.write("Usage: ocp fleet status [--sandbox .sandbox] [--json]\n       ocp fleet start|stop --partner name [--sandbox .sandbox] [--dry-run]\n");
       return 2;
     }
     const result = sub === "start"
@@ -258,7 +264,8 @@ export async function main(argv: readonly string[]): Promise<number> {
     } catch {
       playwrightPresent = false;
     }
-    const report = await runDoctor({ env: process.env, bins, repoRoot, playwrightPresent });
+    const fleetLine = fleetDoctorLine(await readFleetStatus(".sandbox"));
+    const report = await runDoctor({ env: process.env, bins, repoRoot, playwrightPresent, fleetLine });
     process.stdout.write(report.transcript);
     return report.code;
   }

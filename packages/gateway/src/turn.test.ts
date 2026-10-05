@@ -6,7 +6,7 @@ import path from "node:path";
 import test from "node:test";
 import { routeWithPredict, type ManagerPlan } from "@opencodingpartner/policy";
 import { grepSandbox, listSandboxDir, writeSandboxFile } from "@opencodingpartner/workers";
-import { DEMO_MESSAGE, applySwarmManifest, clearSessionMemory, coreIsOpen, createRoutine, deliverSlackEvent, deliverTelegramUpdate, fireDueRoutines, fireEvent, isolatePartner, listRoutines, parseSwarmManifest, partnerContainerArgv, pauseRoutine, readPackaging, runChatTurn, runDemo, slackSignature, slackTurn, startPartnerContainer, stopPartnerContainer, verifySlackRequest, verifyTelegramRequest } from "./index.js";
+import { DEMO_MESSAGE, applySwarmManifest, clearSessionMemory, coreIsOpen, createRoutine, deliverSlackEvent, deliverTelegramUpdate, fireDueRoutines, fireEvent, formatFleetStatus, formatFleetStatusJson, isolatePartner, listRoutines, parseSwarmManifest, partnerContainerArgv, pauseRoutine, readFleetStatus, readPackaging, runChatTurn, runDemo, slackSignature, slackTurn, startPartnerContainer, stopPartnerContainer, verifySlackRequest, verifyTelegramRequest } from "./index.js";
 import { allowComputerUse, captureComputerFrame, checkComputerFrame, computerTabText } from "./computer-tab.js";
 import { REVIEW_HOLD_CODING_CAP, rolesUnderReviewHold } from "./sdlc.js";
 
@@ -2363,6 +2363,34 @@ test("a swarm manifest validates, dry-runs, and applies partner workspaces", asy
     const refused = await applySwarmManifest(root, bad, { dryRun: true });
     assert.equal(refused.ok, false);
     assert.match(refused.text, /at least 1000 ms/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("fleet status lists partners, container state, and the last frame", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-fleet-status-"));
+  try {
+    assert.match(formatFleetStatus(await readFleetStatus(root)), /Fleet: no partners/);
+    await isolatePartner(root, "coding");
+    await isolatePartner(root, "qa");
+    await mkdir(path.join(root, ".ocp/fleet/coding/.ocp"), { recursive: true });
+    await writeFile(path.join(root, ".ocp/fleet/coding/.ocp/container.json"), `${JSON.stringify({ state: "running", name: "ocp-coding" })}\n`);
+    await mkdir(path.join(root, ".ocp/fleet/qa/gtm"), { recursive: true });
+    await writeFile(path.join(root, ".ocp/fleet/qa/gtm/last-frame.png"), Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+    const rows = await readFleetStatus(root);
+    assert.deepEqual(rows.map((row) => row.id), ["coding", "qa"]);
+    assert.equal(rows[0]?.container, "running");
+    assert.equal(rows[0]?.frame, "none");
+    assert.equal(rows[1]?.container, "not started");
+    assert.equal(rows[1]?.frame, ".ocp/fleet/qa/gtm/last-frame.png");
+    assert.match(rows[1]?.frameTime ?? "", /^\d{4}-/);
+    const text = formatFleetStatus(rows);
+    assert.match(text, /coding workspace \.ocp\/fleet\/coding container running/);
+    assert.match(text, /qa workspace \.ocp\/fleet\/qa container not started/);
+    assert.match(text, /No telemetry is sent/);
+    const json = JSON.parse(formatFleetStatusJson(rows)) as { id: string }[];
+    assert.deepEqual(json.map((row) => row.id), ["coding", "qa"]);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

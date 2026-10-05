@@ -73,6 +73,8 @@ test("ocp doctor --sandbox checks that sandbox frame, fleet, and approvals", asy
     assert.match(captured, /green Fleet: coding not started/);
     assert.match(captured, /yellow Approvals: 1 pending/);
     assert.match(captured, /does not decide a card/);
+    assert.match(captured, /yellow Partner agreement: PARTNER.md is missing/);
+    assert.match(captured, /does not copy the file/);
     mkdirSync(path.join(root, ".ocp/fleet/coding/.ocp/sdlc"), { recursive: true });
     writeFileSync(path.join(root, ".ocp/fleet/coding/.ocp/sdlc/review-hold"), "node --test exit 1 password=hunter2\n");
     captured = "";
@@ -80,6 +82,15 @@ test("ocp doctor --sandbox checks that sandbox frame, fleet, and approvals", asy
     assert.ok(held === 0 || held === 1);
     assert.match(captured, /yellow Review hold: 1/);
     assert.match(captured, /does not accept the plan/);
+    assert.doesNotMatch(captured, /password=hunter2/);
+    writeFileSync(path.join(root, "PARTNER.md"), "partner\n");
+    writeFileSync(path.join(root, "PARTNER.rules"), "block: password=hunter2\n");
+    writeFileSync(path.join(root, ".ocp/fleet/coding/PARTNER.md"), "partner\n");
+    captured = "";
+    const agreed = await main(["doctor", "--sandbox", root]);
+    assert.ok(agreed === 0 || agreed === 1);
+    assert.match(captured, /green Partner agreement: present/);
+    assert.match(captured, /1 block rule/);
     assert.doesNotMatch(captured, /password=hunter2/);
     assert.match(captured, /Docker:/);
     assert.match(captured, /This check does not start containers/);
@@ -89,6 +100,7 @@ test("ocp doctor --sandbox checks that sandbox frame, fleet, and approvals", asy
     assert.match(captured, /yellow Computer frame: none at gtm\/last-frame.png/);
     assert.match(captured, /yellow Fleet: no partners/);
     assert.match(captured, /green Approvals: none pending/);
+    assert.match(captured, /yellow Partner agreement: PARTNER.md is missing/);
     assert.equal(empty === 0 || empty === 1, true);
   } finally {
     process.stdout.write = original;

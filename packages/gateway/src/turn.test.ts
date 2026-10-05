@@ -6,7 +6,7 @@ import path from "node:path";
 import test from "node:test";
 import { routeWithPredict, type ManagerPlan } from "@opencodingpartner/policy";
 import { applySandboxTodo, grepSandbox, listSandboxDir, writeSandboxFile } from "@opencodingpartner/workers";
-import { DEMO_MESSAGE, applySwarmManifest, approveDoctorLine, clearSessionMemory, coreIsOpen, createRoutine, deliverSlackEvent, deliverTelegramUpdate, fireDueRoutines, fireEvent, formatApproveQueue, formatFleetStatus, formatFleetStatusJson, formatReviewHolds, isolatePartner, listApproveQueue, listReviewHolds, listRoutines, parseSwarmManifest, partnerContainerArgv, pauseRoutine, readFleetStatus, readPackaging, reviewHoldDoctorLine, runChatTurn, runDemo, slackSignature, slackTurn, startPartnerContainer, stopPartnerContainer, verifySlackRequest, verifyTelegramRequest } from "./index.js";
+import { DEMO_MESSAGE, applySwarmManifest, approveDoctorLine, clearSessionMemory, coreIsOpen, createRoutine, deliverSlackEvent, deliverTelegramUpdate, fireDueRoutines, fireEvent, formatApproveQueue, formatFleetStatus, formatFleetStatusJson, formatReviewHolds, isolatePartner, listApproveQueue, listReviewHolds, listRoutines, parseSwarmManifest, partnerAgreementDoctorLine, partnerAgreementStatus, partnerContainerArgv, pauseRoutine, readFleetStatus, readPackaging, reviewHoldDoctorLine, runChatTurn, runDemo, slackSignature, slackTurn, startPartnerContainer, stopPartnerContainer, verifySlackRequest, verifyTelegramRequest } from "./index.js";
 import { allowComputerUse, captureComputerFrame, checkComputerFrame, computerTabText, doctorComputerFrameLine } from "./computer-tab.js";
 import { REVIEW_HOLD_CODING_CAP, rolesUnderReviewHold } from "./sdlc.js";
 
@@ -2497,6 +2497,30 @@ test("a review hold is listed and the doctor line does not print the reason", as
     assert.doesNotMatch(doctor, /password=hunter2/);
     assert.match(doctor, /does not accept the plan/);
     assert.match(await readFile(path.join(root, ".ocp/fleet/coding/.ocp/sdlc/review-hold"), "utf8"), /password=hunter2/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("doctor names a missing partner agreement and does not print a block rule", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-agreement-"));
+  try {
+    const missing = partnerAgreementDoctorLine(await partnerAgreementStatus(root));
+    assert.match(missing, /yellow Partner agreement: PARTNER.md is missing/);
+    assert.match(missing, /does not copy the file/);
+    await mkdir(path.join(root, ".ocp/fleet/coding/.ocp"), { recursive: true });
+    await writeFile(path.join(root, ".ocp/fleet/coding/.ocp/identity.json"), `${JSON.stringify({ id: "coding" })}\n`);
+    await writeFile(path.join(root, "PARTNER.md"), "partner\n");
+    await writeFile(path.join(root, "PARTNER.rules"), "block: password=hunter2\n");
+    const partial = partnerAgreementDoctorLine(await partnerAgreementStatus(root));
+    assert.match(partial, /yellow Partner agreement: coding missing PARTNER.md/);
+    assert.doesNotMatch(partial, /password=hunter2/);
+    await writeFile(path.join(root, ".ocp/fleet/coding/PARTNER.md"), "partner\n");
+    const ready = partnerAgreementDoctorLine(await partnerAgreementStatus(root));
+    assert.match(ready, /green Partner agreement: present/);
+    assert.match(ready, /1 block rule/);
+    assert.match(ready, /does not copy the file/);
+    assert.doesNotMatch(ready, /password=hunter2/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

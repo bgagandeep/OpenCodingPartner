@@ -37,6 +37,46 @@ test("ocp demo writes a file, blocks a secret, and records GTM actions", async (
   }
 });
 
+test("ocp doctor --sandbox checks that sandbox frame, fleet, and approvals", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "ocp-doctor-sandbox-"));
+  const other = mkdtempSync(path.join(tmpdir(), "ocp-doctor-other-"));
+  let captured = "";
+  const original = process.stdout.write.bind(process.stdout);
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    captured += String(chunk);
+    return true;
+  }) as typeof process.stdout.write;
+  try {
+    const { mkdirSync, writeFileSync } = await import("node:fs");
+    mkdirSync(path.join(root, "gtm"), { recursive: true });
+    writeFileSync(path.join(root, "gtm", "last-frame.png"), Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10]));
+    mkdirSync(path.join(root, ".ocp/fleet/coding/.ocp"), { recursive: true });
+    writeFileSync(path.join(root, ".ocp/fleet/coding/.ocp/identity.json"), `${JSON.stringify({ id: "coding", role: "coding" })}\n`);
+    writeFileSync(
+      path.join(root, ".ocp/approvals.json"),
+      `${JSON.stringify({ cards: [{ id: "plan-1", kind: "plan", title: "Edit", detail: "password=hunter2", status: "pending" }] })}\n`,
+    );
+    const code = await main(["doctor", "--sandbox", root]);
+    assert.ok(code === 0 || code === 1);
+    assert.match(captured, /green Computer frame: a PNG is at gtm\/last-frame.png/);
+    assert.match(captured, /This check does not start the browser/);
+    assert.match(captured, /green Fleet: coding not started/);
+    assert.match(captured, /yellow Approvals: 1 pending/);
+    assert.match(captured, /does not decide a card/);
+    assert.doesNotMatch(captured, /password=hunter2/);
+    captured = "";
+    const empty = await main(["doctor", "--sandbox", other]);
+    assert.match(captured, /yellow Computer frame: none at gtm\/last-frame.png/);
+    assert.match(captured, /yellow Fleet: no partners/);
+    assert.match(captured, /green Approvals: none pending/);
+    assert.equal(empty === 0 || empty === 1, true);
+  } finally {
+    process.stdout.write = original;
+    rmSync(root, { recursive: true, force: true });
+    rmSync(other, { recursive: true, force: true });
+  }
+});
+
 test("ocp doctor prints a status and does not print the meter key", async () => {
   let captured = "";
   const original = process.stdout.write.bind(process.stdout);

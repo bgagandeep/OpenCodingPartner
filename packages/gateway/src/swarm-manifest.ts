@@ -1,5 +1,6 @@
-import { readFile } from "node:fs/promises";
-import { isolatePartner, partnerIdDecision } from "./fleet.js";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import path from "node:path";
+import { isolatePartner, partnerIdDecision, readPartnerIdentity } from "./fleet.js";
 import { createRoutine, listRoutines } from "./routines.js";
 
 export interface SwarmPartner {
@@ -113,7 +114,50 @@ export async function applySwarmManifest(
       now: options.now ?? Date.now(),
     });
   }
+  await mkdir(path.join(sessionRoot, ".ocp"), { recursive: true });
+  await writeFile(
+    path.join(sessionRoot, ".ocp", "swarm.json"),
+    `${JSON.stringify({ partners: manifest.partners.map((partner) => partner.id) })}\n`,
+  );
   return { ok: true, text };
+}
+
+const PARTNER_ID = /^[a-z0-9][a-z0-9-]{0,31}$/;
+
+/** Say which recorded swarm partners are in the fleet. This does not apply a manifest or start containers. */
+export async function doctorSwarmLine(sessionRoot: string): Promise<string> {
+  const tail = "This check does not apply a manifest and does not start containers.";
+  const file = path.join(sessionRoot, ".ocp", "swarm.json");
+  let raw: string;
+  try {
+    raw = await readFile(file, "utf8");
+  } catch {
+    return `green Swarm: none. ${tail}`;
+  }
+  let ids: string[];
+  try {
+    const parsed = JSON.parse(raw) as { partners?: unknown };
+    const keys = Object.keys(parsed);
+    if (keys.length !== 1 || keys[0] !== "partners" || !Array.isArray(parsed.partners)) {
+      return `yellow Swarm: the file could not be read. ${tail}`;
+    }
+    ids = [];
+    for (const id of parsed.partners) {
+      if (typeof id !== "string" || !PARTNER_ID.test(id)) return `yellow Swarm: the file could not be read. ${tail}`;
+      ids.push(id);
+    }
+  } catch {
+    return `yellow Swarm: the file could not be read. ${tail}`;
+  }
+  if (ids.length === 0) return `green Swarm: none. ${tail}`;
+  const missing: string[] = [];
+  for (const id of ids) {
+    const identity = await readPartnerIdentity(path.join(sessionRoot, ".ocp", "fleet", id));
+    if (!identity || identity.id !== id) missing.push(id);
+  }
+  if (missing.length === 0) return `green Swarm: ${ids.join(", ")} present. ${tail}`;
+  const verb = missing.length === 1 ? "is" : "are";
+  return `yellow Swarm: ${missing.join(", ")} ${verb} missing. ${tail}`;
 }
 
 export async function readSwarmManifest(filePath: string): Promise<SwarmManifest> {

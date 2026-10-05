@@ -1015,6 +1015,50 @@ test("ocp append adds text to an existing file and does not create one", async (
   }
 });
 
+test("ocp mkdir creates a directory and does not replace a file", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "ocp-mkdir-"));
+  let captured = "";
+  const original = process.stdout.write.bind(process.stdout);
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    captured += String(chunk);
+    return true;
+  }) as typeof process.stdout.write;
+  try {
+    const { existsSync, statSync, writeFileSync } = await import("node:fs");
+    assert.equal(await main(["mkdir", "--sandbox", root]), 2);
+    assert.match(captured, /Usage: ocp mkdir/);
+    captured = "";
+    assert.equal(await main(["mkdir", "--sandbox", root, "src/lib"]), 0);
+    assert.match(captured, /^created\n$/);
+    assert.equal(statSync(path.join(root, "src/lib")).isDirectory(), true);
+    assert.equal(existsSync(path.join(root, ".ocp/last-check.json")), false);
+    captured = "";
+    assert.equal(await main(["mkdir", "--sandbox", root, "src/lib"]), 0);
+    assert.match(captured, /^already exists\n$/);
+    writeFileSync(path.join(root, "hello.txt"), "hello\n");
+    captured = "";
+    assert.equal(await main(["mkdir", "--sandbox", root, "hello.txt"]), 1);
+    assert.match(captured, /path is a file/);
+    assert.equal(readFileSync(path.join(root, "hello.txt"), "utf8"), "hello\n");
+    captured = "";
+    assert.equal(await main(["mkdir", "--sandbox", root, "password=hunter2"]), 1);
+    assert.match(captured, /blocked \(secret pattern\)/);
+    assert.doesNotMatch(captured, /hunter2/);
+    assert.equal(existsSync(path.join(root, "password=hunter2")), false);
+    captured = "";
+    assert.equal(await main(["mkdir", "--sandbox", root, "../secret"]), 1);
+    assert.match(captured, /path refused/);
+    captured = "";
+    assert.equal(await main(["mkdir", "--sandbox", root, "--partner", "coding", "notes"]), 0);
+    assert.match(captured, /^created\n$/);
+    assert.equal(statSync(path.join(root, ".ocp/fleet/coding/notes")).isDirectory(), true);
+    assert.equal(existsSync(path.join(root, "notes")), false);
+  } finally {
+    process.stdout.write = original;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("ocp fleet status lists a partner and can print json", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "ocp-fleet-cli-"));
   let captured = "";

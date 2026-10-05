@@ -312,6 +312,44 @@ export async function doctorComputerRunLine(sessionRoot: string): Promise<string
   return `yellow Computer run: ${sessionDetail} ${extra} ${tail}`;
 }
 
+type StatusRead = "idle" | "live" | "held" | "unreadable" | "missing";
+
+async function readComputerStatus(sandboxRoot: string): Promise<StatusRead> {
+  let raw: string;
+  try {
+    raw = await readFile(statePath(sandboxRoot), "utf8");
+  } catch {
+    return "missing";
+  }
+  try {
+    const parsed = JSON.parse(raw) as { status?: unknown };
+    if (parsed.status === undefined || parsed.status === "idle" || parsed.status === "held") {
+      return parsed.status === "held" ? "held" : "idle";
+    }
+    if (parsed.status === "live") return "live";
+    return "unreadable";
+  } catch {
+    return "unreadable";
+  }
+}
+
+/** Doctor line for a live browser flag. This does not start the browser. There is no live stream. */
+export async function doctorComputerStatusLine(sessionRoot: string): Promise<string> {
+  const tail = "This check does not start the browser. Live stream is not in this build.";
+  const live: string[] = [];
+  const session = await readComputerStatus(sessionRoot);
+  if (session === "unreadable") return `yellow Computer status: this session file could not be read. ${tail}`;
+  if (session === "live") live.push("the session");
+  for (const partner of await partnerWorkspaces(sessionRoot)) {
+    const status = await readComputerStatus(partner.workspace);
+    if (status === "unreadable") return `yellow Computer status: ${partner.id} file could not be read. ${tail}`;
+    if (status === "live") live.push(partner.id);
+  }
+  if (live.length === 0) return `green Computer status: idle. ${tail}`;
+  const who = live.map((name) => (name === "the session" ? "the session is live" : `${name} is live`)).join(". ");
+  return `yellow Computer status: ${who}. ${tail}`;
+}
+
 /** Doctor line for who holds the browser. This does not take or return it. */
 export async function doctorComputerControlLine(sessionRoot: string): Promise<string> {
   const tail = "This check does not take or return the browser.";

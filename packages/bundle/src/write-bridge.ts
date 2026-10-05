@@ -1,6 +1,6 @@
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { copySandboxFile, deleteSandboxFile, mkdirSandboxDir, renameSandboxFile, rmdirSandboxDir, securityGate, writeSandboxFile } from "@opencodingpartner/workers";
+import { appendSandboxFile, copySandboxFile, deleteSandboxFile, mkdirSandboxDir, renameSandboxFile, rmdirSandboxDir, securityGate, writeSandboxFile } from "@opencodingpartner/workers";
 
 export interface BridgeWriteBody {
   relativePath?: unknown;
@@ -67,6 +67,17 @@ export async function applyBridgeRmdir(sandboxRoot: string, body: BridgeDeleteBo
     : { ok: false, detail: removed.detail };
 }
 
+/** Add text to one existing sandbox file. This is the only place the bridge appends. It does not create a file. */
+export async function applyBridgeAppend(sandboxRoot: string, body: BridgeWriteBody): Promise<BridgeWriteResult> {
+  if (typeof body.relativePath !== "string" || typeof body.content !== "string") {
+    return { ok: false, detail: "Append bridge needs relativePath and content." };
+  }
+  const added = await appendSandboxFile(sandboxRoot, body.relativePath, body.content);
+  return added.ok
+    ? { ok: true, detail: "Append bridge added the text." }
+    : { ok: false, detail: added.detail };
+}
+
 /** Copy one sandbox file. This is the only place the bridge copies. The source stays. */
 export async function applyBridgeCopy(sandboxRoot: string, body: BridgeRenameBody): Promise<BridgeWriteResult> {
   if (typeof body.from !== "string" || typeof body.to !== "string") {
@@ -92,7 +103,7 @@ export async function applyBridgeRename(sandboxRoot: string, body: BridgeRenameB
 /** Local tool host. OpenClaw invokes it. The server binds loopback only. */
 export async function startSandboxWriteBridge(sandboxRoot: string): Promise<{ url: string; close: () => Promise<void> }> {
   const server: Server = createServer(async (req, res) => {
-    if (req.method !== "POST" || (req.url !== "/write" && req.url !== "/delete" && req.url !== "/rename" && req.url !== "/mkdir" && req.url !== "/rmdir" && req.url !== "/copy")) {
+    if (req.method !== "POST" || (req.url !== "/write" && req.url !== "/delete" && req.url !== "/rename" && req.url !== "/mkdir" && req.url !== "/rmdir" && req.url !== "/copy" && req.url !== "/append")) {
       res.writeHead(404, { "content-type": "application/json" });
       res.end('{"ok":false}');
       return;
@@ -116,7 +127,9 @@ export async function startSandboxWriteBridge(sandboxRoot: string): Promise<{ ur
               ? await applyBridgeRmdir(sandboxRoot, body)
               : req.url === "/copy"
                 ? await applyBridgeCopy(sandboxRoot, body)
-                : await applyBridgeWrite(sandboxRoot, body);
+                : req.url === "/append"
+                  ? await applyBridgeAppend(sandboxRoot, body)
+                  : await applyBridgeWrite(sandboxRoot, body);
     res.writeHead(result.ok ? 200 : 403, { "content-type": "application/json" });
     res.end(JSON.stringify(result));
   });

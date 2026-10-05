@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { routeWithPredict } from "@opencodingpartner/policy";
 import { runOnGrokBuild } from "@opencodingpartner/workers";
-import { copyViaOpenClaw, deleteViaOpenClaw, LITELLM_LOCAL_BASE_URL, mkdirViaOpenClaw, renameViaOpenClaw, resolveCodingMeter, rmdirViaOpenClaw, runConnectedPath, writeViaOpenClaw } from "./connected.js";
+import { appendViaOpenClaw, copyViaOpenClaw, deleteViaOpenClaw, LITELLM_LOCAL_BASE_URL, mkdirViaOpenClaw, renameViaOpenClaw, resolveCodingMeter, rmdirViaOpenClaw, runConnectedPath, writeViaOpenClaw } from "./connected.js";
 import { startSandboxWriteBridge } from "./write-bridge.js";
 import { predictWithLaya } from "./laya.js";
 
@@ -466,6 +466,85 @@ test("the gateway invokes copy and does not send fs_copy", async () => {
     );
     assert.equal(missing.missing, true);
     await assert.rejects(readFile(path.join(root, "src", "later.txt"), "utf8"));
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+    await bridge.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("the gateway invokes append and does not send fs_append", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-append-http-"));
+  const bridge = await startSandboxWriteBridge(root);
+  await mkdir(path.join(root, "src"), { recursive: true });
+  await writeFile(path.join(root, "src", "note.txt"), "one\n");
+  const seen: { tool?: string }[] = [];
+  const server = createServer(async (req, res) => {
+    if (req.url === "/healthz") {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end('{"ok":true}');
+      return;
+    }
+    const chunks: Buffer[] = [];
+    for await (const chunk of req) chunks.push(chunk as Buffer);
+    const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as {
+      tool?: string;
+      args?: { bridgeUrl?: string; relativePath?: string; content?: string };
+    };
+    seen.push({ tool: body.tool });
+    if (body.tool === "fs_append" || body.tool === "fs_write") {
+      res.writeHead(404, { "content-type": "application/json" });
+      res.end('{"ok":false}');
+      return;
+    }
+    if (body.args?.bridgeUrl && body.tool === "ocp_sandbox_append") {
+      const forwarded = await fetch(body.args.bridgeUrl, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ relativePath: body.args.relativePath, content: body.args.content }),
+      });
+      res.writeHead(forwarded.status, { "content-type": "application/json" });
+      res.end(await forwarded.text());
+      return;
+    }
+    res.writeHead(404, { "content-type": "application/json" });
+    res.end('{"ok":false}');
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+  const port = (server.address() as AddressInfo).port;
+  const deps = { env: { OCP_WRITE_BRIDGE_URL: bridge.url }, bins: {}, gatewayHttp: `http://127.0.0.1:${port}` };
+  try {
+    const added = await appendViaOpenClaw(deps, root, "src/note.txt", "two\n");
+    assert.equal(added.ok, true);
+    assert.equal(added.missing, false);
+    assert.equal(await readFile(path.join(root, "src", "note.txt"), "utf8"), "one\ntwo\n");
+    const missingFile = await appendViaOpenClaw(deps, root, "src/missing.txt", "no\n");
+    assert.equal(missingFile.ok, false);
+    await assert.rejects(readFile(path.join(root, "src", "missing.txt"), "utf8"));
+    const escaped = await appendViaOpenClaw(deps, root, "../outside.txt", "no\n");
+    assert.equal(escaped.ok, false);
+    assert.equal(escaped.missing, false);
+    const secret = await appendViaOpenClaw(deps, root, "src/note.txt", "password=hunter2\n");
+    assert.equal(secret.ok, false);
+    assert.equal(await readFile(path.join(root, "src", "note.txt"), "utf8"), "one\ntwo\n");
+    assert.equal(seen.some((call) => call.tool === "fs_append" || call.tool === "fs_write"), false);
+    assert.equal(seen.some((call) => call.tool === "ocp_sandbox_append"), true);
+    const missing = await appendViaOpenClaw(
+      {
+        env: { OCP_WRITE_BRIDGE_URL: bridge.url },
+        bins: {},
+        gatewayHttp: `http://127.0.0.1:${port}`,
+        fetchImpl: async (url) => {
+          if (String(url).endsWith("/healthz")) return new Response('{"ok":true}', { status: 200 });
+          return new Response('{"ok":false}', { status: 404 });
+        },
+      },
+      root,
+      "src/note.txt",
+      "three\n",
+    );
+    assert.equal(missing.missing, true);
+    assert.equal(await readFile(path.join(root, "src", "note.txt"), "utf8"), "one\ntwo\n");
   } finally {
     await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
     await bridge.close();

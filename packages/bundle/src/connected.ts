@@ -306,6 +306,23 @@ export async function copyViaOpenClaw(
 }
 
 /**
+ * Ask the gateway to invoke the append bridge. This function does not append the text.
+ * A missing plugin returns missing so the turn can append locally. A refusal does not append locally.
+ */
+export async function appendViaOpenClaw(
+  deps: ConnectedDeps,
+  sandboxRoot: string,
+  relativePath: string,
+  content: string,
+): Promise<OpenClawFileResult> {
+  const gate = securityGate({ relativePath, content, sandboxRoot });
+  if (!gate.allow) {
+    return { ok: false, missing: false, detail: `Security gate blocked the path (${gate.reasons.join(", ")}).` };
+  }
+  return invokeSandboxAction(deps, sandboxRoot, "ocp_sandbox_append", "/append", { relativePath, content }, relativePath);
+}
+
+/**
  * Ask the gateway to invoke the rename bridge. This function does not move the file.
  * `fs_move` is never sent. A missing plugin returns missing so the turn can rename locally.
  */
@@ -321,8 +338,8 @@ export async function renameViaOpenClaw(
 async function invokeSandboxAction(
   deps: ConnectedDeps,
   sandboxRoot: string,
-  tool: "ocp_sandbox_delete" | "ocp_sandbox_rename" | "ocp_sandbox_mkdir" | "ocp_sandbox_rmdir" | "ocp_sandbox_copy",
-  actionPath: "/delete" | "/rename" | "/mkdir" | "/rmdir" | "/copy",
+  tool: "ocp_sandbox_delete" | "ocp_sandbox_rename" | "ocp_sandbox_mkdir" | "ocp_sandbox_rmdir" | "ocp_sandbox_copy" | "ocp_sandbox_append",
+  actionPath: "/delete" | "/rename" | "/mkdir" | "/rmdir" | "/copy" | "/append",
   args: Record<string, string>,
   ...paths: string[]
 ): Promise<OpenClawFileResult> {
@@ -352,14 +369,14 @@ async function invokeSandboxAction(
   return { ok: false, missing: false, detail: bridged.detail };
 }
 
-const GATEWAY_TOOLS = new Set(["ocp_sandbox_write", "ocp_sandbox_delete", "ocp_sandbox_rename", "ocp_sandbox_mkdir", "ocp_sandbox_rmdir", "ocp_sandbox_copy", "write"]);
+const GATEWAY_TOOLS = new Set(["ocp_sandbox_write", "ocp_sandbox_delete", "ocp_sandbox_rename", "ocp_sandbox_mkdir", "ocp_sandbox_rmdir", "ocp_sandbox_copy", "ocp_sandbox_append", "write"]);
 
 async function invokeGatewayTool(
   deps: ConnectedDeps,
   gatewayHttp: string,
   exec: NonNullable<ConnectedDeps["exec"]>,
   fetchImpl: typeof fetch,
-  tool: "ocp_sandbox_write" | "ocp_sandbox_delete" | "ocp_sandbox_rename" | "ocp_sandbox_mkdir" | "ocp_sandbox_rmdir" | "ocp_sandbox_copy" | "write",
+  tool: "ocp_sandbox_write" | "ocp_sandbox_delete" | "ocp_sandbox_rename" | "ocp_sandbox_mkdir" | "ocp_sandbox_rmdir" | "ocp_sandbox_copy" | "ocp_sandbox_append" | "write",
   args: Record<string, string>,
 ): Promise<{ ok: boolean; missing: boolean; detail: string }> {
   if (!GATEWAY_TOOLS.has(tool)) {

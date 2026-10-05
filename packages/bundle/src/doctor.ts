@@ -78,7 +78,7 @@ async function pluginLine(repoRoot: string): Promise<string> {
   const manifest = path.join(repoRoot, "integrations/openclaw-sandbox-write/openclaw.plugin.json");
   try {
     await access(manifest);
-    return "green Write bridge plugin: integrations/openclaw-sandbox-write is in this repo. Load it on the gateway so write, delete, and rename can say orchestration. This check does not prove the gateway loaded it. fs_write stays blocked.";
+    return "green Write bridge plugin: integrations/openclaw-sandbox-write is in this repo. Load it on the gateway so write, delete, rename, copy, and append can say orchestration. This check does not prove the gateway loaded it. fs_write stays blocked.";
   } catch {
     return "red Write bridge plugin: integrations/openclaw-sandbox-write is missing. The gateway cannot invoke ocp_sandbox_write until that plugin is present.";
   }

@@ -1036,6 +1036,98 @@ test("a coding turn appends to an existing file and does not create one", async 
   }
 });
 
+test("an orchestration turn appends through the bridge", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-remote-append-"));
+  try {
+    await writeSandboxFile(root, "src/note.ts", "one\n");
+    const calls: string[] = [];
+    const turn = await runChatTurn({
+      message: "add a line to the helper",
+      sandboxRoot: root,
+      orchestration: async () => ({
+        state: "ran",
+        driver: "openclaw",
+        detail: "Session agent:board:main accepted the plan.",
+      }),
+      grokRunner: {
+        async run() {
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify({ done: true, steps: [{ tool: "append", path: "src/note.ts", content: "two\n" }] }),
+          };
+        },
+      },
+      openclawAppend: async (relativePath, content) => {
+        calls.push(`${relativePath} ${content}`);
+        const { appendFile } = await import("node:fs/promises");
+        await appendFile(path.join(root, relativePath), content);
+        return { ok: true, missing: false, detail: "bridge" };
+      },
+    });
+    assert.deepEqual(calls, ["src/note.ts two\n"]);
+    assert.match(turn.transcript, /Append path: orchestration/);
+    assert.doesNotMatch(turn.transcript, /Append path: local sandbox/);
+    assert.equal(await readFile(path.join(root, "src/note.ts"), "utf8"), "one\ntwo\n");
+
+    const blocked = await mkdtemp(path.join(tmpdir(), "ocp-append-refuse-"));
+    await writeSandboxFile(blocked, "src/note.ts", "one\n");
+    const refused = await runChatTurn({
+      message: "add a line to the helper",
+      sandboxRoot: blocked,
+      orchestration: async () => ({
+        state: "ran",
+        driver: "openclaw",
+        detail: "Session agent:board:main accepted the plan.",
+      }),
+      grokRunner: {
+        async run() {
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify({ done: true, steps: [{ tool: "append", path: "src/note.ts", content: "two\n" }] }),
+          };
+        },
+      },
+      openclawAppend: async () => ({ ok: false, missing: false, detail: "refused" }),
+    });
+    assert.doesNotMatch(refused.transcript, /Append path: local sandbox/);
+    assert.doesNotMatch(refused.transcript, /Append path: orchestration/);
+    assert.equal(await readFile(path.join(blocked, "src/note.ts"), "utf8"), "one\n");
+    await rm(blocked, { recursive: true, force: true });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a missing OpenClaw append plugin falls back to the local sandbox", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-append-fallback-"));
+  try {
+    await writeSandboxFile(root, "src/note.ts", "one\n");
+    const turn = await runChatTurn({
+      message: "add a line to the helper",
+      sandboxRoot: root,
+      orchestration: async () => ({
+        state: "ran",
+        driver: "openclaw",
+        detail: "Session agent:board:main accepted the plan.",
+      }),
+      grokRunner: {
+        async run() {
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify({ done: true, steps: [{ tool: "append", path: "src/note.ts", content: "two\n" }] }),
+          };
+        },
+      },
+      openclawAppend: async () => ({ ok: false, missing: true, detail: "plugin missing" }),
+    });
+    assert.match(turn.transcript, /Append path: local sandbox/);
+    assert.doesNotMatch(turn.transcript, /Append path: orchestration/);
+    assert.equal(await readFile(path.join(root, "src/note.ts"), "utf8"), "one\ntwo\n");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("a coding turn copies a file and leaves the source", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "ocp-copy-turn-"));
   try {

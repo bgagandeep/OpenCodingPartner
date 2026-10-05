@@ -1,4 +1,4 @@
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, stat, utimes, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fleetIds, readPartnerIdentity } from "./fleet.js";
 
@@ -89,7 +89,13 @@ async function lastRun(sandboxRoot: string): Promise<{ url: string; screenshot: 
 
 async function lastFrame(sandboxRoot: string): Promise<string> {
   const run = await lastRun(sandboxRoot);
-  return run?.screenshot || "none";
+  if (run?.screenshot) return run.screenshot;
+  try {
+    await stat(path.join(sandboxRoot, FRAME_FILE));
+    return FRAME_FILE;
+  } catch {
+    return "none";
+  }
 }
 
 async function frameTime(sandboxRoot: string, relativePath: string): Promise<string> {
@@ -105,6 +111,14 @@ async function frameTime(sandboxRoot: string, relativePath: string): Promise<str
 const FRAME_FILE = "gtm/last-frame.png";
 const PNG_SIGNATURE = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
+/** Session turns report gtm/last-frame.png. A partner workspace reports .ocp/fleet/<id>/gtm/last-frame.png. */
+async function reportedFrame(sandboxRoot: string, relative = FRAME_FILE): Promise<string> {
+  if (relative === "none") return "none";
+  const identity = await readPartnerIdentity(sandboxRoot);
+  if (!identity) return relative;
+  return `.ocp/fleet/${identity.id}/${relative}`;
+}
+
 export async function frameMtimeMs(sandboxRoot: string): Promise<number | undefined> {
   try {
     return (await stat(path.join(sandboxRoot, FRAME_FILE))).mtimeMs;
@@ -118,6 +132,7 @@ export async function checkComputerFrame(
   sandboxRoot: string,
   beforeMs?: number,
 ): Promise<{ pass: boolean; summary: string }> {
+  const where = await reportedFrame(sandboxRoot);
   const target = path.join(sandboxRoot, FRAME_FILE);
   let bytes: Buffer;
   let mtimeMs: number;
@@ -125,16 +140,16 @@ export async function checkComputerFrame(
     bytes = await readFile(target);
     mtimeMs = (await stat(target)).mtimeMs;
   } catch {
-    return { pass: false, summary: "Computer QA computer-frame: fail. The frame file is missing." };
+    return { pass: false, summary: `Computer QA computer-frame: fail. The frame file is missing (${where}).` };
   }
   const png = bytes.length >= PNG_SIGNATURE.length && PNG_SIGNATURE.every((byte, index) => bytes[index] === byte);
-  if (!png) return { pass: false, summary: "Computer QA computer-frame: fail. The frame is not a PNG." };
-  if (!Number.isFinite(mtimeMs)) return { pass: false, summary: "Computer QA computer-frame: fail. The frame time is missing." };
+  if (!png) return { pass: false, summary: `Computer QA computer-frame: fail. The frame is not a PNG (${where}).` };
+  if (!Number.isFinite(mtimeMs)) return { pass: false, summary: `Computer QA computer-frame: fail. The frame time is missing (${where}).` };
   if (beforeMs !== undefined && !(mtimeMs > beforeMs)) {
-    return { pass: false, summary: "Computer QA computer-frame: fail. The frame time did not move." };
+    return { pass: false, summary: `Computer QA computer-frame: fail. The frame time did not move (${where}).` };
   }
   const moved = beforeMs === undefined ? "the time is set" : "the time moved";
-  return { pass: true, summary: `Computer QA computer-frame: pass. The frame is a PNG and ${moved}.` };
+  return { pass: true, summary: `Computer QA computer-frame: pass. The frame is a PNG and ${moved}. Last frame: ${where}.` };
 }
 
 export type FrameCapturer = (url: string) => Promise<Uint8Array>;
@@ -160,18 +175,25 @@ async function landFrame(
   url: string,
   body: Record<string, unknown>,
 ): Promise<{ ok: boolean; text: string }> {
+  const where = await reportedFrame(sandboxRoot);
   if (!isPng(png)) {
-    return { ok: false, text: "Computer QA computer-frame: fail. The frame is not a PNG. No frame was written." };
+    return { ok: false, text: `Computer QA computer-frame: fail. The frame is not a PNG. No frame was written at ${where}.` };
   }
   const before = await frameMtimeMs(sandboxRoot);
   await mkdir(path.join(sandboxRoot, "gtm"), { recursive: true });
-  await writeFile(path.join(sandboxRoot, FRAME_FILE), png);
+  const framePath = path.join(sandboxRoot, FRAME_FILE);
+  await writeFile(framePath, png);
+  const written = await frameMtimeMs(sandboxRoot);
+  if (before !== undefined && !(written !== undefined && written > before)) {
+    const moved = new Date(before + 1);
+    await utimes(framePath, moved, moved);
+  }
   const next = { ...body, url, screenshot: FRAME_FILE };
   await writeFile(path.join(sandboxRoot, "gtm", "last-run.json"), `${JSON.stringify(next, null, 2)}\n`);
   const check = await checkComputerFrame(sandboxRoot, before);
   if (!check.pass) return { ok: false, text: check.summary };
   const when = await frameTime(sandboxRoot, FRAME_FILE);
-  return { ok: true, text: `${check.summary}\nLast frame: ${FRAME_FILE}\nFrame time: ${when}` };
+  return { ok: true, text: `${check.summary}\nLast frame: ${where}\nFrame time: ${when}` };
 }
 
 /** Write gtm/last-frame.png from the open page. A missing browser is an error, not a blank image. */
@@ -201,12 +223,13 @@ export async function captureComputerFrame(
 export async function captureExecutedFrame(sandboxRoot: string): Promise<{ ok: boolean; text: string }> {
   const run = await lastRun(sandboxRoot);
   const url = run?.url ?? "";
+  const where = await reportedFrame(sandboxRoot);
   if (!url.startsWith("http://") && !url.startsWith("https://")) {
-    return { ok: false, text: "Computer QA computer-frame: fail. Capture found no open page. No frame was written." };
+    return { ok: false, text: `Computer QA computer-frame: fail. Capture found no open page. No frame was written at ${where}.` };
   }
   const rel = run?.screenshot ?? "";
   if (!rel) {
-    return { ok: false, text: "Computer QA computer-frame: fail. Capture found no step screenshot. No frame was written." };
+    return { ok: false, text: `Computer QA computer-frame: fail. Capture found no step screenshot. No frame was written at ${where}.` };
   }
   if (rel === FRAME_FILE) {
     const check = await checkComputerFrame(sandboxRoot);
@@ -216,7 +239,7 @@ export async function captureExecutedFrame(sandboxRoot: string): Promise<{ ok: b
   try {
     bytes = await readFile(path.join(sandboxRoot, rel));
   } catch {
-    return { ok: false, text: "Computer QA computer-frame: fail. Capture could not read the step screenshot. No frame was written." };
+    return { ok: false, text: `Computer QA computer-frame: fail. Capture could not read the step screenshot. No frame was written at ${where}.` };
   }
   return landFrame(sandboxRoot, bytes, url, run?.body ?? {});
 }
@@ -226,6 +249,7 @@ export async function computerTabText(sandboxRoot: string): Promise<string> {
   const state = await readComputerTab(sandboxRoot);
   const frame = await lastFrame(sandboxRoot);
   const when = await frameTime(sandboxRoot, frame);
+  const shown = await reportedFrame(sandboxRoot, frame);
   const identity = await readPartnerIdentity(sandboxRoot);
   const lines = ["Computer tab"];
   if (identity) {
@@ -240,7 +264,7 @@ export async function computerTabText(sandboxRoot: string): Promise<string> {
     `Control: ${state.control}`,
     `Status: ${state.status}`,
     `Container: ${await containerState(sandboxRoot)}`,
-    `Last frame: ${frame}`,
+    `Last frame: ${shown}`,
     `Frame time: ${when}`,
     "Live stream: not in this build",
   );

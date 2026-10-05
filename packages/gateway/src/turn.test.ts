@@ -2204,7 +2204,8 @@ test("a partner computer keeps the frame in its workspace, and takeover blocks t
     assert.equal(opened, 1);
     assert.equal(ran.qa?.pass, true);
     assert.match(ran.transcript, /Computer QA computer-frame: pass/);
-    assert.match(ran.transcript, /Last frame: gtm\/last-frame.png/);
+    assert.match(ran.transcript, /Last frame: \.ocp\/fleet\/coding\/gtm\/last-frame.png/);
+    assert.doesNotMatch(ran.transcript, /Last frame: gtm\/last-frame.png/);
     const frame = await readFile(path.join(workspace, "gtm/last-frame.png"));
     assert.equal(frame[0], 0x89);
     await assert.rejects(readFile(path.join(root, "gtm/last-frame.png")));

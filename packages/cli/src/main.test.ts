@@ -248,6 +248,17 @@ test("ocp computer qa prints pass or fail and does not open a page", async () =>
     assert.equal(passed, 0);
     assert.match(captured, /Computer QA computer-frame: pass/);
     assert.match(captured, /The frame is a PNG/);
+    assert.match(captured, /Last frame: gtm\/last-frame.png/);
+    assert.doesNotMatch(captured, /\.ocp\/fleet\//);
+    captured = "";
+    const { mkdirSync: mkdirPartner, writeFileSync: writePartner } = await import("node:fs");
+    mkdirPartner(path.join(root, ".ocp/fleet/coding/gtm"), { recursive: true });
+    writePartner(path.join(root, ".ocp/fleet/coding/gtm/last-frame.png"), Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10]));
+    const partner = await main(["computer", "--sandbox", root, "--partner", "coding", "qa"]);
+    assert.equal(partner, 0);
+    assert.match(captured, /Computer QA computer-frame: pass/);
+    assert.match(captured, /Last frame: \.ocp\/fleet\/coding\/gtm\/last-frame.png/);
+    assert.doesNotMatch(captured, /Last frame: gtm\/last-frame.png/);
   } finally {
     process.stdout.write = original;
     rmSync(root, { recursive: true, force: true });

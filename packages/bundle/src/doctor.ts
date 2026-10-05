@@ -13,6 +13,7 @@ export interface DoctorDeps {
   playwrightPresent?: boolean;
   fleetLine?: string;
   approveLine?: string;
+  decisionLine?: string;
   frameLine?: string;
   dockerLine?: string;
   reviewLine?: string;
@@ -44,6 +45,7 @@ export async function runDoctor(deps: DoctorDeps): Promise<DoctorReport> {
   lines.push(telegramLine(deps.env));
   lines.push(deps.fleetLine ?? "yellow Fleet: no partners. This check does not start containers. No telemetry is sent.");
   lines.push(deps.approveLine ?? "green Approvals: none pending. This check does not decide a card.");
+  lines.push(deps.decisionLine ?? "green Decisions: none. This check does not decide a card and does not print the request.");
   lines.push(deps.frameLine ?? "yellow Computer frame: none at gtm/last-frame.png. This check does not start the browser.");
   lines.push(deps.dockerLine ?? dockerLine(false));
   lines.push(deps.reviewLine ?? "green Review hold: none. One coding worker is not forced.");

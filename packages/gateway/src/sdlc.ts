@@ -273,6 +273,61 @@ export function approveDoctorLine(pending: number, items: readonly Pick<ApproveQ
   return `yellow Approvals: ${pending} pending.${named} This check does not decide a card.`;
 }
 
+const CARD_KINDS = new Set(["plan", "computer"]);
+const CARD_STATUSES = new Set(["pending", "approved", "denied", "redirected"]);
+
+type CardDecision = { kind: "plan" | "computer"; status: "approved" | "denied" | "redirected" };
+
+async function lastCardDecision(sandboxRoot: string): Promise<CardDecision | "none" | "missing" | "unreadable"> {
+  let raw: string;
+  try {
+    raw = await readFile(approvalsFile(sandboxRoot), "utf8");
+  } catch {
+    return "missing";
+  }
+  let cards: unknown[];
+  try {
+    const parsed = JSON.parse(raw) as { cards?: unknown };
+    if (!Array.isArray(parsed.cards)) return "unreadable";
+    cards = parsed.cards;
+  } catch {
+    return "unreadable";
+  }
+  let last: CardDecision | undefined;
+  for (const card of cards) {
+    if (!card || typeof card !== "object") return "unreadable";
+    const kind = (card as { kind?: unknown }).kind;
+    const status = (card as { status?: unknown }).status;
+    if (typeof kind !== "string" || typeof status !== "string") return "unreadable";
+    if (!CARD_KINDS.has(kind) || !CARD_STATUSES.has(status)) return "unreadable";
+    if (status === "pending") continue;
+    last = { kind: kind as CardDecision["kind"], status: status as CardDecision["status"] };
+  }
+  return last ?? "none";
+}
+
+/** Name the last decided card. This does not print the request or decide a card. */
+export async function doctorDecisionLine(sessionRoot: string): Promise<string> {
+  const tail = "This check does not decide a card and does not print the request.";
+  const bits: string[] = [];
+  let attention = false;
+  const session = await lastCardDecision(sessionRoot);
+  if (session === "unreadable") return `yellow Decisions: this session file could not be read. ${tail}`;
+  if (session !== "missing" && session !== "none") {
+    bits.push(`session ${session.kind} ${session.status}`);
+    if (session.status !== "approved") attention = true;
+  }
+  for (const partner of await namedPartnerWorkspaces(sessionRoot)) {
+    const decision = await lastCardDecision(partner.workspace);
+    if (decision === "unreadable") return `yellow Decisions: ${partner.id} file could not be read. ${tail}`;
+    if (decision === "missing" || decision === "none") continue;
+    bits.push(`${partner.id} ${decision.kind} ${decision.status}`);
+    if (decision.status !== "approved") attention = true;
+  }
+  if (bits.length === 0) return `green Decisions: none. ${tail}`;
+  return `${attention ? "yellow" : "green"} Decisions: ${bits.join(". ")}. ${tail}`;
+}
+
 export interface ReviewHold {
   partner: string;
   workspace: string;

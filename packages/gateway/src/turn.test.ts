@@ -6,7 +6,7 @@ import path from "node:path";
 import test from "node:test";
 import { routeWithPredict, type ManagerPlan } from "@opencodingpartner/policy";
 import { applySandboxTodo, grepSandbox, listSandboxDir, writeSandboxFile } from "@opencodingpartner/workers";
-import { DEMO_MESSAGE, applySwarmManifest, approveDoctorLine, clearSessionMemory, coreIsOpen, createRoutine, deliverSlackEvent, deliverTelegramUpdate, fireDueRoutines, fireEvent, formatApproveQueue, formatFleetStatus, formatFleetStatusJson, formatReviewHolds, formatTodoQueue, isolatePartner, listApproveQueue, listReviewHolds, listRoutines, listTodoQueue, parseSwarmManifest, partnerAgreementDoctorLine, partnerAgreementStatus, partnerContainerArgv, pauseRoutine, readFleetStatus, readPackaging, reviewHoldDoctorLine, runChatTurn, todoDoctorLine, runDemo, slackSignature, slackTurn, startPartnerContainer, stopPartnerContainer, verifySlackRequest, verifyTelegramRequest } from "./index.js";
+import { DEMO_MESSAGE, applySwarmManifest, approveDoctorLine, doctorDecisionLine, clearSessionMemory, coreIsOpen, createRoutine, deliverSlackEvent, deliverTelegramUpdate, fireDueRoutines, fireEvent, formatApproveQueue, formatFleetStatus, formatFleetStatusJson, formatReviewHolds, formatTodoQueue, isolatePartner, listApproveQueue, listReviewHolds, listRoutines, listTodoQueue, parseSwarmManifest, partnerAgreementDoctorLine, partnerAgreementStatus, partnerContainerArgv, pauseRoutine, readFleetStatus, readPackaging, reviewHoldDoctorLine, runChatTurn, todoDoctorLine, runDemo, slackSignature, slackTurn, startPartnerContainer, stopPartnerContainer, verifySlackRequest, verifyTelegramRequest } from "./index.js";
 import { allowComputerUse, captureComputerFrame, checkComputerFrame, computerTabText, doctorComputerControlLine, doctorComputerFrameLine, doctorComputerRunLine } from "./computer-tab.js";
 import { doctorSharedMountLine } from "./fleet.js";
 import { doctorLastCheckLine } from "./last-check.js";
@@ -2667,6 +2667,51 @@ test("doctor names a missing partner agreement and does not print a block rule",
     assert.match(ready, /1 block rule/);
     assert.match(ready, /does not copy the file/);
     assert.doesNotMatch(ready, /password=hunter2/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("doctor names the last decided card and does not print the request", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-decision-doctor-"));
+  try {
+    assert.match(await doctorDecisionLine(root), /green Decisions: none/);
+    await mkdir(path.join(root, ".ocp"), { recursive: true });
+    await writeFile(
+      path.join(root, ".ocp/approvals.json"),
+      `${JSON.stringify({ cards: [{ id: "plan-1", kind: "plan", title: "Edit", detail: "password=hunter2", status: "pending" }] })}\n`,
+    );
+    const waiting = await doctorDecisionLine(root);
+    assert.match(waiting, /green Decisions: none/);
+    assert.doesNotMatch(waiting, /hunter2/);
+    await writeFile(
+      path.join(root, ".ocp/approvals.json"),
+      `${JSON.stringify({
+        cards: [
+          { id: "plan-1", kind: "plan", title: "Edit", detail: "password=hunter2", status: "pending" },
+          { id: "plan-2", kind: "plan", title: "Edit", detail: "password=hunter2", status: "denied", redirect: "password=hunter2" },
+        ],
+      })}\n`,
+    );
+    const denied = await doctorDecisionLine(root);
+    assert.match(denied, /yellow Decisions: session plan denied/);
+    assert.match(denied, /does not print the request/);
+    assert.doesNotMatch(denied, /hunter2/);
+    await isolatePartner(root, "coding");
+    await mkdir(path.join(root, ".ocp/fleet/coding/.ocp"), { recursive: true });
+    await writeFile(
+      path.join(root, ".ocp/fleet/coding/.ocp/approvals.json"),
+      `${JSON.stringify({ cards: [{ id: "computer-1", kind: "computer", title: "Start", detail: "open the page", status: "approved" }] })}\n`,
+    );
+    const mixed = await doctorDecisionLine(root);
+    assert.match(mixed, /yellow Decisions: session plan denied\. coding computer approved/);
+    assert.doesNotMatch(mixed, /open the page/);
+    const saved = await readFile(path.join(root, ".ocp/approvals.json"), "utf8");
+    assert.match(saved, /denied/);
+    await writeFile(path.join(root, ".ocp/fleet/coding/.ocp/approvals.json"), `${JSON.stringify({ cards: [{ kind: "computer", status: "password=hunter2" }] })}\n`);
+    const broken = await doctorDecisionLine(root);
+    assert.match(broken, /yellow Decisions: coding file could not be read/);
+    assert.doesNotMatch(broken, /hunter2/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

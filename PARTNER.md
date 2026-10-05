@@ -19,7 +19,7 @@ While `.ocp/sdlc/review-hold` exists, orchestration stands up one coding worker.
 
 ## Computer tab
 
-`ocp computer` shows the sandbox desktop: who has control, and the last frame path. There is no live pixel stream in this build. `ocp computer takeover` gives you the mouse and keyboard handoff. The partner does not run the browser while you hold it. `ocp computer return` gives control back. Starting the browser waits on an Approve card.
+`ocp computer` shows the sandbox desktop: who has control, and the last frame path. There is no live pixel stream in this build. `ocp computer --partner coding` shows that partner's own workspace. `ocp computer takeover` gives you the mouse and keyboard handoff. The partner does not run the browser while you hold it. `ocp computer return` gives control back. Starting the browser waits on an Approve card.
 
 ## Partner rules
 

@@ -6,7 +6,8 @@ import path from "node:path";
 import test from "node:test";
 import { routeWithPredict, type ManagerPlan } from "@opencodingpartner/policy";
 import { grepSandbox, listSandboxDir, writeSandboxFile } from "@opencodingpartner/workers";
-import { DEMO_MESSAGE, clearSessionMemory, runChatTurn, runDemo } from "./index.js";
+import { DEMO_MESSAGE, clearSessionMemory, isolatePartner, partnerContainerArgv, runChatTurn, runDemo } from "./index.js";
+import { computerTabText } from "./computer-tab.js";
 import { REVIEW_HOLD_CODING_CAP, rolesUnderReviewHold } from "./sdlc.js";
 
 test("chat stands up agents, writes, checks QA, gates security, and records GTM", async () => {
@@ -2042,6 +2043,37 @@ test("a partner computer waits for Approve, then a takeover blocks the browser",
     assert.equal(opened, 1);
     assert.match(blocked.transcript, /human has control/);
     assert.equal(blocked.computer?.actions.every((action) => action.executed === false), true);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a partner turn writes in its own workspace, not the shared session root", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-fleet-"));
+  try {
+    const turn = await runChatTurn({
+      message: "Use the coding worker to create hello.txt with content:\nhello\n",
+      sandboxRoot: root,
+      partnerId: "coding",
+    });
+    assert.equal(turn.coding?.wrote, true);
+    assert.equal(await readFile(path.join(root, ".ocp/fleet/coding/hello.txt"), "utf8"), "hello\n");
+    await assert.rejects(readFile(path.join(root, "hello.txt"), "utf8"));
+    const tab = await computerTabText(path.join(root, ".ocp/fleet/coding"));
+    assert.match(tab, /Partner: coding/);
+    assert.match(tab, /Desktop: partner sandbox/);
+    assert.match(tab, /Fleet: coding/);
+    const mount = JSON.parse(await readFile(path.join(root, ".ocp/fleet/coding/.ocp/mount.json"), "utf8")) as { shared: string; mode: string };
+    assert.equal(mount.shared, "/shared");
+    assert.equal(mount.mode, "read-only");
+    const argv = partnerContainerArgv(root, "coding");
+    assert.equal(argv[0], "docker");
+    assert.ok(argv.includes("/workspace"));
+    assert.ok(argv.some((part) => part.endsWith(":/shared:ro")));
+    await isolatePartner(root, "qa");
+    const fleet = await computerTabText(path.join(root, ".ocp/fleet/coding"));
+    assert.match(fleet, /Fleet: coding, qa/);
+    await assert.rejects(isolatePartner(root, "../escape"));
   } finally {
     await rm(root, { recursive: true, force: true });
   }

@@ -27,6 +27,8 @@ import {
 } from "./sdlc.js";
 import { allowComputerUse, computerTabText, markComputerLive, readComputerTab } from "./computer-tab.js";
 export { computerTabText, returnComputer, takeoverComputer } from "./computer-tab.js";
+export { fleetIds, isolatePartner, partnerContainerArgv, partnerWorkspace, readPartnerIdentity } from "./fleet.js";
+import { isolatePartner as openPartnerWorkspace } from "./fleet.js";
 import {
   applyUnifiedDiff,
   commandDecision,
@@ -97,6 +99,8 @@ export interface ChatTurnInput {
   computerUrl?: string;
   /** When set, only these hosts (and their subdomains) may be opened. */
   computerAllowHosts?: readonly string[];
+  /** When set, this turn uses that partner's own workspace, not the shared session root. */
+  partnerId?: string;
   /** Gateway `write` tool. Set when the product talks to OpenClaw. This process does not write the bytes. */
   openclawWrite?: (relativePath: string, content: string) => Promise<{ ok: boolean; detail: string }>;
   /** Gateway delete tool. `missing` means the plugin is absent and a local delete is allowed. */
@@ -180,6 +184,10 @@ function codingVia(input: ChatTurnInput): CodingVia {
 }
 
 async function executeTurn(input: ChatTurnInput, session: SwarmSession, key: string): Promise<ChatTurnResult> {
+  if (input.partnerId) {
+    const workspace = await openPartnerWorkspace(input.sandboxRoot, input.partnerId);
+    input = { ...input, sandboxRoot: workspace };
+  }
   const decision = input.layaPredict ? await input.layaPredict(input.message) : routeMessage(input.message);
   const swarm = new OrchestrationSwarm(session);
   const instruction = parseCreateFileInstruction(input.message);

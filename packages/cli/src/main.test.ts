@@ -142,6 +142,10 @@ test("ocp computer shows the sandbox tab and takeover", async () => {
     captured = "";
     assert.equal(await main(["computer", "--sandbox", root, "return"]), 0);
     assert.match(captured, /Control: partner/);
+    captured = "";
+    assert.equal(await main(["computer", "--sandbox", root, "--partner", "coding"]), 0);
+    assert.match(captured, /Partner: coding/);
+    assert.match(captured, /Desktop: partner sandbox/);
   } finally {
     process.stdout.write = original;
     rmSync(root, { recursive: true, force: true });

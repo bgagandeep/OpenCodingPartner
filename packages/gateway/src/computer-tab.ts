@@ -1,5 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { fleetIds, readPartnerIdentity } from "./fleet.js";
 
 export interface ComputerTabState {
   desktop: "sandbox";
@@ -76,12 +77,16 @@ async function lastFrame(sandboxRoot: string): Promise<string> {
 export async function computerTabText(sandboxRoot: string): Promise<string> {
   const state = await readComputerTab(sandboxRoot);
   const frame = await lastFrame(sandboxRoot);
-  return [
-    "Computer tab",
-    "Desktop: sandbox",
-    `Control: ${state.control}`,
-    `Status: ${state.status}`,
-    `Last frame: ${frame}`,
-    "Live stream: not in this build",
-  ].join("\n");
+  const identity = await readPartnerIdentity(sandboxRoot);
+  const lines = ["Computer tab"];
+  if (identity) {
+    lines.push(`Partner: ${identity.id}`);
+    lines.push("Desktop: partner sandbox");
+    const fleet = await fleetIds(sandboxRoot);
+    if (fleet.length > 0) lines.push(`Fleet: ${fleet.join(", ")}`);
+  } else {
+    lines.push("Desktop: sandbox");
+  }
+  lines.push(`Control: ${state.control}`, `Status: ${state.status}`, `Last frame: ${frame}`, "Live stream: not in this build");
+  return lines.join("\n");
 }

@@ -1,6 +1,7 @@
 import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { AgentRole } from "@opencodingpartner/mesh";
+import { sharedMountSource } from "./fleet.js";
 
 /** One coding worker may stand up while a review hold is on disk. */
 export const REVIEW_HOLD_CODING_CAP = 1;
@@ -317,15 +318,20 @@ export async function formatApproveCards(sandboxRoot: string): Promise<string> {
     .join("\n");
 }
 
-/** `PARTNER.rules` at the sandbox root, then `.ocp/rules`. Both apply. */
+/** `PARTNER.rules` at the sandbox root, then `.ocp/rules`. A partner also reads those files from the shared session. This does not copy them. */
 export async function loadPartnerRules(sandboxRoot: string): Promise<string> {
+  const roots = [sandboxRoot];
+  const shared = await sharedMountSource(sandboxRoot);
+  if (shared && path.resolve(shared) !== path.resolve(sandboxRoot)) roots.push(shared);
   const parts: string[] = [];
-  for (const relative of ["PARTNER.rules", path.join(".ocp", "rules")]) {
-    try {
-      const text = (await readFile(path.join(sandboxRoot, relative), "utf8")).trim();
-      if (text) parts.push(text);
-    } catch {
-      // That rules file is optional.
+  for (const root of roots) {
+    for (const relative of ["PARTNER.rules", path.join(".ocp", "rules")]) {
+      try {
+        const text = (await readFile(path.join(root, relative), "utf8")).trim();
+        if (text) parts.push(text);
+      } catch {
+        // That rules file is optional.
+      }
     }
   }
   return parts.join("\n");

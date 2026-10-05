@@ -26,6 +26,7 @@ export async function runDoctor(deps: DoctorDeps): Promise<DoctorReport> {
   lines.push(await pluginLine(deps.repoRoot));
   lines.push(playwrightLine(deps.playwrightPresent === true));
   lines.push(slackLine(deps.env));
+  lines.push(telegramLine(deps.env));
   lines.push("Prove-it: pnpm exec ocp chat --sandbox .sandbox \"Use the coding worker to create hello.txt with content:");
   lines.push("hello");
   lines.push("\"");
@@ -82,6 +83,12 @@ async function pluginLine(repoRoot: string): Promise<string> {
   } catch {
     return "red Write bridge plugin: integrations/openclaw-sandbox-write is missing. The gateway cannot invoke ocp_sandbox_write until that plugin is present.";
   }
+}
+
+function telegramLine(env: NodeJS.ProcessEnv): string {
+  const missing = [env.TELEGRAM_BOT_TOKEN ? "" : "TELEGRAM_BOT_TOKEN", env.TELEGRAM_WEBHOOK_SECRET ? "" : "TELEGRAM_WEBHOOK_SECRET"].filter((name) => name.length > 0);
+  if (missing.length === 0) return "green Telegram: bot token and webhook secret are set. The values are not printed.";
+  return `yellow Telegram: missing ${missing.join(", ")}. The offline channel path still runs.`;
 }
 
 function slackLine(env: NodeJS.ProcessEnv): string {

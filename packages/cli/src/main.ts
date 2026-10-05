@@ -6,7 +6,7 @@ import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 import { codingRunnerForEnv, appendViaOpenClaw, copyViaOpenClaw, deleteViaOpenClaw, discoverStack, mkdirViaOpenClaw, predictWithLaya, renameViaOpenClaw, rmdirViaOpenClaw, runConnectedPath, runDoctor, sendOrchestrationTurn, startSandboxWriteBridge, writeViaOpenClaw } from "@opencodingpartner/bundle";
 import { access, copyFile, mkdir, readFile } from "node:fs/promises";
-import { acpOptIn, applySwarmManifest, captureComputerFrame, checkComputerFrame, computerTabText, createRoutine, fireDueRoutines, fireEvent, formatRoutineList, formatSettings, isolatePartner, listRoutines, parseSwarmManifest, pauseRoutine, postSlackReply, readPackaging, resumeRoutine, returnComputer, runChatTurn, runDemo, slackCredentialStatus, slackTurn, startPartnerContainer, stopPartnerContainer, takeoverComputer, telegramTurn, validateSwarmManifest, type ChatTurnInput } from "@opencodingpartner/gateway";
+import { acpOptIn, applySwarmManifest, captureComputerFrame, checkComputerFrame, computerTabText, createRoutine, fireDueRoutines, fireEvent, formatRoutineList, formatSettings, isolatePartner, listRoutines, parseSwarmManifest, pauseRoutine, postSlackReply, postTelegramReply, readPackaging, resumeRoutine, returnComputer, runChatTurn, runDemo, slackCredentialStatus, slackTurn, startPartnerContainer, stopPartnerContainer, takeoverComputer, telegramCredentialStatus, telegramTurn, validateSwarmManifest, type ChatTurnInput } from "@opencodingpartner/gateway";
 import { playwrightBrowserDriver } from "@opencodingpartner/workers";
 import { routeWithPredict } from "@opencodingpartner/policy";
 import { proveCoding, proveComputer } from "./prove.js";
@@ -215,6 +215,15 @@ export async function main(argv: readonly string[]): Promise<number> {
         process.stdout.write(`Slack live: missing ${creds.missing.join(", ")}. The offline turn still ran.\n`);
       } else {
         const posted = await postSlackReply(process.env.SLACK_BOT_TOKEN ?? "", channel.value, result.reply, "");
+        if (!posted.ok) process.stdout.write(`${posted.detail}\n`);
+      }
+    }
+    if (kind === "telegram") {
+      const creds = telegramCredentialStatus(process.env);
+      if (!creds.ready) {
+        process.stdout.write(`Telegram live: missing ${creds.missing.join(", ")}. The offline turn still ran.\n`);
+      } else {
+        const posted = await postTelegramReply(process.env.TELEGRAM_BOT_TOKEN ?? "", channel.value, result.reply, "");
         if (!posted.ok) process.stdout.write(`${posted.detail}\n`);
       }
     }

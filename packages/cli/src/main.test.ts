@@ -121,6 +121,33 @@ test("ocp prove computer passes with a fake browser and does not print a key", a
   }
 });
 
+test("ocp computer shows the sandbox tab and takeover", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "ocp-computer-tab-"));
+  let captured = "";
+  const original = process.stdout.write.bind(process.stdout);
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    captured += String(chunk);
+    return true;
+  }) as typeof process.stdout.write;
+  try {
+    assert.equal(await main(["computer", "--sandbox", root]), 0);
+    assert.match(captured, /Computer tab/);
+    assert.match(captured, /Desktop: sandbox/);
+    assert.match(captured, /Control: partner/);
+    assert.match(captured, /Last frame: none/);
+    assert.match(captured, /Live stream: not in this build/);
+    captured = "";
+    assert.equal(await main(["computer", "--sandbox", root, "takeover"]), 0);
+    assert.match(captured, /Control: human/);
+    captured = "";
+    assert.equal(await main(["computer", "--sandbox", root, "return"]), 0);
+    assert.match(captured, /Control: partner/);
+  } finally {
+    process.stdout.write = original;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("the cli file is the ocp entry when spawned", () => {
   const root = mkdtempSync(path.join(tmpdir(), "ocp-spawn-"));
   try {

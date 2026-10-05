@@ -22,7 +22,7 @@ export async function partnerAgreementOn(sandboxRoot: string): Promise<boolean> 
 
 export interface ApproveCard {
   id: string;
-  kind: "plan";
+  kind: "plan" | "computer";
   title: string;
   detail: string;
   status: "pending" | "approved" | "denied" | "redirected";
@@ -133,13 +133,34 @@ export async function pendingPlanCard(sandboxRoot: string): Promise<ApproveCard 
   return cards.find((card) => card.kind === "plan" && card.status === "pending");
 }
 
+/** One pending computer card. Starting the browser waits on this card. */
+export async function queueComputerCard(sandboxRoot: string, detail: string): Promise<ApproveCard> {
+  const cards = await readCards(sandboxRoot);
+  const pending = cards.find((card) => card.kind === "computer" && card.status === "pending");
+  if (pending) {
+    pending.detail = detail;
+    await writeCards(sandboxRoot, cards);
+    return pending;
+  }
+  const card: ApproveCard = {
+    id: `computer-${cards.length + 1}`,
+    kind: "computer",
+    title: "Start the sandbox browser",
+    detail,
+    status: "pending",
+  };
+  cards.push(card);
+  await writeCards(sandboxRoot, cards);
+  return card;
+}
+
 export async function decidePlanCard(
   sandboxRoot: string,
   status: "approved" | "denied" | "redirected",
   redirect?: string,
 ): Promise<ApproveCard | undefined> {
   const cards = await readCards(sandboxRoot);
-  const pending = cards.find((card) => card.kind === "plan" && card.status === "pending");
+  const pending = cards.find((card) => card.status === "pending");
   if (!pending) return undefined;
   pending.status = status;
   if (redirect) pending.redirect = redirect;

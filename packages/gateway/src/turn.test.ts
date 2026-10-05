@@ -7,7 +7,7 @@ import test from "node:test";
 import { routeWithPredict, type ManagerPlan } from "@opencodingpartner/policy";
 import { applySandboxTodo, grepSandbox, listSandboxDir, writeSandboxFile } from "@opencodingpartner/workers";
 import { DEMO_MESSAGE, applySwarmManifest, approveDoctorLine, clearSessionMemory, coreIsOpen, createRoutine, deliverSlackEvent, deliverTelegramUpdate, fireDueRoutines, fireEvent, formatApproveQueue, formatFleetStatus, formatFleetStatusJson, formatReviewHolds, formatTodoQueue, isolatePartner, listApproveQueue, listReviewHolds, listRoutines, listTodoQueue, parseSwarmManifest, partnerAgreementDoctorLine, partnerAgreementStatus, partnerContainerArgv, pauseRoutine, readFleetStatus, readPackaging, reviewHoldDoctorLine, runChatTurn, todoDoctorLine, runDemo, slackSignature, slackTurn, startPartnerContainer, stopPartnerContainer, verifySlackRequest, verifyTelegramRequest } from "./index.js";
-import { allowComputerUse, captureComputerFrame, checkComputerFrame, computerTabText, doctorComputerFrameLine } from "./computer-tab.js";
+import { allowComputerUse, captureComputerFrame, checkComputerFrame, computerTabText, doctorComputerFrameLine, doctorComputerRunLine } from "./computer-tab.js";
 import { REVIEW_HOLD_CODING_CAP, rolesUnderReviewHold } from "./sdlc.js";
 
 test("chat stands up agents, writes, checks QA, gates security, and records GTM", async () => {
@@ -2704,6 +2704,46 @@ test("fleet start dry-run and a missing Docker do not claim a running container"
     });
     assert.equal(stopped.ok, true);
     assert.match(await computerTabText(path.join(root, ".ocp/fleet/coding")), /Container: stopped/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("doctor names a failed page check and does not print the page", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-doctor-run-"));
+  try {
+    const none = await doctorComputerRunLine(root);
+    assert.match(none, /yellow Computer run: none/);
+    assert.match(none, /does not open a page/);
+    await mkdir(path.join(root, "gtm"), { recursive: true });
+    await writeFile(
+      path.join(root, "gtm/last-run.json"),
+      `${JSON.stringify({
+        url: "https://example.com/?token=password=hunter2",
+        title: "password=hunter2",
+        steps: [{ kind: "click", executed: true, passed: false, reason: "password=hunter2" }],
+      })}\n`,
+    );
+    const failed = await doctorComputerRunLine(root);
+    assert.match(failed, /yellow Computer run: the last page check failed at click/);
+    assert.match(failed, /does not open a page/);
+    assert.doesNotMatch(failed, /password=hunter2/);
+    assert.doesNotMatch(failed, /example.com/);
+    await mkdir(path.join(root, ".ocp/fleet/coding/.ocp"), { recursive: true });
+    await mkdir(path.join(root, ".ocp/fleet/coding/gtm"), { recursive: true });
+    await writeFile(path.join(root, ".ocp/fleet/coding/.ocp/identity.json"), `${JSON.stringify({ id: "coding" })}\n`);
+    await writeFile(
+      path.join(root, "gtm/last-run.json"),
+      `${JSON.stringify({ steps: [{ kind: "click", executed: true, passed: true }] })}\n`,
+    );
+    await writeFile(
+      path.join(root, ".ocp/fleet/coding/gtm/last-run.json"),
+      `${JSON.stringify({ steps: [{ kind: "hover", executed: true, passed: false, reason: "secret" }] })}\n`,
+    );
+    const partner = await doctorComputerRunLine(root);
+    assert.match(partner, /yellow Computer run: the last page check passed/);
+    assert.match(partner, /coding failed at hover/);
+    assert.doesNotMatch(partner, /secret/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

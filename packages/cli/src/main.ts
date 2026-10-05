@@ -892,6 +892,60 @@ export async function main(argv: readonly string[]): Promise<number> {
     process.stdout.write("patched\n");
     return 0;
   }
+  if (command === "replace") {
+    const sand = takeFlag(tail, "--sandbox");
+    const sandbox = sand.value ?? ".sandbox";
+    const partner = takeFlag(sand.rest, "--partner");
+    const textFlag = takeFlag(partner.rest, "--text");
+    const relative = textFlag.rest.join(" ").trim();
+    if (textFlag.value === undefined || textFlag.value.length === 0 || !relative) {
+      process.stdout.write("Usage: ocp replace --text \"...\" [--sandbox .sandbox] [--partner name] path\n");
+      return 2;
+    }
+    if (refusedSandboxRead(relative)) {
+      process.stdout.write("path refused\n");
+      return 1;
+    }
+    let root = sandbox;
+    try {
+      if (partner.value) root = await isolatePartner(sandbox, partner.value);
+    } catch (error) {
+      process.stdout.write(`${error instanceof Error ? error.message : "partner refused"}\n`);
+      return 1;
+    }
+    if (textFlag.value.includes("\0")) {
+      process.stdout.write("not a text file\n");
+      return 1;
+    }
+    const gate = securityGate({ relativePath: relative, content: textFlag.value, sandboxRoot: root });
+    if (!gate.allow) {
+      process.stdout.write(`${redactListName(`blocked (${gate.reasons.join(", ")})`)}\n`);
+      return 1;
+    }
+    try {
+      const info = await stat(path.join(root, relative));
+      if (info.isDirectory()) {
+        process.stdout.write("path is a directory\n");
+        return 1;
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        process.stdout.write("file missing\n");
+        return 1;
+      }
+      process.stdout.write("path could not be checked\n");
+      return 1;
+    }
+    const existing = await readFile(path.join(root, relative), "utf8");
+    const existingGate = securityGate({ relativePath: relative, content: existing, sandboxRoot: root });
+    if (!existingGate.allow) {
+      process.stdout.write(`${redactListName(`blocked (${existingGate.reasons.join(", ")})`)}\n`);
+      return 1;
+    }
+    await writeSandboxFile(root, relative, textFlag.value);
+    process.stdout.write("replaced\n");
+    return 0;
+  }
   if (command === "doctor") {
     const sand = takeFlag(tail, "--sandbox");
     const sandbox = sand.value ?? ".sandbox";
@@ -991,7 +1045,7 @@ export async function main(argv: readonly string[]): Promise<number> {
     return 0;
   }
   process.stdout.write(
-    "Open Coding Partner chat\n\n  ocp chat --sandbox .sandbox\n  ocp chat --sandbox .sandbox \"Use the coding worker to create hello.txt with content:\nhello\n\"\n  ocp chat --sandbox .sandbox --computer-execute \"Open https://example.com\"\n  ocp demo --sandbox .sandbox\n  ocp doctor\n  ocp check --sandbox .sandbox\n  ocp read --sandbox .sandbox path\n  ocp list --sandbox .sandbox\n  ocp grep --text \"...\" --sandbox .sandbox\n  ocp glob --pattern \"*.txt\" --sandbox .sandbox\n  ocp git status --sandbox .sandbox\n  ocp git log --sandbox .sandbox\n  ocp git diff --sandbox .sandbox\n  ocp git show --sandbox .sandbox path\n  ocp turns --sandbox .sandbox\n  ocp append --text \"...\" --sandbox .sandbox path\n  ocp mkdir --sandbox .sandbox path\n  ocp delete --sandbox .sandbox path\n  ocp rmdir --sandbox .sandbox path\n  ocp rename --from path --to path --sandbox .sandbox\n  ocp copy --from path --to path --sandbox .sandbox\n  ocp write --text \"...\" --sandbox .sandbox path\n  ocp patch --text \"...\" --sandbox .sandbox path\n  ocp prove coding\n  ocp prove computer\n  ocp computer --sandbox .sandbox\n  ocp computer --sandbox .sandbox takeover\n  ocp computer --sandbox .sandbox return\n  ocp computer --sandbox .sandbox qa\n\nThe Computer tab shows the sandbox desktop status and the last frame path. There is no live pixel stream in this build. takeover hands the browser to you. return hands it back to the partner. ocp computer qa checks the frame file and does not open a page.\nOrchestration owns the session plan. After it accepts the plan, it invokes the sandbox write bridge. The transcript says Write path: orchestration. Delete and rename use the same bridge when the gateway drove the turn. When the gateway is down, the transcript says Write path: local sandbox. fs_write, apply_patch, and sessions_spawn stay blocked.\nThe computer agent opens a browser only with --computer-execute or OCP_COMPUTER_EXECUTE=1, and only after an Approve card when the sandbox has PARTNER.md. It opens a named http(s) URL, reads the screen, and types into one selector when you ask. A live stream is not in this build.\n",
+    "Open Coding Partner chat\n\n  ocp chat --sandbox .sandbox\n  ocp chat --sandbox .sandbox \"Use the coding worker to create hello.txt with content:\nhello\n\"\n  ocp chat --sandbox .sandbox --computer-execute \"Open https://example.com\"\n  ocp demo --sandbox .sandbox\n  ocp doctor\n  ocp check --sandbox .sandbox\n  ocp read --sandbox .sandbox path\n  ocp list --sandbox .sandbox\n  ocp grep --text \"...\" --sandbox .sandbox\n  ocp glob --pattern \"*.txt\" --sandbox .sandbox\n  ocp git status --sandbox .sandbox\n  ocp git log --sandbox .sandbox\n  ocp git diff --sandbox .sandbox\n  ocp git show --sandbox .sandbox path\n  ocp turns --sandbox .sandbox\n  ocp append --text \"...\" --sandbox .sandbox path\n  ocp mkdir --sandbox .sandbox path\n  ocp delete --sandbox .sandbox path\n  ocp rmdir --sandbox .sandbox path\n  ocp rename --from path --to path --sandbox .sandbox\n  ocp copy --from path --to path --sandbox .sandbox\n  ocp write --text \"...\" --sandbox .sandbox path\n  ocp patch --text \"...\" --sandbox .sandbox path\n  ocp replace --text \"...\" --sandbox .sandbox path\n  ocp prove coding\n  ocp prove computer\n  ocp computer --sandbox .sandbox\n  ocp computer --sandbox .sandbox takeover\n  ocp computer --sandbox .sandbox return\n  ocp computer --sandbox .sandbox qa\n\nThe Computer tab shows the sandbox desktop status and the last frame path. There is no live pixel stream in this build. takeover hands the browser to you. return hands it back to the partner. ocp computer qa checks the frame file and does not open a page.\nOrchestration owns the session plan. After it accepts the plan, it invokes the sandbox write bridge. The transcript says Write path: orchestration. Delete and rename use the same bridge when the gateway drove the turn. When the gateway is down, the transcript says Write path: local sandbox. fs_write, apply_patch, and sessions_spawn stay blocked.\nThe computer agent opens a browser only with --computer-execute or OCP_COMPUTER_EXECUTE=1, and only after an Approve card when the sandbox has PARTNER.md. It opens a named http(s) URL, reads the screen, and types into one selector when you ask. A live stream is not in this build.\n",
   );
   return command === undefined || command === "--help" || command === "-h" ? 0 : 2;
 }

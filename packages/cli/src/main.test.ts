@@ -912,6 +912,62 @@ test("ocp git show prints a committed file and hides a secret line", async () =>
   }
 });
 
+test("ocp turns lists stored outcomes and does not print the request", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "ocp-turns-"));
+  let captured = "";
+  const original = process.stdout.write.bind(process.stdout);
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    captured += String(chunk);
+    return true;
+  }) as typeof process.stdout.write;
+  try {
+    const { mkdirSync, writeFileSync } = await import("node:fs");
+    assert.equal(await main(["turns", "--sandbox", root]), 0);
+    assert.match(captured, /Turns: none/);
+    mkdirSync(path.join(root, ".ocp"), { recursive: true });
+    writeFileSync(
+      path.join(root, ".ocp/prior-turns.json"),
+      `${JSON.stringify({ turns: ["User: please add password=hunter2 to the note Outcome: Wrote hello.txt. QA pass."] }, null, 2)}\n`,
+    );
+    captured = "";
+    assert.equal(await main(["turns", "--sandbox", root]), 0);
+    assert.match(captured, /Wrote hello\.txt\. QA pass\./);
+    assert.doesNotMatch(captured, /please add/);
+    assert.doesNotMatch(captured, /hunter2/);
+    writeFileSync(
+      path.join(root, ".ocp/prior-turns.json"),
+      `${JSON.stringify({ turns: ["User: add the note Outcome: Wrote password=hunter2. QA fail."] }, null, 2)}\n`,
+    );
+    captured = "";
+    assert.equal(await main(["turns", "--sandbox", root]), 0);
+    assert.match(captured, /\[redacted\]/);
+    assert.doesNotMatch(captured, /hunter2/);
+    assert.doesNotMatch(captured, /add the note/);
+    writeFileSync(path.join(root, ".ocp/prior-turns.json"), "{ not json password=hunter2\n");
+    captured = "";
+    assert.equal(await main(["turns", "--sandbox", root]), 1);
+    assert.match(captured, /Turns: unreadable/);
+    assert.doesNotMatch(captured, /hunter2/);
+    assert.doesNotMatch(captured, /not json/);
+    mkdirSync(path.join(root, ".ocp/fleet/coding/.ocp"), { recursive: true });
+    writeFileSync(
+      path.join(root, ".ocp/fleet/coding/.ocp/prior-turns.json"),
+      `${JSON.stringify({ turns: ["User: partner request Outcome: Wrote note.txt. QA pass."] }, null, 2)}\n`,
+    );
+    captured = "";
+    assert.equal(await main(["turns", "--sandbox", root, "--partner", "coding"]), 0);
+    assert.match(captured, /Wrote note\.txt\. QA pass\./);
+    assert.doesNotMatch(captured, /partner request/);
+    assert.doesNotMatch(captured, /Wrote hello\.txt/);
+    captured = "";
+    assert.equal(await main(["turns", "--sandbox", root, "extra"]), 2);
+    assert.match(captured, /Usage: ocp turns/);
+  } finally {
+    process.stdout.write = original;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("ocp fleet status lists a partner and can print json", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "ocp-fleet-cli-"));
   let captured = "";

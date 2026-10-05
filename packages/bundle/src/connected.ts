@@ -306,6 +306,30 @@ export async function copyViaOpenClaw(
 }
 
 /**
+ * Ask the gateway to invoke the todo bridge. This function does not update the list.
+ * A missing plugin returns missing so the turn can update the list locally. A refusal does not update it locally.
+ */
+export async function todoViaOpenClaw(
+  deps: ConnectedDeps,
+  sandboxRoot: string,
+  action: string,
+  content: string,
+): Promise<OpenClawFileResult> {
+  if (action !== "add" && action !== "complete") {
+    return { ok: false, missing: false, detail: "todo action refused" };
+  }
+  if (action === "add") {
+    const body = content.trim();
+    if (!body || body.includes("\0") || body.includes("../") || body.startsWith("/") || body.startsWith("\\")) {
+      return { ok: false, missing: false, detail: "todo text refused" };
+    }
+    const gate = securityGate({ relativePath: "todo.txt", content: body, sandboxRoot });
+    if (!gate.allow) return { ok: false, missing: false, detail: `blocked (${gate.reasons.join(", ")})` };
+  }
+  return invokeSandboxAction(deps, sandboxRoot, "ocp_sandbox_todo", "/todo", { action, content });
+}
+
+/**
  * Ask the gateway to invoke the append bridge. This function does not append the text.
  * A missing plugin returns missing so the turn can append locally. A refusal does not append locally.
  */
@@ -338,8 +362,8 @@ export async function renameViaOpenClaw(
 async function invokeSandboxAction(
   deps: ConnectedDeps,
   sandboxRoot: string,
-  tool: "ocp_sandbox_delete" | "ocp_sandbox_rename" | "ocp_sandbox_mkdir" | "ocp_sandbox_rmdir" | "ocp_sandbox_copy" | "ocp_sandbox_append",
-  actionPath: "/delete" | "/rename" | "/mkdir" | "/rmdir" | "/copy" | "/append",
+  tool: "ocp_sandbox_delete" | "ocp_sandbox_rename" | "ocp_sandbox_mkdir" | "ocp_sandbox_rmdir" | "ocp_sandbox_copy" | "ocp_sandbox_append" | "ocp_sandbox_todo",
+  actionPath: "/delete" | "/rename" | "/mkdir" | "/rmdir" | "/copy" | "/append" | "/todo",
   args: Record<string, string>,
   ...paths: string[]
 ): Promise<OpenClawFileResult> {
@@ -369,14 +393,14 @@ async function invokeSandboxAction(
   return { ok: false, missing: false, detail: bridged.detail };
 }
 
-const GATEWAY_TOOLS = new Set(["ocp_sandbox_write", "ocp_sandbox_delete", "ocp_sandbox_rename", "ocp_sandbox_mkdir", "ocp_sandbox_rmdir", "ocp_sandbox_copy", "ocp_sandbox_append", "write"]);
+const GATEWAY_TOOLS = new Set(["ocp_sandbox_write", "ocp_sandbox_delete", "ocp_sandbox_rename", "ocp_sandbox_mkdir", "ocp_sandbox_rmdir", "ocp_sandbox_copy", "ocp_sandbox_append", "ocp_sandbox_todo", "write"]);
 
 async function invokeGatewayTool(
   deps: ConnectedDeps,
   gatewayHttp: string,
   exec: NonNullable<ConnectedDeps["exec"]>,
   fetchImpl: typeof fetch,
-  tool: "ocp_sandbox_write" | "ocp_sandbox_delete" | "ocp_sandbox_rename" | "ocp_sandbox_mkdir" | "ocp_sandbox_rmdir" | "ocp_sandbox_copy" | "ocp_sandbox_append" | "write",
+  tool: "ocp_sandbox_write" | "ocp_sandbox_delete" | "ocp_sandbox_rename" | "ocp_sandbox_mkdir" | "ocp_sandbox_rmdir" | "ocp_sandbox_copy" | "ocp_sandbox_append" | "ocp_sandbox_todo" | "write",
   args: Record<string, string>,
 ): Promise<{ ok: boolean; missing: boolean; detail: string }> {
   if (!GATEWAY_TOOLS.has(tool)) {

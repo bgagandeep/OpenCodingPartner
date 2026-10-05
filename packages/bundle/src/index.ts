@@ -9,6 +9,7 @@ export {
   mkdirViaOpenClaw,
   rmdirViaOpenClaw,
   appendViaOpenClaw,
+  todoViaOpenClaw,
   copyViaOpenClaw,
   renameViaOpenClaw,
   writeViaOpenClaw,
@@ -20,5 +21,5 @@ export { predictWithLaya } from "./laya.js";
 export { installBundle, installPlan } from "./install.js";
 export { probeLiveStack, type LiveProbe } from "./live.js";
 export { loadPins, type StackPins } from "./pins.js";
-export { applyBridgeAppend, applyBridgeCopy, applyBridgeDelete, applyBridgeMkdir, applyBridgeRename, applyBridgeRmdir, applyBridgeWrite, startSandboxWriteBridge } from "./write-bridge.js";
+export { applyBridgeAppend, applyBridgeCopy, applyBridgeDelete, applyBridgeMkdir, applyBridgeRename, applyBridgeRmdir, applyBridgeTodo, applyBridgeWrite, startSandboxWriteBridge } from "./write-bridge.js";
 export { computerFrameLine, dockerLine, runDoctor, type DoctorReport } from "./doctor.js";

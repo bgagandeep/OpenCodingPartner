@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { routeWithPredict, type ManagerPlan } from "@opencodingpartner/policy";
-import { grepSandbox, listSandboxDir, writeSandboxFile } from "@opencodingpartner/workers";
+import { applySandboxTodo, grepSandbox, listSandboxDir, writeSandboxFile } from "@opencodingpartner/workers";
 import { DEMO_MESSAGE, applySwarmManifest, approveDoctorLine, clearSessionMemory, coreIsOpen, createRoutine, deliverSlackEvent, deliverTelegramUpdate, fireDueRoutines, fireEvent, formatApproveQueue, formatFleetStatus, formatFleetStatusJson, isolatePartner, listApproveQueue, listRoutines, parseSwarmManifest, partnerContainerArgv, pauseRoutine, readFleetStatus, readPackaging, runChatTurn, runDemo, slackSignature, slackTurn, startPartnerContainer, stopPartnerContainer, verifySlackRequest, verifyTelegramRequest } from "./index.js";
 import { allowComputerUse, captureComputerFrame, checkComputerFrame, computerTabText } from "./computer-tab.js";
 import { REVIEW_HOLD_CODING_CAP, rolesUnderReviewHold } from "./sdlc.js";
@@ -1123,6 +1123,102 @@ test("a missing OpenClaw append plugin falls back to the local sandbox", async (
     assert.match(turn.transcript, /Append path: local sandbox/);
     assert.doesNotMatch(turn.transcript, /Append path: orchestration/);
     assert.equal(await readFile(path.join(root, "src/note.ts"), "utf8"), "one\ntwo\n");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("an orchestration turn updates the todo list through the bridge", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-remote-todo-"));
+  try {
+    const calls: string[] = [];
+    const turn = await runChatTurn({
+      message: "fix the checklist",
+      sandboxRoot: root,
+      orchestration: async () => ({
+        state: "ran",
+        driver: "openclaw",
+        detail: "Session agent:board:main accepted the plan.",
+      }),
+      grokRunner: {
+        async run() {
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify({
+              done: true,
+              steps: [
+                { tool: "todo", action: "add", content: "write the test" },
+                { tool: "todo", action: "complete", content: "1" },
+                { tool: "todo", action: "add", content: "password=hunter2" },
+              ],
+            }),
+          };
+        },
+      },
+      openclawTodo: async (action, content) => {
+        calls.push(`${action} ${content}`);
+        const changed = await applySandboxTodo(root, action, content);
+        return { ok: changed.ok, missing: false, detail: changed.detail };
+      },
+    });
+    assert.deepEqual(calls, ["add write the test", "complete 1", "add password=hunter2"]);
+    assert.match(turn.transcript, /Todo path: orchestration/);
+    assert.match(turn.transcript, /Todo: complete 1/);
+    assert.match(turn.transcript, /blocked/);
+    assert.doesNotMatch(turn.transcript, /Todo path: local sandbox/);
+    const stored = JSON.parse(await readFile(path.join(root, ".ocp/todos.json"), "utf8")) as { todos: { text: string; done: boolean }[] };
+    assert.equal(stored.todos.length, 1);
+    assert.equal(stored.todos[0]?.text, "write the test");
+    assert.equal(stored.todos[0]?.done, true);
+
+    const blocked = await mkdtemp(path.join(tmpdir(), "ocp-todo-refuse-"));
+    const refused = await runChatTurn({
+      message: "fix the checklist",
+      sandboxRoot: blocked,
+      orchestration: async () => ({
+        state: "ran",
+        driver: "openclaw",
+        detail: "Session agent:board:main accepted the plan.",
+      }),
+      grokRunner: {
+        async run() {
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify({ done: true, steps: [{ tool: "todo", action: "add", content: "write the test" }] }),
+          };
+        },
+      },
+      openclawTodo: async () => ({ ok: false, missing: false, detail: "refused" }),
+    });
+    assert.doesNotMatch(refused.transcript, /Todo path: local sandbox/);
+    assert.doesNotMatch(refused.transcript, /Todo path: orchestration/);
+    await assert.rejects(readFile(path.join(blocked, ".ocp/todos.json"), "utf8"));
+    await rm(blocked, { recursive: true, force: true });
+
+    const fallback = await mkdtemp(path.join(tmpdir(), "ocp-todo-fallback-"));
+    const local = await runChatTurn({
+      message: "fix the checklist",
+      sandboxRoot: fallback,
+      orchestration: async () => ({
+        state: "ran",
+        driver: "openclaw",
+        detail: "Session agent:board:main accepted the plan.",
+      }),
+      grokRunner: {
+        async run() {
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify({ done: true, steps: [{ tool: "todo", action: "add", content: "write the test" }] }),
+          };
+        },
+      },
+      openclawTodo: async () => ({ ok: false, missing: true, detail: "plugin missing" }),
+    });
+    assert.match(local.transcript, /Todo path: local sandbox/);
+    assert.doesNotMatch(local.transcript, /Todo path: orchestration/);
+    const fallbackStored = JSON.parse(await readFile(path.join(fallback, ".ocp/todos.json"), "utf8")) as { todos: { text: string }[] };
+    assert.equal(fallbackStored.todos[0]?.text, "write the test");
+    await rm(fallback, { recursive: true, force: true });
   } finally {
     await rm(root, { recursive: true, force: true });
   }

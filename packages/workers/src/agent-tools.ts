@@ -353,7 +353,7 @@ export async function applySandboxTodo(
   action: string,
   text: string,
 ): Promise<{ ok: boolean; detail: string; todos: SandboxTodo[] }> {
-  const todos = await readTodos(sandboxRoot);
+  const todos = await listSandboxTodos(sandboxRoot);
   const body = text.trim();
   if (action === "add") {
     if (!body || body.includes("\0") || body.includes("../") || body.startsWith("/") || body.startsWith("\\")) {
@@ -387,7 +387,7 @@ export function formatTodoBlock(todos: readonly SandboxTodo[]): string {
   return `Todos:\n${lines.join("\n")}`;
 }
 
-async function readTodos(sandboxRoot: string): Promise<SandboxTodo[]> {
+export async function listSandboxTodos(sandboxRoot: string): Promise<SandboxTodo[]> {
   try {
     const raw = await readFile(path.join(sandboxRoot, TODOS_FILE), "utf8");
     const parsed = JSON.parse(raw) as { todos?: unknown };

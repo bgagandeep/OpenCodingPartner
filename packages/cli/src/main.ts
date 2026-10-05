@@ -5,7 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
-import { codingRunnerForEnv, appendViaOpenClaw, computerFrameLine, copyViaOpenClaw, deleteViaOpenClaw, discoverStack, dockerLine, mkdirViaOpenClaw, predictWithLaya, renameViaOpenClaw, rmdirViaOpenClaw, runConnectedPath, runDoctor, sendOrchestrationTurn, startSandboxWriteBridge, writeViaOpenClaw } from "@opencodingpartner/bundle";
+import { codingRunnerForEnv, appendViaOpenClaw, computerFrameLine, copyViaOpenClaw, deleteViaOpenClaw, discoverStack, dockerLine, mkdirViaOpenClaw, predictWithLaya, renameViaOpenClaw, rmdirViaOpenClaw, runConnectedPath, runDoctor, sendOrchestrationTurn, startSandboxWriteBridge, todoViaOpenClaw, writeViaOpenClaw } from "@opencodingpartner/bundle";
 import { access, copyFile, mkdir, readFile } from "node:fs/promises";
 import { acpOptIn, applySwarmManifest, approveDoctorLine, captureComputerFrame, checkComputerFrame, checkComputerFrames, computerTabText, createRoutine, fireDueRoutines, fireEvent, formatApproveQueue, formatApproveQueueJson, formatRoutineList, formatSettings, fleetDoctorLine, formatFleetStatus, formatFleetStatusJson, isolatePartner, listApproveQueue, listRoutines, parseSwarmManifest, pauseRoutine, postSlackReply, postTelegramReply, readFleetStatus, readPackaging, resumeRoutine, returnComputer, runChatTurn, runDemo, slackCredentialStatus, slackTurn, startPartnerContainer, stopPartnerContainer, takeoverComputer, telegramCredentialStatus, telegramTurn, deliverSlackEvent, deliverTelegramUpdate, validateSwarmManifest, type ChatTurnInput } from "@opencodingpartner/gateway";
 import { playwrightBrowserDriver } from "@opencodingpartner/workers";
@@ -378,6 +378,7 @@ async function runProductTurn(message: string, sandbox: string, computerExecute:
     openclawRename: (fromPath, toPath) => renameViaOpenClaw({ env, bins }, writeRoot, fromPath, toPath),
     openclawCopy: (fromPath, toPath) => copyViaOpenClaw({ env, bins }, writeRoot, fromPath, toPath),
     openclawAppend: (relativePath, content) => appendViaOpenClaw({ env, bins }, writeRoot, relativePath, content),
+    openclawTodo: (action, content) => todoViaOpenClaw({ env, bins }, writeRoot, action, content),
   };
   if (bins.layaPython) {
     const pythonBin = bins.layaPython;

@@ -43,6 +43,7 @@ import {
   deleteSandboxFile,
   applySandboxTodo,
   formatTodoBlock,
+  listSandboxTodos,
   mkdirSandboxDir,
   rmdirSandboxDir,
   appendSandboxFile,
@@ -126,6 +127,8 @@ export interface ChatTurnInput {
   openclawCopy?: (fromPath: string, toPath: string) => Promise<{ ok: boolean; missing: boolean; detail: string }>;
   /** Gateway append tool. `missing` means the plugin is absent and a local append is allowed. */
   openclawAppend?: (relativePath: string, content: string) => Promise<{ ok: boolean; missing: boolean; detail: string }>;
+  /** Gateway todo tool. `missing` means the plugin is absent and a local list update is allowed. */
+  openclawTodo?: (action: string, content: string) => Promise<{ ok: boolean; missing: boolean; detail: string }>;
   /** Bounded check runner. Tests inject this. The default does not use a shell. */
   checkExec?: (argv: readonly string[], cwd: string) => Promise<{ code: number; stdout: string; stderr: string }>;
 }
@@ -321,7 +324,7 @@ async function executeTurn(input: ChatTurnInput, session: SwarmSession, key: str
         via,
         note: `Plan is waiting. Say approve, deny, or redirect.\n${await formatApproveCards(input.sandboxRoot)}\nSDLC: .ocp/sdlc/intent.md, .ocp/sdlc/spec.md, .ocp/sdlc/plan.md`,
       };
-    } else if (input.grokRunner && openclawDrove && (input.openclawWrite || input.openclawDelete || input.openclawRename || input.openclawMkdir || input.openclawRmdir || input.openclawCopy || input.openclawAppend)) {
+    } else if (input.grokRunner && openclawDrove && (input.openclawWrite || input.openclawDelete || input.openclawRename || input.openclawMkdir || input.openclawRmdir || input.openclawCopy || input.openclawAppend || input.openclawTodo)) {
       const runner = input.grokRunner;
       const write = input.openclawWrite;
       const stage = await mkdtemp(path.join(tmpdir(), "ocp-stage-"));
@@ -843,6 +846,8 @@ async function applyToolReply(
   let copiedLocal = false;
   let appendedLocal = false;
   let appendedRemote = false;
+  let todoLocal = false;
+  let todoRemote = false;
   let copiedRemote = false;
   let madeDirLocal = false;
   let madeDirRemote = false;
@@ -953,12 +958,16 @@ async function applyToolReply(
           else removedDirLocal = true;
         }
       } else if (step.tool === "todo") {
-        const changed = await applySandboxTodo(input.sandboxRoot, step.action ?? "", step.content ?? "");
+        const changed = await todoThroughTurn(input, openclawDrove, step.action ?? "", step.content ?? "");
         const line = changed.ok ? `Todo: ${changed.detail}` : `Todo: ${step.action || "todo"} (${changed.detail})`;
         log.push(line);
         observations.push(line);
         todoBlock = formatTodoBlock(changed.todos);
         if (todoBlock) observations.push(todoBlock);
+        if (changed.ok) {
+          if (changed.via === "openclaw") todoRemote = true;
+          else todoLocal = true;
+        }
       } else if (step.tool === "delete" && step.path) {
         const removed = await deleteThroughTurn(input, openclawDrove, step.path);
         const line = removed.ok ? `Tool: delete ${step.path}` : `Tool: delete ${step.path} (${removed.detail})`;
@@ -1039,6 +1048,8 @@ async function applyToolReply(
     copiedLocal ? "Copy path: local sandbox." : "",
     appendedRemote ? "Append path: orchestration." : "",
     appendedLocal ? "Append path: local sandbox." : "",
+    todoRemote ? "Todo path: orchestration." : "",
+    todoLocal ? "Todo path: local sandbox." : "",
     madeDirRemote ? "Mkdir path: orchestration." : "",
     madeDirLocal ? "Mkdir path: local sandbox." : "",
     removedDirRemote ? "Rmdir path: orchestration." : "",
@@ -1177,7 +1188,7 @@ async function codingPrompt(sandboxRoot: string, message: string): Promise<strin
   const planNote = planText ? `Accepted plan:\n${planText}\n` : "";
   const rules = await loadPartnerRules(sandboxRoot);
   const rulesNote = rules ? `Partner rules:\n${rules}\n` : "";
-  return `${history}${filesNote}${planNote}${rulesNote}User request:\n${message}\nReply with JSON only: {"steps":[{"tool":"list"|"read"|"grep"|"glob"|"run"|"write"|"patch"|"delete"|"rename"|"copy"|"append"|"mkdir"|"rmdir"|"todo","action":"add or complete","to":"relative destination","query":"text or /regex/","path":"relative","content":"full text for write, or todo text, or a 1-based todo index","diff":"unified diff for patch","argv":["node","--test","relative.test.ts"]}],"done":false}. One reply is one round. After you see Tool observations, send the next round. Set "done" to true when finished. List or read before you edit. Patch a file that already exists. Write only a new file. Append adds text to one existing file and does not create a file. When the gateway drove the turn, append uses the sandbox append bridge. A missing plugin appends locally. A refusal does not append locally. Copy copies one existing file to a new relative path and leaves the source. A todo step uses action add with the task text, or action complete with a 1-based index or id. At most 12 todos. Allowed commands are node --test plus relative paths, pnpm test with no extra arguments, tsc --noEmit plus relative paths, git status, git status -sb, git status --short --branch, git diff plus relative paths, and git log --oneline -n N with N from 1 to 20, and git show HEAD: plus one relative path.`;
+  return `${history}${filesNote}${planNote}${rulesNote}User request:\n${message}\nReply with JSON only: {"steps":[{"tool":"list"|"read"|"grep"|"glob"|"run"|"write"|"patch"|"delete"|"rename"|"copy"|"append"|"mkdir"|"rmdir"|"todo","action":"add or complete","to":"relative destination","query":"text or /regex/","path":"relative","content":"full text for write, or todo text, or a 1-based todo index","diff":"unified diff for patch","argv":["node","--test","relative.test.ts"]}],"done":false}. One reply is one round. After you see Tool observations, send the next round. Set "done" to true when finished. List or read before you edit. Patch a file that already exists. Write only a new file. Append adds text to one existing file and does not create a file. When the gateway drove the turn, append uses the sandbox append bridge. A missing plugin appends locally. A refusal does not append locally. Copy copies one existing file to a new relative path and leaves the source. A todo step uses action add with the task text, or action complete with a 1-based index or id. At most 12 todos. When the gateway drove the turn, a todo uses the sandbox todo bridge. A missing plugin updates the list locally. A refusal does not update it locally. Allowed commands are node --test plus relative paths, pnpm test with no extra arguments, tsc --noEmit plus relative paths, git status, git status -sb, git status --short --branch, git diff plus relative paths, and git log --oneline -n N with N from 1 to 20, and git show HEAD: plus one relative path.`;
 }
 
 async function mkdirThroughTurn(
@@ -1260,6 +1271,62 @@ async function copyThroughTurn(
   }
   const local = await copySandboxFile(input.sandboxRoot, fromPath, toPath);
   return { ok: local.ok, via: "local", detail: local.detail };
+}
+
+async function todoThroughTurn(
+  input: ChatTurnInput,
+  openclawDrove: boolean,
+  action: string,
+  content: string,
+): Promise<{ ok: boolean; via: "openclaw" | "local"; detail: string; todos: Awaited<ReturnType<typeof listSandboxTodos>> }> {
+  if (openclawDrove && input.openclawTodo) {
+    const before = await listSandboxTodos(input.sandboxRoot);
+    const remote = await input.openclawTodo(action, content);
+    const after = await listSandboxTodos(input.sandboxRoot);
+    if (remote.ok && todoLanded(before, after, action, content)) {
+      const body = content.trim();
+      const detail = action === "complete" ? `complete ${completedId(after, body)}` : `add ${body}`;
+      return { ok: true, via: "openclaw", detail, todos: after };
+    }
+    if (remote.ok || !remote.missing) {
+      return {
+        ok: false,
+        via: "openclaw",
+        detail: remote.ok ? "Orchestration todo did not update the list." : remote.detail,
+        todos: after,
+      };
+    }
+  }
+  const local = await applySandboxTodo(input.sandboxRoot, action, content);
+  return { ok: local.ok, via: "local", detail: local.detail, todos: local.todos };
+}
+
+function todoLanded(
+  before: readonly { id: string; text: string; done: boolean }[],
+  after: readonly { id: string; text: string; done: boolean }[],
+  action: string,
+  content: string,
+): boolean {
+  const body = content.trim();
+  if (action === "add") {
+    return after.filter((item) => item.text === body).length === before.filter((item) => item.text === body).length + 1;
+  }
+  if (action === "complete") {
+    const index = Number(body);
+    if (Number.isInteger(index) && index >= 1 && index <= after.length) {
+      return before[index - 1]?.done !== true && after[index - 1]?.done === true;
+    }
+    const prior = before.find((item) => item.id === body);
+    const next = after.find((item) => item.id === body);
+    return prior?.done !== true && next?.done === true;
+  }
+  return false;
+}
+
+function completedId(todos: readonly { id: string; done: boolean }[], body: string): string {
+  const index = Number(body);
+  if (Number.isInteger(index) && index >= 1 && index <= todos.length) return todos[index - 1]?.id ?? body;
+  return body;
 }
 
 async function appendThroughTurn(

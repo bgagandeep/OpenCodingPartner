@@ -36,6 +36,8 @@ test("product docs name the tools and keep ads and payments off", () => {
   }
   const readmeBody = read("README.md").split("## Credits")[0];
   assert.doesNotMatch(readmeBody, /OpenClaw|Grok Build|LiteLLM|\bLaya\b|Claude Code|Hermes|Trinity/);
+  assert.match(read("NOTICE"), /Hermes Agent/);
+  assert.match(read("README.md").split("## Credits")[1] ?? "", /Hermes Agent/);
   assert.match(docs, /chat agent/);
   assert.match(docs, /orchestration agent swarm/);
   assert.match(docs, /coding agent/);

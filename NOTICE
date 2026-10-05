@@ -8,3 +8,4 @@ OpenClaw — MIT — OpenClaw Foundation — https://github.com/openclaw/opencla
 Grok Build — Apache-2.0 — xAI (SpaceXAI) — https://github.com/xai-org/grok-build
 Laya — Apache-2.0 — Convai Innovations — https://pypi.org/project/laya/
 LiteLLM — MIT — BerriAI — https://github.com/BerriAI/litellm
+Hermes Agent — MIT — Nous Research — https://github.com/NousResearch/hermes-agent — optional ACP-shaped backend, not installed and not required

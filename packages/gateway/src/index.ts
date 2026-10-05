@@ -32,6 +32,8 @@ export { createRoutine, fireDueRoutines, fireEvent, formatRoutineList, listRouti
 export { applySwarmManifest, parseSwarmManifest, validateSwarmManifest } from "./swarm-manifest.js";
 export { channelPartnerId, discordTurn, slackTurn, telegramTurn } from "./channels.js";
 import { isolatePartner as openPartnerWorkspace } from "./fleet.js";
+import { noopAcpBackend, type AcpBackend } from "./acp.js";
+export { acpOptIn, formatSettings, noopAcpBackend } from "./acp.js";
 import {
   applyUnifiedDiff,
   commandDecision,
@@ -104,6 +106,9 @@ export interface ChatTurnInput {
   computerAllowHosts?: readonly string[];
   /** When set, this turn uses that partner's own workspace, not the shared session root. */
   partnerId?: string;
+  /** Opt-in alternate orchestration. Off by default. A missing backend does not replace the local swarm. */
+  acp?: boolean;
+  acpBackend?: AcpBackend;
   /** Gateway `write` tool. Set when the product talks to OpenClaw. This process does not write the bytes. */
   openclawWrite?: (relativePath: string, content: string) => Promise<{ ok: boolean; detail: string }>;
   /** Gateway delete tool. `missing` means the plugin is absent and a local delete is allowed. */
@@ -207,6 +212,10 @@ async function executeTurn(input: ChatTurnInput, session: SwarmSession, key: str
   const notice = input.orchestration
     ? await input.orchestration(plan)
     : { state: "skipped" as const, detail: "The orchestration gateway was not used. The local swarm ran this turn.", driver: "local-swarm" as const };
+  if (input.acp === true) {
+    const acp = await (input.acpBackend ?? noopAcpBackend()).start({ sessionKey: session.key, message: input.message });
+    notice.detail = `${notice.detail} Advanced ACP: ${acp.detail}`;
+  }
   const openclawDrove = notice.driver === "openclaw" && notice.state === "ran";
   const openclawFailed = notice.driver === "openclaw" && notice.state === "failed";
   if (openclawDrove) plan = { ...plan, source: "openclaw" };

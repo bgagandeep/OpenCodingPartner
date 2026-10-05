@@ -2153,6 +2153,22 @@ test("a swarm manifest validates, dry-runs, and applies partner workspaces", asy
   }
 });
 
+test("advanced ACP stays off unless asked, and the stub does not replace the swarm", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-acp-"));
+  try {
+    const off = await runChatTurn({ message: "add a note", sandboxRoot: root });
+    assert.doesNotMatch(off.transcript, /Advanced ACP/);
+    assert.match(off.transcript, /local swarm ran this turn/);
+    assert.ok(off.agents.some((agent) => agent.role === "coding"));
+    const on = await runChatTurn({ message: "add a note again", sandboxRoot: root, acp: true });
+    assert.match(on.transcript, /No ACP backend is installed/);
+    assert.match(on.transcript, /local swarm ran this turn/);
+    assert.ok(on.agents.some((agent) => agent.role === "coding"));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("a failed partner check returns to intent and holds one coding worker", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "ocp-partner-fail-"));
   try {

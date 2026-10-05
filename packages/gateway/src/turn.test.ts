@@ -7,7 +7,7 @@ import test from "node:test";
 import { routeWithPredict, type ManagerPlan } from "@opencodingpartner/policy";
 import { applySandboxTodo, grepSandbox, listSandboxDir, writeSandboxFile } from "@opencodingpartner/workers";
 import { DEMO_MESSAGE, applySwarmManifest, approveDoctorLine, clearSessionMemory, coreIsOpen, createRoutine, deliverSlackEvent, deliverTelegramUpdate, fireDueRoutines, fireEvent, formatApproveQueue, formatFleetStatus, formatFleetStatusJson, formatReviewHolds, formatTodoQueue, isolatePartner, listApproveQueue, listReviewHolds, listRoutines, listTodoQueue, parseSwarmManifest, partnerAgreementDoctorLine, partnerAgreementStatus, partnerContainerArgv, pauseRoutine, readFleetStatus, readPackaging, reviewHoldDoctorLine, runChatTurn, todoDoctorLine, runDemo, slackSignature, slackTurn, startPartnerContainer, stopPartnerContainer, verifySlackRequest, verifyTelegramRequest } from "./index.js";
-import { allowComputerUse, captureComputerFrame, checkComputerFrame, computerTabText, doctorComputerFrameLine, doctorComputerRunLine } from "./computer-tab.js";
+import { allowComputerUse, captureComputerFrame, checkComputerFrame, computerTabText, doctorComputerControlLine, doctorComputerFrameLine, doctorComputerRunLine } from "./computer-tab.js";
 import { REVIEW_HOLD_CODING_CAP, rolesUnderReviewHold } from "./sdlc.js";
 
 test("chat stands up agents, writes, checks QA, gates security, and records GTM", async () => {
@@ -2773,6 +2773,26 @@ test("fleet start dry-run and a missing Docker do not claim a running container"
     });
     assert.equal(stopped.ok, true);
     assert.match(await computerTabText(path.join(root, ".ocp/fleet/coding")), /Container: stopped/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("doctor names who holds the browser and does not return it", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-doctor-control-"));
+  try {
+    const open = await doctorComputerControlLine(root);
+    assert.match(open, /green Computer control: partner/);
+    assert.match(open, /does not take or return the browser/);
+    await mkdir(path.join(root, ".ocp/fleet/coding/.ocp"), { recursive: true });
+    await writeFile(path.join(root, ".ocp/fleet/coding/.ocp/identity.json"), `${JSON.stringify({ id: "coding" })}\n`);
+    const heldFile = `${JSON.stringify({ desktop: "sandbox", control: "human", approved: true, status: "held" })}\n`;
+    await writeFile(path.join(root, ".ocp/fleet/coding/.ocp/computer.json"), heldFile);
+    const held = await doctorComputerControlLine(root);
+    assert.match(held, /yellow Computer control: you hold the coding browser/);
+    assert.match(held, /does not take or return the browser/);
+    assert.doesNotMatch(held, /Browser is missing/);
+    assert.equal(await readFile(path.join(root, ".ocp/fleet/coding/.ocp/computer.json"), "utf8"), heldFile);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

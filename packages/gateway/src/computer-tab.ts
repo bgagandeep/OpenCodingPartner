@@ -312,6 +312,19 @@ export async function doctorComputerRunLine(sessionRoot: string): Promise<string
   return `yellow Computer run: ${sessionDetail} ${extra} ${tail}`;
 }
 
+/** Doctor line for who holds the browser. This does not take or return it. */
+export async function doctorComputerControlLine(sessionRoot: string): Promise<string> {
+  const tail = "This check does not take or return the browser.";
+  const held: string[] = [];
+  if ((await readComputerTab(sessionRoot)).control === "human") held.push("the session");
+  for (const partner of await partnerWorkspaces(sessionRoot)) {
+    if ((await readComputerTab(partner.workspace)).control === "human") held.push(partner.id);
+  }
+  if (held.length === 0) return `green Computer control: partner. ${tail}`;
+  const who = held.map((name) => (name === "the session" ? "you hold the session browser" : `you hold the ${name} browser`)).join(". ");
+  return `yellow Computer control: ${who}. ${tail}`;
+}
+
 export type FrameCapturer = (url: string) => Promise<Uint8Array>;
 
 async function playwrightCapture(url: string): Promise<Uint8Array> {

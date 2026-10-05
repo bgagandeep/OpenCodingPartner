@@ -10,6 +10,7 @@ import { DEMO_MESSAGE, applySwarmManifest, approveDoctorLine, clearSessionMemory
 import { allowComputerUse, captureComputerFrame, checkComputerFrame, computerTabText, doctorComputerControlLine, doctorComputerFrameLine, doctorComputerRunLine } from "./computer-tab.js";
 import { doctorSharedMountLine } from "./fleet.js";
 import { doctorLastCheckLine } from "./last-check.js";
+import { doctorLastQaLine } from "./last-qa.js";
 import { REVIEW_HOLD_CODING_CAP, rolesUnderReviewHold } from "./sdlc.js";
 
 test("chat stands up agents, writes, checks QA, gates security, and records GTM", async () => {
@@ -2775,6 +2776,55 @@ test("fleet start dry-run and a missing Docker do not claim a running container"
     });
     assert.equal(stopped.ok, true);
     assert.match(await computerTabText(path.join(root, ".ocp/fleet/coding")), /Container: stopped/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a coding turn records QA pass or fail and doctor does not print the summary", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-last-qa-"));
+  try {
+    assert.match(await doctorLastQaLine(root), /green Last QA: none/);
+    const failed = await runChatTurn({
+      message: "fix the checklist",
+      sandboxRoot: root,
+      grokRunner: {
+        async run() {
+          return { exitCode: 0, stdout: JSON.stringify({ done: true, steps: [{ tool: "run", argv: ["node", "--test", "src/a.test.ts"] }] }) };
+        },
+      },
+      checkExec: async () => ({ code: 1, stdout: "", stderr: "password=hunter2" }),
+    });
+    assert.match(failed.transcript, /password=hunter2/);
+    const saved = JSON.parse(await readFile(path.join(root, ".ocp/last-qa.json"), "utf8")) as { pass?: boolean };
+    assert.deepEqual(saved, { pass: false });
+    const failLine = await doctorLastQaLine(root);
+    assert.match(failLine, /yellow Last QA: session fail/);
+    assert.match(failLine, /does not print the QA summary/);
+    assert.doesNotMatch(failLine, /hunter2/);
+    assert.doesNotMatch(failLine, /check failed/);
+    await runChatTurn({ message: "hello", sandboxRoot: root });
+    assert.deepEqual(JSON.parse(await readFile(path.join(root, ".ocp/last-qa.json"), "utf8")), { pass: false });
+    await runChatTurn({
+      message: "Use the coding worker to create hello.txt with content:\nhello\n",
+      sandboxRoot: root,
+      partnerId: "coding",
+    });
+    assert.deepEqual(JSON.parse(await readFile(path.join(root, ".ocp/fleet/coding/.ocp/last-qa.json"), "utf8")), { pass: true });
+    const mixed = await doctorLastQaLine(root);
+    assert.match(mixed, /yellow Last QA: session fail\. coding pass/);
+    assert.doesNotMatch(mixed, /hello/);
+    await runChatTurn({
+      message: "Use the coding worker to create note.txt with content:\nnote\n",
+      sandboxRoot: root,
+    });
+    const ready = await doctorLastQaLine(root);
+    assert.match(ready, /green Last QA: session pass\. coding pass/);
+    assert.doesNotMatch(ready, /note\.txt/);
+    await writeFile(path.join(root, ".ocp/fleet/coding/.ocp/last-qa.json"), "not-json\n");
+    const broken = await doctorLastQaLine(root);
+    assert.match(broken, /yellow Last QA: coding file could not be read/);
+    assert.doesNotMatch(broken, /not-json/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

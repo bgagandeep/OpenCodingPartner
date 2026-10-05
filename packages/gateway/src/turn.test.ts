@@ -1931,6 +1931,57 @@ test("a partner sandbox waits for the plan, then edits and runs node --test", as
   }
 });
 
+test("approve cards deny or redirect, and partner rules block a request", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-approve-"));
+  try {
+    await writeFile(path.join(root, "PARTNER.md"), "partner\n");
+    await writeFile(path.join(root, "PARTNER.rules"), "Keep helpers small.\nblock: paid\n");
+    const held = await runChatTurn({ message: "add a helper", sandboxRoot: root });
+    assert.match(held.transcript, /Approve card plan-1 pending/);
+    const denied = await runChatTurn({ message: "deny", sandboxRoot: root });
+    assert.match(denied.transcript, /Approve denied/);
+    assert.match(denied.transcript, /Approve card plan-1 denied/);
+    assert.equal(denied.coding?.wrote, false);
+
+    await runChatTurn({ message: "add a helper again", sandboxRoot: root });
+    const redirected = await runChatTurn({ message: "redirect: use a smaller helper", sandboxRoot: root });
+    assert.match(redirected.transcript, /Approve redirected/);
+    assert.match(await readFile(path.join(root, ".ocp/sdlc/intent.md"), "utf8"), /smaller helper/);
+    assert.equal(redirected.coding?.wrote, false);
+
+    let seen = "";
+    const blocked = await runChatTurn({
+      message: "add a paid plan",
+      sandboxRoot: root,
+      grokRunner: {
+        async run(argv) {
+          seen = argv[argv.indexOf("-p") + 1] ?? "";
+          return { exitCode: 0, stdout: JSON.stringify({ done: true, steps: [] }) };
+        },
+      },
+    });
+    assert.equal(seen, "");
+    assert.match(blocked.transcript, /Partner rule blocked this request \(paid\)/);
+
+    await writeFile(path.join(root, "PARTNER.rules"), "Keep helpers small.\n");
+    await runChatTurn({ message: "add a tiny helper", sandboxRoot: root });
+    await runChatTurn({
+      message: "approve",
+      sandboxRoot: root,
+      grokRunner: {
+        async run(argv) {
+          seen = argv[argv.indexOf("-p") + 1] ?? "";
+          return { exitCode: 0, stdout: JSON.stringify({ done: true, steps: [{ tool: "write", path: "src/tiny.txt", content: "ok\n" }] }) };
+        },
+      },
+    });
+    assert.match(seen, /Partner rules:/);
+    assert.match(seen, /Keep helpers small/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("a failed partner check returns to intent and holds one coding worker", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "ocp-partner-fail-"));
   try {

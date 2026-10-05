@@ -91,6 +91,8 @@ function slackLine(env: NodeJS.ProcessEnv): string {
 }
 
 function playwrightLine(present: boolean): string {
-  if (present) return "green Playwright: installed. --computer-execute can open a page after you install Chromium with pnpm exec playwright install chromium.";
-  return "yellow Playwright: not installed. Needed only for --computer-execute. The plan-only computer path still records executed: false.";
+  if (present) {
+    return "green Computer capture: Playwright is installed. ocp computer capture can write a frame after Chromium is installed. This check does not start the browser.";
+  }
+  return "yellow Computer capture: Playwright is not installed. ocp computer capture and --computer-execute need it. This check does not start the browser. The plan-only computer path still records executed: false.";
 }

@@ -6,7 +6,7 @@ import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 import { codingRunnerForEnv, appendViaOpenClaw, copyViaOpenClaw, deleteViaOpenClaw, discoverStack, mkdirViaOpenClaw, predictWithLaya, renameViaOpenClaw, rmdirViaOpenClaw, runConnectedPath, runDoctor, sendOrchestrationTurn, startSandboxWriteBridge, writeViaOpenClaw } from "@opencodingpartner/bundle";
 import { access, copyFile, mkdir, readFile } from "node:fs/promises";
-import { acpOptIn, applySwarmManifest, captureComputerFrame, checkComputerFrame, computerTabText, createRoutine, fireDueRoutines, fireEvent, formatRoutineList, formatSettings, fleetDoctorLine, formatFleetStatus, formatFleetStatusJson, isolatePartner, listRoutines, parseSwarmManifest, pauseRoutine, postSlackReply, postTelegramReply, readFleetStatus, readPackaging, resumeRoutine, returnComputer, runChatTurn, runDemo, slackCredentialStatus, slackTurn, startPartnerContainer, stopPartnerContainer, takeoverComputer, telegramCredentialStatus, telegramTurn, validateSwarmManifest, type ChatTurnInput } from "@opencodingpartner/gateway";
+import { acpOptIn, applySwarmManifest, approveDoctorLine, captureComputerFrame, checkComputerFrame, computerTabText, createRoutine, fireDueRoutines, fireEvent, formatApproveQueue, formatApproveQueueJson, formatRoutineList, formatSettings, fleetDoctorLine, formatFleetStatus, formatFleetStatusJson, isolatePartner, listApproveQueue, listRoutines, parseSwarmManifest, pauseRoutine, postSlackReply, postTelegramReply, readFleetStatus, readPackaging, resumeRoutine, returnComputer, runChatTurn, runDemo, slackCredentialStatus, slackTurn, startPartnerContainer, stopPartnerContainer, takeoverComputer, telegramCredentialStatus, telegramTurn, validateSwarmManifest, type ChatTurnInput } from "@opencodingpartner/gateway";
 import { playwrightBrowserDriver } from "@opencodingpartner/workers";
 import { routeWithPredict } from "@opencodingpartner/policy";
 import { proveCoding, proveComputer } from "./prove.js";
@@ -243,6 +243,20 @@ export async function main(argv: readonly string[]): Promise<number> {
     process.stdout.write(formatSettings(on, await readPackaging(sandbox)));
     return 0;
   }
+  if (command === "approve") {
+    const json = tail.includes("--json");
+    const args = tail.filter((arg) => arg !== "--json");
+    const sub = args[0];
+    const sand = takeFlag(args.slice(1), "--sandbox");
+    if (sub !== "list") {
+      process.stdout.write("Usage: ocp approve list [--sandbox .sandbox] [--json]\n");
+      return 2;
+    }
+    const sandbox = sand.value ?? ".sandbox";
+    const items = await listApproveQueue(sandbox);
+    process.stdout.write(json ? formatApproveQueueJson(items) : formatApproveQueue(items));
+    return 0;
+  }
   if (command === "doctor") {
     const repoRoot = path.resolve(fileURLToPath(new URL("../../../", import.meta.url)));
     let stack: { openclawBin?: string; grokBin?: string; layaPython?: string; layaHfHome?: string } | undefined;
@@ -265,7 +279,8 @@ export async function main(argv: readonly string[]): Promise<number> {
       playwrightPresent = false;
     }
     const fleetLine = fleetDoctorLine(await readFleetStatus(".sandbox"));
-    const report = await runDoctor({ env: process.env, bins, repoRoot, playwrightPresent, fleetLine });
+    const pending = (await listApproveQueue(".sandbox")).length;
+    const report = await runDoctor({ env: process.env, bins, repoRoot, playwrightPresent, fleetLine, approveLine: approveDoctorLine(pending) });
     process.stdout.write(report.transcript);
     return report.code;
   }

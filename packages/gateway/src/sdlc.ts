@@ -1,4 +1,4 @@
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { AgentRole } from "@opencodingpartner/mesh";
 
@@ -166,6 +166,87 @@ export async function decidePlanCard(
   if (redirect) pending.redirect = redirect;
   await writeCards(sandboxRoot, cards);
   return pending;
+}
+
+export interface ApproveQueueItem {
+  partner: string;
+  workspace: string;
+  id: string;
+  kind: ApproveCard["kind"];
+  status: ApproveCard["status"];
+  title: string;
+  detail: string;
+}
+
+/** Pending cards in the session sandbox and each partner workspace. This does not decide a card. */
+export async function listApproveQueue(sessionRoot: string): Promise<ApproveQueueItem[]> {
+  const items: ApproveQueueItem[] = [];
+  const session = await readCards(sessionRoot);
+  for (const card of session) {
+    if (card.status !== "pending") continue;
+    items.push({
+      partner: "session",
+      workspace: ".",
+      id: card.id,
+      kind: card.kind,
+      status: card.status,
+      title: card.title,
+      detail: card.detail,
+    });
+  }
+  let names: string[] = [];
+  try {
+    names = await readdir(path.join(sessionRoot, ".ocp", "fleet"));
+  } catch {
+    names = [];
+  }
+  const partners: { id: string; workspace: string }[] = [];
+  for (const name of names) {
+    const workspace = path.join(sessionRoot, ".ocp", "fleet", name);
+    try {
+      const body = JSON.parse(await readFile(path.join(workspace, ".ocp", "identity.json"), "utf8")) as { id?: string };
+      if (body.id) partners.push({ id: body.id, workspace });
+    } catch {
+      // A directory without an identity is not a partner.
+    }
+  }
+  partners.sort((left, right) => left.id.localeCompare(right.id));
+  for (const partner of partners) {
+    const cards = await readCards(partner.workspace);
+    for (const card of cards) {
+      if (card.status !== "pending") continue;
+      items.push({
+        partner: partner.id,
+        workspace: `.ocp/fleet/${partner.id}`,
+        id: card.id,
+        kind: card.kind,
+        status: card.status,
+        title: card.title,
+        detail: card.detail,
+      });
+    }
+  }
+  return items;
+}
+
+export function formatApproveQueue(items: readonly ApproveQueueItem[]): string {
+  if (items.length === 0) return "Approvals: none pending\nSay approve, deny, or redirect: in chat to decide a card.\n";
+  const lines = ["Approvals"];
+  for (const item of items) {
+    const detail = item.detail.replace(/\s+/g, " ").trim().slice(0, 160);
+    lines.push(`${item.partner} ${item.workspace} ${item.id} ${item.kind} ${item.status} ${detail}`);
+  }
+  lines.push("Say approve, deny, or redirect: in that workspace chat to decide a card.");
+  return `${lines.join("\n")}\n`;
+}
+
+export function formatApproveQueueJson(items: readonly ApproveQueueItem[]): string {
+  return `${JSON.stringify(items, null, 2)}\n`;
+}
+
+export function approveDoctorLine(pending: number): string {
+  if (pending === 0) return "green Approvals: none pending. This check does not decide a card.";
+  return `yellow Approvals: ${pending} pending. This check does not decide a card.`;
 }
 
 export async function formatApproveCards(sandboxRoot: string): Promise<string> {

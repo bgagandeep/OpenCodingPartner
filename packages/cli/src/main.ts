@@ -6,7 +6,7 @@ import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 import { codingRunnerForEnv, copyViaOpenClaw, deleteViaOpenClaw, discoverStack, mkdirViaOpenClaw, predictWithLaya, renameViaOpenClaw, rmdirViaOpenClaw, runConnectedPath, runDoctor, sendOrchestrationTurn, startSandboxWriteBridge, writeViaOpenClaw } from "@opencodingpartner/bundle";
 import { access, copyFile, mkdir, readFile } from "node:fs/promises";
-import { computerTabText, isolatePartner, returnComputer, runChatTurn, runDemo, takeoverComputer, type ChatTurnInput } from "@opencodingpartner/gateway";
+import { computerTabText, createRoutine, fireDueRoutines, fireEvent, formatRoutineList, isolatePartner, listRoutines, pauseRoutine, resumeRoutine, returnComputer, runChatTurn, runDemo, slackTurn, takeoverComputer, telegramTurn, type ChatTurnInput } from "@opencodingpartner/gateway";
 import { playwrightBrowserDriver } from "@opencodingpartner/workers";
 import { routeWithPredict } from "@opencodingpartner/policy";
 import { proveCoding, proveComputer } from "./prove.js";
@@ -88,6 +88,75 @@ export async function main(argv: readonly string[]): Promise<number> {
       return 2;
     }
     process.stdout.write(`${await computerTabText(target)}\n`);
+    return 0;
+  }
+  if (command === "routine") {
+    const sub = tail[0];
+    const sand = takeFlag(tail.slice(1), "--sandbox");
+    const sandbox = sand.value ?? ".sandbox";
+    const partner = takeFlag(sand.rest, "--partner");
+    const every = takeFlag(partner.rest, "--every");
+    const event = takeFlag(every.rest, "--event");
+    const messageFlag = takeFlag(event.rest, "--message");
+    const id = messageFlag.rest[0];
+    const runOne = async (routine: { message: string; partnerId: string }) => {
+      const result = await runProductTurn(routine.message, sandbox, false, routine.partnerId);
+      return result.transcript;
+    };
+    if (sub === "add") {
+      const routine = await createRoutine(sandbox, {
+        partnerId: partner.value ?? "coding",
+        message: messageFlag.value ?? "",
+        everyMs: every.value ? Number(every.value) : undefined,
+        event: event.value,
+        now: Date.now(),
+      });
+      process.stdout.write(`${routine.id} ${routine.status}\n`);
+      return 0;
+    }
+    if (sub === "list") {
+      process.stdout.write(`${formatRoutineList(await listRoutines(sandbox))}\n`);
+      return 0;
+    }
+    if (sub === "pause" && id) {
+      const routine = await pauseRoutine(sandbox, id);
+      process.stdout.write(`${routine.id} paused\n`);
+      return 0;
+    }
+    if (sub === "resume" && id) {
+      const routine = await resumeRoutine(sandbox, id);
+      process.stdout.write(`${routine.id} active\n`);
+      return 0;
+    }
+    if (sub === "run") {
+      const replies = await fireDueRoutines(sandbox, Date.now(), runOne);
+      process.stdout.write(replies.join("\n") || "Routines: none due\n");
+      return 0;
+    }
+    if (sub === "event" && id) {
+      const replies = await fireEvent(sandbox, id, runOne);
+      process.stdout.write(replies.join("\n") || "Routines: none for that event\n");
+      return 0;
+    }
+    process.stdout.write("Usage: ocp routine add|list|pause|resume|run|event\n");
+    return 2;
+  }
+  if (command === "channel") {
+    const kind = tail[0];
+    const sand = takeFlag(tail.slice(1), "--sandbox");
+    const sandbox = sand.value ?? ".sandbox";
+    const text = takeFlag(sand.rest, "--text");
+    const channel = takeFlag(text.rest, "--channel");
+    if ((kind !== "slack" && kind !== "telegram") || !text.value || !channel.value) {
+      process.stdout.write("Usage: ocp channel slack|telegram --sandbox .sandbox --text \"...\" --channel name\n");
+      return 2;
+    }
+    const adapt = kind === "slack" ? slackTurn : telegramTurn;
+    const result = await adapt({ text: text.value, channel: channel.value }, async (message, partnerId) => {
+      const turn = await runProductTurn(message, sandbox, false, partnerId);
+      return turn.transcript;
+    });
+    process.stdout.write(result.reply);
     return 0;
   }
   if (command === "doctor") {

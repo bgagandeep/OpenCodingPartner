@@ -101,6 +101,7 @@ test("ocp doctor --sandbox checks that sandbox frame, fleet, and approvals", asy
     assert.match(captured, /yellow Fleet: no partners/);
     assert.match(captured, /green Approvals: none pending/);
     assert.match(captured, /yellow Partner agreement: PARTNER.md is missing/);
+    assert.match(captured, /green Todos: none open/);
     assert.equal(empty === 0 || empty === 1, true);
   } finally {
     process.stdout.write = original;
@@ -332,6 +333,42 @@ test("ocp approve list shows a pending card and does not decide it", async () =>
     assert.equal(body[0]?.id, "plan-1");
     assert.equal(body[0]?.status, "pending");
     assert.equal(readFileSync(path.join(root, ".ocp", "approvals.json"), "utf8"), queue);
+  } finally {
+    process.stdout.write = original;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("ocp todo list shows the checklist and does not change it", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "ocp-todo-cli-"));
+  let captured = "";
+  const original = process.stdout.write.bind(process.stdout);
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    captured += String(chunk);
+    return true;
+  }) as typeof process.stdout.write;
+  try {
+    const empty = await main(["todo", "list", "--sandbox", root]);
+    assert.equal(empty, 0);
+    assert.match(captured, /Todos: none/);
+    const { mkdirSync, writeFileSync, readFileSync } = await import("node:fs");
+    mkdirSync(path.join(root, ".ocp"), { recursive: true });
+    const file = `${JSON.stringify({ todos: [{ id: "1", text: "write the test", done: false }] })}\n`;
+    writeFileSync(path.join(root, ".ocp/todos.json"), file);
+    captured = "";
+    const listed = await main(["todo", "list", "--sandbox", root, "--json"]);
+    assert.equal(listed, 0);
+    const body = JSON.parse(captured) as { id: string; text: string; done: boolean }[];
+    assert.equal(body[0]?.id, "1");
+    assert.equal(body[0]?.text, "write the test");
+    assert.equal(body[0]?.done, false);
+    assert.equal(readFileSync(path.join(root, ".ocp/todos.json"), "utf8"), file);
+    captured = "";
+    const text = await main(["todo", "list", "--sandbox", root]);
+    assert.equal(text, 0);
+    assert.match(captured, /session \. 1 open write the test/);
+    assert.match(captured, /does not add or complete/);
+    assert.equal(readFileSync(path.join(root, ".ocp/todos.json"), "utf8"), file);
   } finally {
     process.stdout.write = original;
     rmSync(root, { recursive: true, force: true });

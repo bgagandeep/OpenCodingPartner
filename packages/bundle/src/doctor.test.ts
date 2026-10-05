@@ -37,6 +37,8 @@ test("doctor marks missing pieces and does not print a key", async () => {
     assert.match(missing.transcript, /does not take or return the browser/);
     assert.match(missing.transcript, /green Shared mount: no partners/);
     assert.match(missing.transcript, /does not copy files/);
+    assert.match(missing.transcript, /green Prior turns: none/);
+    assert.match(missing.transcript, /does not print the turns/);
     assert.match(missing.transcript, /green Review hold: none/);
     assert.match(missing.transcript, /yellow Partner agreement: PARTNER.md is missing/);
     assert.match(missing.transcript, /does not copy the file/);

@@ -21,6 +21,7 @@ export interface DoctorDeps {
   runLine?: string;
   controlLine?: string;
   mountLine?: string;
+  priorLine?: string;
 }
 
 export interface DoctorReport {
@@ -48,6 +49,7 @@ export async function runDoctor(deps: DoctorDeps): Promise<DoctorReport> {
   lines.push(deps.runLine ?? "yellow Computer run: none. This check does not open a page.");
   lines.push(deps.controlLine ?? "green Computer control: partner. This check does not take or return the browser.");
   lines.push(deps.mountLine ?? "green Shared mount: no partners. This check does not copy files.");
+  lines.push(deps.priorLine ?? "green Prior turns: none. This check does not print the turns.");
   lines.push("Prove-it: pnpm exec ocp chat --sandbox .sandbox \"Use the coding worker to create hello.txt with content:");
   lines.push("hello");
   lines.push("\"");

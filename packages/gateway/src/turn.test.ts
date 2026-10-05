@@ -9,6 +9,7 @@ import { applySandboxTodo, grepSandbox, listSandboxDir, writeSandboxFile } from 
 import { DEMO_MESSAGE, applySwarmManifest, approveDoctorLine, clearSessionMemory, coreIsOpen, createRoutine, deliverSlackEvent, deliverTelegramUpdate, fireDueRoutines, fireEvent, formatApproveQueue, formatFleetStatus, formatFleetStatusJson, formatReviewHolds, formatTodoQueue, isolatePartner, listApproveQueue, listReviewHolds, listRoutines, listTodoQueue, parseSwarmManifest, partnerAgreementDoctorLine, partnerAgreementStatus, partnerContainerArgv, pauseRoutine, readFleetStatus, readPackaging, reviewHoldDoctorLine, runChatTurn, todoDoctorLine, runDemo, slackSignature, slackTurn, startPartnerContainer, stopPartnerContainer, verifySlackRequest, verifyTelegramRequest } from "./index.js";
 import { allowComputerUse, captureComputerFrame, checkComputerFrame, computerTabText, doctorComputerControlLine, doctorComputerFrameLine, doctorComputerRunLine } from "./computer-tab.js";
 import { doctorSharedMountLine } from "./fleet.js";
+import { doctorPriorTurnLine } from "./history.js";
 import { REVIEW_HOLD_CODING_CAP, rolesUnderReviewHold } from "./sdlc.js";
 
 test("chat stands up agents, writes, checks QA, gates security, and records GTM", async () => {
@@ -2774,6 +2775,29 @@ test("fleet start dry-run and a missing Docker do not claim a running container"
     });
     assert.equal(stopped.ok, true);
     assert.match(await computerTabText(path.join(root, ".ocp/fleet/coding")), /Container: stopped/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("doctor counts prior turns and does not print them", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-doctor-prior-"));
+  try {
+    assert.match(await doctorPriorTurnLine(root), /green Prior turns: none/);
+    await mkdir(path.join(root, ".ocp/fleet/coding/.ocp"), { recursive: true });
+    await writeFile(path.join(root, ".ocp/fleet/coding/.ocp/identity.json"), `${JSON.stringify({ id: "coding" })}\n`);
+    const secret = "User: password=hunter2 Outcome: No file written. QA not run.";
+    await writeFile(path.join(root, ".ocp/prior-turns.json"), `${JSON.stringify({ turns: [secret, "User: fix the helper Outcome: QA pass."] })}\n`);
+    await writeFile(path.join(root, ".ocp/fleet/coding/.ocp/prior-turns.json"), `${JSON.stringify({ turns: ["User: partner note Outcome: QA fail."] })}\n`);
+    const counted = await doctorPriorTurnLine(root);
+    assert.match(counted, /green Prior turns: 2 in this session. 1 for coding/);
+    assert.match(counted, /does not print the turns/);
+    assert.doesNotMatch(counted, /password=hunter2/);
+    assert.doesNotMatch(counted, /fix the helper/);
+    await writeFile(path.join(root, ".ocp/prior-turns.json"), "not-json\n");
+    const broken = await doctorPriorTurnLine(root);
+    assert.match(broken, /yellow Prior turns: this session file could not be read/);
+    assert.doesNotMatch(broken, /not-json/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

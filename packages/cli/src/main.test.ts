@@ -1525,6 +1525,75 @@ test("ocp same compares two files and does not print them", async () => {
   }
 });
 
+test("ocp touch creates an empty file or refreshes the time", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "ocp-touch-"));
+  let captured = "";
+  const original = process.stdout.write.bind(process.stdout);
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    captured += String(chunk);
+    return true;
+  }) as typeof process.stdout.write;
+  try {
+    const { existsSync, mkdirSync, statSync, utimesSync, writeFileSync } = await import("node:fs");
+    assert.equal(await main(["touch", "--sandbox", root]), 2);
+    assert.match(captured, /Usage: ocp touch/);
+    captured = "";
+    assert.equal(await main(["touch", "--sandbox", root, "empty.txt"]), 0);
+    assert.match(captured, /created\n/);
+    assert.equal(readFileSync(path.join(root, "empty.txt"), "utf8"), "");
+    assert.equal(existsSync(path.join(root, ".ocp/last-check.json")), false);
+    writeFileSync(path.join(root, "hello.txt"), "private-body\n");
+    const old = new Date(Date.now() - 60_000);
+    utimesSync(path.join(root, "hello.txt"), old, old);
+    const before = statSync(path.join(root, "hello.txt")).mtimeMs;
+    captured = "";
+    assert.equal(await main(["touch", "--sandbox", root, "hello.txt"]), 0);
+    assert.match(captured, /touched\n/);
+    assert.doesNotMatch(captured, /private-body/);
+    assert.equal(readFileSync(path.join(root, "hello.txt"), "utf8"), "private-body\n");
+    assert.ok(statSync(path.join(root, "hello.txt")).mtimeMs > before);
+    writeFileSync(path.join(root, "secret.txt"), "password=hunter2\n");
+    const secretBefore = statSync(path.join(root, "secret.txt")).mtimeMs;
+    captured = "";
+    assert.equal(await main(["touch", "--sandbox", root, "secret.txt"]), 1);
+    assert.match(captured, /blocked \(secret pattern\)/);
+    assert.doesNotMatch(captured, /hunter2/);
+    assert.equal(readFileSync(path.join(root, "secret.txt"), "utf8"), "password=hunter2\n");
+    assert.equal(statSync(path.join(root, "secret.txt")).mtimeMs, secretBefore);
+    mkdirSync(path.join(root, "subdir"));
+    captured = "";
+    assert.equal(await main(["touch", "--sandbox", root, "subdir"]), 1);
+    assert.match(captured, /path is a directory/);
+    captured = "";
+    assert.equal(await main(["touch", "--sandbox", root, "password=hunter2"]), 1);
+    assert.match(captured, /blocked \(secret pattern\)/);
+    assert.doesNotMatch(captured, /hunter2/);
+    assert.equal(existsSync(path.join(root, "password=hunter2")), false);
+    captured = "";
+    assert.equal(await main(["touch", "--sandbox", root, "../secret"]), 1);
+    assert.match(captured, /path refused/);
+    captured = "";
+    assert.equal(await main(["touch", "--sandbox", root, ".ocp/note"]), 1);
+    assert.match(captured, /path refused/);
+    mkdirSync(path.join(root, ".ocp/fleet/coding"), { recursive: true });
+    captured = "";
+    assert.equal(await main(["touch", "--sandbox", root, "--partner", "coding", "note.txt"]), 0);
+    assert.match(captured, /created\n/);
+    assert.equal(readFileSync(path.join(root, ".ocp/fleet/coding/note.txt"), "utf8"), "");
+    assert.equal(existsSync(path.join(root, "note.txt")), false);
+    writeFileSync(path.join(root, ".ocp/fleet/coding/note.txt"), "partner-only\n");
+    captured = "";
+    assert.equal(await main(["touch", "--sandbox", root, "--partner", "coding", "note.txt"]), 0);
+    assert.match(captured, /touched\n/);
+    assert.doesNotMatch(captured, /partner-only/);
+    assert.equal(readFileSync(path.join(root, ".ocp/fleet/coding/note.txt"), "utf8"), "partner-only\n");
+    assert.equal(readFileSync(path.join(root, "hello.txt"), "utf8"), "private-body\n");
+  } finally {
+    process.stdout.write = original;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("ocp fleet status lists a partner and can print json", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "ocp-fleet-cli-"));
   let captured = "";

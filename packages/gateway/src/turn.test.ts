@@ -2376,6 +2376,50 @@ test("the same message for two partners is two turns, and one partner still repl
   }
 });
 
+test("a partner reads the shared session and a write to shared is refused", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-shared-read-"));
+  try {
+    await mkdir(path.join(root, "src"), { recursive: true });
+    await writeFile(path.join(root, "src", "note.txt"), "hello shared\n");
+    await writeFile(path.join(root, "secret.txt"), "password=hunter2\n");
+    const workspace = await isolatePartner(root, "coding");
+    const turn = await runChatTurn({
+      message: "fix the checklist",
+      sandboxRoot: workspace,
+      grokRunner: {
+        async run() {
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify({
+              done: true,
+              steps: [
+                { tool: "list", path: "shared" },
+                { tool: "read", path: "shared/src/note.txt" },
+                { tool: "read", path: "shared/secret.txt" },
+                { tool: "read", path: "shared/../secret.txt" },
+                { tool: "write", path: "shared/src/note.txt", content: "changed\n" },
+              ],
+            }),
+          };
+        },
+      },
+    });
+    assert.match(turn.transcript, /Tool: list shared \([^)]*src/);
+    assert.doesNotMatch(turn.transcript, /Tool: list shared \([^)]*\.ocp/);
+    assert.match(turn.transcript, /Tool: read shared\/src\/note.txt \(ok\)/);
+    const { readShared } = await import("./fleet.js");
+    assert.equal((await readShared(workspace, "shared/src/note.txt")).detail, "hello shared\n");
+    assert.match(turn.transcript, /Tool: read shared\/secret.txt \(blocked/);
+    assert.match(turn.transcript, /shared path refused/);
+    assert.match(turn.transcript, /shared is read-only/);
+    assert.doesNotMatch(turn.transcript, /password=hunter2/);
+    assert.equal(await readFile(path.join(root, "src", "note.txt"), "utf8"), "hello shared\n");
+    await assert.rejects(readFile(path.join(workspace, "src", "note.txt"), "utf8"));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("a partner turn writes in its own workspace, not the shared session root", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "ocp-fleet-"));
   try {

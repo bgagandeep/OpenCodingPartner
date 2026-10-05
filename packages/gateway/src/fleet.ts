@@ -1,5 +1,6 @@
 import { copyFile, mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { securityGate } from "@opencodingpartner/workers";
 
 const ID = /^[a-z0-9][a-z0-9-]{0,31}$/;
 
@@ -35,6 +36,71 @@ export async function isolatePartner(sessionRoot: string, partnerId: string, rol
   await writeFile(path.join(workspace, ".ocp", "mount.json"), `${JSON.stringify(mount, null, 2)}\n`);
   await copyFile(path.join(sessionRoot, "PARTNER.md"), path.join(workspace, "PARTNER.md")).catch(() => undefined);
   return workspace;
+}
+
+/** `shared` or `shared/relative` is the read-only session mount. Anything else is a normal sandbox path. */
+export function sharedRequest(relativePath: string): { shared: true; relative: string } | { shared: false } {
+  const text = relativePath.replace(/\\/g, "/");
+  if (text !== "shared" && !text.startsWith("shared/")) return { shared: false };
+  if (text === "shared") return { shared: true, relative: "." };
+  if (text.includes("..")) return { shared: true, relative: "" };
+  const relative = text.slice("shared/".length);
+  if (!relative || relative.split("/").some((part) => part === "" || part === "." || part === "..")) return { shared: true, relative: "" };
+  if (relative === ".ocp" || relative.startsWith(".ocp/") || relative === "gtm" || relative.startsWith("gtm/")) return { shared: true, relative: "" };
+  return { shared: true, relative };
+}
+
+export async function sharedMountSource(sandboxRoot: string): Promise<string | undefined> {
+  try {
+    const body = JSON.parse(await readFile(path.join(sandboxRoot, ".ocp", "mount.json"), "utf8")) as { source?: unknown; mode?: unknown };
+    if (body.mode !== "read-only" || typeof body.source !== "string" || !body.source) return undefined;
+    return path.resolve(body.source);
+  } catch {
+    return undefined;
+  }
+}
+
+function insideSource(source: string, relative: string): string | undefined {
+  const root = path.resolve(source);
+  const target = path.resolve(root, relative);
+  const rootPrefix = root.endsWith(path.sep) ? root : `${root}${path.sep}`;
+  if (target !== root && !target.startsWith(rootPrefix)) return undefined;
+  return target;
+}
+
+/** List the read-only session mount. This does not copy files into the partner workspace. */
+export async function listShared(sandboxRoot: string, relativePath: string): Promise<{ ok: boolean; detail: string }> {
+  const request = sharedRequest(relativePath);
+  if (!request.shared || !request.relative) return { ok: false, detail: "shared path refused" };
+  const source = await sharedMountSource(sandboxRoot);
+  if (!source) return { ok: false, detail: "shared mount is missing" };
+  const target = insideSource(source, request.relative);
+  if (!target) return { ok: false, detail: "shared path refused" };
+  try {
+    const names = (await readdir(target)).filter((name) => name !== ".ocp" && name !== "gtm");
+    return { ok: true, detail: names.join(", ") || "(empty)" };
+  } catch {
+    return { ok: false, detail: "directory missing" };
+  }
+}
+
+/** Read one file on the read-only session mount. This does not copy it. */
+export async function readShared(sandboxRoot: string, relativePath: string): Promise<{ ok: boolean; detail: string }> {
+  const request = sharedRequest(relativePath);
+  if (!request.shared || !request.relative || request.relative === ".") return { ok: false, detail: "shared path refused" };
+  const source = await sharedMountSource(sandboxRoot);
+  if (!source) return { ok: false, detail: "shared mount is missing" };
+  const target = insideSource(source, request.relative);
+  if (!target) return { ok: false, detail: "shared path refused" };
+  let content = "";
+  try {
+    content = await readFile(target, "utf8");
+  } catch {
+    return { ok: false, detail: "file missing" };
+  }
+  const gate = securityGate({ relativePath: request.relative, content, sandboxRoot: source });
+  if (!gate.allow) return { ok: false, detail: `blocked (${gate.reasons.join(", ")})` };
+  return { ok: true, detail: content };
 }
 
 export async function readPartnerIdentity(workspace: string): Promise<PartnerIdentity | undefined> {

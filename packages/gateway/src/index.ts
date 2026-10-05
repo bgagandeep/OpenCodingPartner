@@ -575,8 +575,12 @@ async function executeTurn(input: ChatTurnInput, session: SwarmSession, key: str
     if (execute) {
       await markComputerLive(input.sandboxRoot);
       const shot = await captureExecutedFrame(input.sandboxRoot);
-      captureText = shot.text;
-      const frameQa = { pass: shot.ok, summary: shot.text.split("\n")[0] ?? shot.text };
+      const missingBrowser = /Browser is missing/.test(computer.note ?? "");
+      captureText = missingBrowser ? "" : shot.text;
+      const summary = missingBrowser
+        ? `Computer QA computer-frame: fail. ${computer.note ?? shot.text}`
+        : (shot.text.split("\n")[0] ?? shot.text);
+      const frameQa = { pass: missingBrowser ? false : shot.ok, summary };
       qa = qa ? { pass: qa.pass && frameQa.pass, summary: `${qa.summary}; ${frameQa.summary}` } : frameQa;
     }
     const tabLine = await computerTabText(input.sandboxRoot);

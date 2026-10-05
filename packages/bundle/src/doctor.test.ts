@@ -23,6 +23,7 @@ test("doctor marks missing pieces and does not print a key", async () => {
     assert.match(missing.transcript, /yellow orchestration \/healthz:/);
     assert.match(missing.transcript, /red Write bridge plugin/);
     assert.match(missing.transcript, /yellow Computer capture: Playwright is not installed/);
+    assert.match(missing.transcript, /pnpm exec playwright install chromium/);
     assert.match(missing.transcript, /This check does not start the browser/);
     assert.doesNotMatch(missing.transcript, /Computer QA computer-frame/);
     assert.match(missing.transcript, /yellow Slack: missing SLACK_BOT_TOKEN, SLACK_SIGNING_SECRET/);

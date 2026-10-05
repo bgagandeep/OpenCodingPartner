@@ -1,5 +1,6 @@
 import { mkdir, readFile, stat, utimes, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { browserMissingMessage, browserMissingNote } from "@opencodingpartner/workers";
 import { fleetIds, readPartnerIdentity } from "./fleet.js";
 
 export interface ComputerTabState {
@@ -211,7 +212,11 @@ export async function captureComputerFrame(
     png = await (options.capture ?? playwrightCapture)(url);
   } catch (error) {
     const message = error instanceof Error ? error.message : "browser missing";
-    return { ok: false, text: `Browser is missing. No frame was written. ${message}` };
+    const where = await reportedFrame(sandboxRoot);
+    if (browserMissingMessage(message)) {
+      return { ok: false, text: `${browserMissingNote()} Path: ${where}.` };
+    }
+    return { ok: false, text: `Capture failed. No frame was written at ${where}. ${message}` };
   }
   return landFrame(sandboxRoot, png, url, run?.body ?? {});
 }

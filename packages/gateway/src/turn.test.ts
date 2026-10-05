@@ -6,7 +6,7 @@ import path from "node:path";
 import test from "node:test";
 import { routeWithPredict, type ManagerPlan } from "@opencodingpartner/policy";
 import { grepSandbox, listSandboxDir, writeSandboxFile } from "@opencodingpartner/workers";
-import { DEMO_MESSAGE, applySwarmManifest, clearSessionMemory, coreIsOpen, createRoutine, deliverSlackEvent, deliverTelegramUpdate, fireDueRoutines, fireEvent, formatFleetStatus, formatFleetStatusJson, isolatePartner, listRoutines, parseSwarmManifest, partnerContainerArgv, pauseRoutine, readFleetStatus, readPackaging, runChatTurn, runDemo, slackSignature, slackTurn, startPartnerContainer, stopPartnerContainer, verifySlackRequest, verifyTelegramRequest } from "./index.js";
+import { DEMO_MESSAGE, applySwarmManifest, approveDoctorLine, clearSessionMemory, coreIsOpen, createRoutine, deliverSlackEvent, deliverTelegramUpdate, fireDueRoutines, fireEvent, formatApproveQueue, formatFleetStatus, formatFleetStatusJson, isolatePartner, listApproveQueue, listRoutines, parseSwarmManifest, partnerContainerArgv, pauseRoutine, readFleetStatus, readPackaging, runChatTurn, runDemo, slackSignature, slackTurn, startPartnerContainer, stopPartnerContainer, verifySlackRequest, verifyTelegramRequest } from "./index.js";
 import { allowComputerUse, captureComputerFrame, checkComputerFrame, computerTabText } from "./computer-tab.js";
 import { REVIEW_HOLD_CODING_CAP, rolesUnderReviewHold } from "./sdlc.js";
 
@@ -2363,6 +2363,34 @@ test("a swarm manifest validates, dry-runs, and applies partner workspaces", asy
     const refused = await applySwarmManifest(root, bad, { dryRun: true });
     assert.equal(refused.ok, false);
     assert.match(refused.text, /at least 1000 ms/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("approve list shows pending cards and the doctor line does not print the request", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-approve-list-"));
+  try {
+    assert.match(formatApproveQueue(await listApproveQueue(root)), /Approvals: none pending/);
+    await mkdir(path.join(root, ".ocp"), { recursive: true });
+    await writeFile(
+      path.join(root, ".ocp", "approvals.json"),
+      `${JSON.stringify({ cards: [{ id: "plan-1", kind: "plan", title: "Edit after this plan", detail: "add password=hunter2 to the helper", status: "pending" }] })}\n`,
+    );
+    await isolatePartner(root, "coding");
+    await mkdir(path.join(root, ".ocp/fleet/coding/.ocp"), { recursive: true });
+    await writeFile(
+      path.join(root, ".ocp/fleet/coding/.ocp/approvals.json"),
+      `${JSON.stringify({ cards: [{ id: "computer-1", kind: "computer", title: "Start the sandbox browser", detail: "open the page", status: "pending" }, { id: "plan-1", kind: "plan", title: "Edit after this plan", detail: "already decided", status: "approved" }] })}\n`,
+    );
+    const items = await listApproveQueue(root);
+    assert.deepEqual(items.map((item) => `${item.partner} ${item.id}`), ["session plan-1", "coding computer-1"]);
+    assert.match(formatApproveQueue(items), /session \. plan-1 plan pending/);
+    assert.match(formatApproveQueue(items), /coding \.ocp\/fleet\/coding computer-1 computer pending/);
+    const doctor = approveDoctorLine(items.length);
+    assert.match(doctor, /yellow Approvals: 2 pending/);
+    assert.doesNotMatch(doctor, /password=hunter2/);
+    assert.match(doctor, /does not decide a card/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

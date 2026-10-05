@@ -226,6 +226,35 @@ test("ocp channel slack stays offline without credentials and posts when they ar
   }
 });
 
+test("ocp approve list shows a pending card and does not decide it", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "ocp-approve-cli-"));
+  let captured = "";
+  const original = process.stdout.write.bind(process.stdout);
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    captured += String(chunk);
+    return true;
+  }) as typeof process.stdout.write;
+  try {
+    const empty = await main(["approve", "list", "--sandbox", root]);
+    assert.equal(empty, 0);
+    assert.match(captured, /Approvals: none pending/);
+    captured = "";
+    const { mkdirSync, writeFileSync, readFileSync } = await import("node:fs");
+    mkdirSync(path.join(root, ".ocp"), { recursive: true });
+    const queue = `${JSON.stringify({ cards: [{ id: "plan-1", kind: "plan", title: "Edit after this plan", detail: "add a helper", status: "pending" }] })}\n`;
+    writeFileSync(path.join(root, ".ocp", "approvals.json"), queue);
+    const listed = await main(["approve", "list", "--sandbox", root, "--json"]);
+    assert.equal(listed, 0);
+    const body = JSON.parse(captured) as { id: string; status: string }[];
+    assert.equal(body[0]?.id, "plan-1");
+    assert.equal(body[0]?.status, "pending");
+    assert.equal(readFileSync(path.join(root, ".ocp", "approvals.json"), "utf8"), queue);
+  } finally {
+    process.stdout.write = original;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("ocp fleet status lists a partner and can print json", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "ocp-fleet-cli-"));
   let captured = "";

@@ -11,6 +11,7 @@ export interface DoctorDeps {
   fetchImpl?: typeof fetch;
   playwrightPresent?: boolean;
   fleetLine?: string;
+  approveLine?: string;
 }
 
 export interface DoctorReport {
@@ -29,6 +30,7 @@ export async function runDoctor(deps: DoctorDeps): Promise<DoctorReport> {
   lines.push(slackLine(deps.env));
   lines.push(telegramLine(deps.env));
   lines.push(deps.fleetLine ?? "yellow Fleet: no partners. This check does not start containers. No telemetry is sent.");
+  lines.push(deps.approveLine ?? "green Approvals: none pending. This check does not decide a card.");
   lines.push("Prove-it: pnpm exec ocp chat --sandbox .sandbox \"Use the coding worker to create hello.txt with content:");
   lines.push("hello");
   lines.push("\"");

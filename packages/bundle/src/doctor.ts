@@ -1,5 +1,6 @@
 import { access, readFile } from "node:fs/promises";
 import path from "node:path";
+import { BOARD_SESSION_KEY } from "@opencodingpartner/mesh";
 import { resolveCodingMeter } from "./connected.js";
 import type { StackBins } from "./discover.js";
 
@@ -29,7 +30,7 @@ export async function runDoctor(deps: DoctorDeps): Promise<DoctorReport> {
   lines.push(layaLine(deps.bins));
   lines.push(meterLine(deps));
   lines.push(await gatewayLine(deps));
-  lines.push(await pluginLine(deps.repoRoot));
+  lines.push(await pluginLine(deps));
   lines.push(playwrightLine(deps.playwrightPresent === true));
   lines.push(slackLine(deps.env));
   lines.push(telegramLine(deps.env));
@@ -87,13 +88,40 @@ async function gatewayLine(deps: DoctorDeps): Promise<string> {
   }
 }
 
-async function pluginLine(repoRoot: string): Promise<string> {
-  const manifest = path.join(repoRoot, "integrations/openclaw-sandbox-write/openclaw.plugin.json");
+async function pluginLine(deps: DoctorDeps): Promise<string> {
+  const manifest = path.join(deps.repoRoot, "integrations/openclaw-sandbox-write/openclaw.plugin.json");
   try {
     await access(manifest);
-    return "green Write bridge plugin: integrations/openclaw-sandbox-write is in this repo. Load it on the gateway so write, delete, rename, copy, and append can say orchestration. This check does not prove the gateway loaded it. fs_write stays blocked.";
   } catch {
     return "red Write bridge plugin: integrations/openclaw-sandbox-write is missing. The gateway cannot invoke ocp_sandbox_write until that plugin is present.";
+  }
+  const gatewayHttp = (deps.gatewayHttp ?? deps.env.OPENCLAW_GATEWAY_URL ?? "http://127.0.0.1:18789").replace(/\/$/, "");
+  const fetchImpl = deps.fetchImpl ?? fetch;
+  let up = false;
+  try {
+    const health = await fetchImpl(`${gatewayHttp}/healthz`, { signal: AbortSignal.timeout(1500) });
+    up = health.ok;
+  } catch {
+    up = false;
+  }
+  if (!up) {
+    return "green Write bridge plugin: integrations/openclaw-sandbox-write is in this repo. The gateway did not answer, so this check does not prove it loaded. fs_write stays blocked.";
+  }
+  const headers: Record<string, string> = { "content-type": "application/json", "x-openclaw-session-key": BOARD_SESSION_KEY };
+  if (deps.env.OPENCLAW_GATEWAY_TOKEN) headers.authorization = `Bearer ${deps.env.OPENCLAW_GATEWAY_TOKEN}`;
+  try {
+    const response = await fetchImpl(`${gatewayHttp}/tools/invoke`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ tool: "ocp_sandbox_todo", sessionKey: BOARD_SESSION_KEY, args: { action: "status" } }),
+      signal: AbortSignal.timeout(1500),
+    });
+    if (response.status === 404) {
+      return "yellow Write bridge plugin: the gateway did not offer ocp_sandbox_todo. Load integrations/openclaw-sandbox-write on that gateway. This check does not update a list. fs_write stays blocked.";
+    }
+    return "green Write bridge plugin: the gateway offered ocp_sandbox_todo. This check does not update a list. fs_write stays blocked.";
+  } catch {
+    return "yellow Write bridge plugin: the gateway answered, but the tool check did not finish. This check does not update a list. fs_write stays blocked.";
   }
 }
 

@@ -84,6 +84,46 @@ test("doctor marks missing pieces and does not print a key", async () => {
     assert.match(telegram.transcript, /green Telegram: bot token and webhook secret are set/);
     assert.doesNotMatch(telegram.transcript, /123:telegram-secret/);
     assert.doesNotMatch(telegram.transcript, /webhook-secret-value/);
+    assert.match(telegram.transcript, /green Write bridge plugin: the gateway offered ocp_sandbox_todo/);
+    assert.match(telegram.transcript, /does not update a list/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("doctor asks whether the gateway offers the todo tool and does not send a bridge url", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-doctor-bridge-"));
+  try {
+    await mkdir(path.join(root, "integrations/openclaw-sandbox-write"), { recursive: true });
+    await writeFile(path.join(root, "integrations/openclaw-sandbox-write/openclaw.plugin.json"), "{}\n");
+    const down = await runDoctor({
+      env: {},
+      bins: {},
+      repoRoot: root,
+      gatewayHttp: "http://127.0.0.1:9",
+      fetchImpl: async () => {
+        throw new Error("refused");
+      },
+    });
+    assert.match(down.transcript, /The gateway did not answer, so this check does not prove it loaded/);
+    let body = "";
+    const missing = await runDoctor({
+      env: { OPENCLAW_GATEWAY_TOKEN: "gateway-token-secret" },
+      bins: {},
+      repoRoot: root,
+      gatewayHttp: "http://127.0.0.1:9",
+      fetchImpl: async (url, init) => {
+        if (String(url).endsWith("/healthz")) return new Response("ok", { status: 200 });
+        body = String(init?.body ?? "");
+        return new Response('{"ok":false}', { status: 404 });
+      },
+    });
+    assert.match(missing.transcript, /yellow Write bridge plugin: the gateway did not offer ocp_sandbox_todo/);
+    assert.match(missing.transcript, /does not update a list/);
+    assert.doesNotMatch(missing.transcript, /gateway-token-secret/);
+    assert.match(body, /"tool":"ocp_sandbox_todo"/);
+    assert.match(body, /"action":"status"/);
+    assert.doesNotMatch(body, /bridgeUrl/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

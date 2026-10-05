@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
-import { codingRunnerForEnv, copyViaOpenClaw, deleteViaOpenClaw, discoverStack, mkdirViaOpenClaw, predictWithLaya, renameViaOpenClaw, rmdirViaOpenClaw, runConnectedPath, runDoctor, sendOrchestrationTurn, startSandboxWriteBridge, writeViaOpenClaw } from "@opencodingpartner/bundle";
+import { codingRunnerForEnv, appendViaOpenClaw, copyViaOpenClaw, deleteViaOpenClaw, discoverStack, mkdirViaOpenClaw, predictWithLaya, renameViaOpenClaw, rmdirViaOpenClaw, runConnectedPath, runDoctor, sendOrchestrationTurn, startSandboxWriteBridge, writeViaOpenClaw } from "@opencodingpartner/bundle";
 import { access, copyFile, mkdir, readFile } from "node:fs/promises";
 import { acpOptIn, applySwarmManifest, captureComputerFrame, computerTabText, createRoutine, fireDueRoutines, fireEvent, formatRoutineList, formatSettings, isolatePartner, listRoutines, parseSwarmManifest, pauseRoutine, postSlackReply, readPackaging, resumeRoutine, returnComputer, runChatTurn, runDemo, slackCredentialStatus, slackTurn, startPartnerContainer, stopPartnerContainer, takeoverComputer, telegramTurn, validateSwarmManifest, type ChatTurnInput } from "@opencodingpartner/gateway";
 import { playwrightBrowserDriver } from "@opencodingpartner/workers";
@@ -324,6 +324,7 @@ async function runProductTurn(message: string, sandbox: string, computerExecute:
     openclawRmdir: (relativePath) => rmdirViaOpenClaw({ env, bins }, sandbox, relativePath),
     openclawRename: (fromPath, toPath) => renameViaOpenClaw({ env, bins }, sandbox, fromPath, toPath),
     openclawCopy: (fromPath, toPath) => copyViaOpenClaw({ env, bins }, sandbox, fromPath, toPath),
+    openclawAppend: (relativePath, content) => appendViaOpenClaw({ env, bins }, sandbox, relativePath, content),
   };
   if (bins.layaPython) {
     const pythonBin = bins.layaPython;

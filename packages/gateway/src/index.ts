@@ -123,6 +123,8 @@ export interface ChatTurnInput {
   openclawRmdir?: (relativePath: string) => Promise<{ ok: boolean; missing: boolean; detail: string }>;
   /** Gateway copy tool. `missing` means the plugin is absent and a local copy is allowed. */
   openclawCopy?: (fromPath: string, toPath: string) => Promise<{ ok: boolean; missing: boolean; detail: string }>;
+  /** Gateway append tool. `missing` means the plugin is absent and a local append is allowed. */
+  openclawAppend?: (relativePath: string, content: string) => Promise<{ ok: boolean; missing: boolean; detail: string }>;
   /** Bounded check runner. Tests inject this. The default does not use a shell. */
   checkExec?: (argv: readonly string[], cwd: string) => Promise<{ code: number; stdout: string; stderr: string }>;
 }
@@ -317,7 +319,7 @@ async function executeTurn(input: ChatTurnInput, session: SwarmSession, key: str
         via,
         note: `Plan is waiting. Say approve, deny, or redirect.\n${await formatApproveCards(input.sandboxRoot)}\nSDLC: .ocp/sdlc/intent.md, .ocp/sdlc/spec.md, .ocp/sdlc/plan.md`,
       };
-    } else if (input.grokRunner && openclawDrove && (input.openclawWrite || input.openclawDelete || input.openclawRename || input.openclawMkdir || input.openclawRmdir || input.openclawCopy)) {
+    } else if (input.grokRunner && openclawDrove && (input.openclawWrite || input.openclawDelete || input.openclawRename || input.openclawMkdir || input.openclawRmdir || input.openclawCopy || input.openclawAppend)) {
       const runner = input.grokRunner;
       const write = input.openclawWrite;
       const stage = await mkdtemp(path.join(tmpdir(), "ocp-stage-"));
@@ -830,6 +832,7 @@ async function applyToolReply(
   let renamedRemote = false;
   let copiedLocal = false;
   let appendedLocal = false;
+  let appendedRemote = false;
   let copiedRemote = false;
   let madeDirLocal = false;
   let madeDirRemote = false;
@@ -985,12 +988,13 @@ async function applyToolReply(
           log.push(line);
           observations.push(line);
         } else {
-          const added = await appendSandboxFile(input.sandboxRoot, step.path, step.content);
+          const added = await appendThroughTurn(input, openclawDrove, step.path, step.content);
           const line = added.ok ? `Tool: append ${step.path}` : `Tool: append ${step.path} (${added.detail})`;
           log.push(line);
           observations.push(line);
           if (added.ok) {
-            appendedLocal = true;
+            if (added.via === "openclaw") appendedRemote = true;
+            else appendedLocal = true;
             if (!kept.includes(step.path)) kept.push(step.path);
           }
         }
@@ -1023,6 +1027,7 @@ async function applyToolReply(
     renamedLocal ? "Rename path: local sandbox." : "",
     copiedRemote ? "Copy path: orchestration." : "",
     copiedLocal ? "Copy path: local sandbox." : "",
+    appendedRemote ? "Append path: orchestration." : "",
     appendedLocal ? "Append path: local sandbox." : "",
     madeDirRemote ? "Mkdir path: orchestration." : "",
     madeDirLocal ? "Mkdir path: local sandbox." : "",
@@ -1162,7 +1167,7 @@ async function codingPrompt(sandboxRoot: string, message: string): Promise<strin
   const planNote = planText ? `Accepted plan:\n${planText}\n` : "";
   const rules = await loadPartnerRules(sandboxRoot);
   const rulesNote = rules ? `Partner rules:\n${rules}\n` : "";
-  return `${history}${filesNote}${planNote}${rulesNote}User request:\n${message}\nReply with JSON only: {"steps":[{"tool":"list"|"read"|"grep"|"glob"|"run"|"write"|"patch"|"delete"|"rename"|"copy"|"append"|"mkdir"|"rmdir"|"todo","action":"add or complete","to":"relative destination","query":"text or /regex/","path":"relative","content":"full text for write, or todo text, or a 1-based todo index","diff":"unified diff for patch","argv":["node","--test","relative.test.ts"]}],"done":false}. One reply is one round. After you see Tool observations, send the next round. Set "done" to true when finished. List or read before you edit. Patch a file that already exists. Write only a new file. Append adds text to one existing file and does not create a file. Copy copies one existing file to a new relative path and leaves the source. The orchestration gateway does not append. A todo step uses action add with the task text, or action complete with a 1-based index or id. At most 12 todos. Allowed commands are node --test plus relative paths, pnpm test with no extra arguments, tsc --noEmit plus relative paths, git status, git status -sb, git status --short --branch, git diff plus relative paths, and git log --oneline -n N with N from 1 to 20, and git show HEAD: plus one relative path.`;
+  return `${history}${filesNote}${planNote}${rulesNote}User request:\n${message}\nReply with JSON only: {"steps":[{"tool":"list"|"read"|"grep"|"glob"|"run"|"write"|"patch"|"delete"|"rename"|"copy"|"append"|"mkdir"|"rmdir"|"todo","action":"add or complete","to":"relative destination","query":"text or /regex/","path":"relative","content":"full text for write, or todo text, or a 1-based todo index","diff":"unified diff for patch","argv":["node","--test","relative.test.ts"]}],"done":false}. One reply is one round. After you see Tool observations, send the next round. Set "done" to true when finished. List or read before you edit. Patch a file that already exists. Write only a new file. Append adds text to one existing file and does not create a file. When the gateway drove the turn, append uses the sandbox append bridge. A missing plugin appends locally. A refusal does not append locally. Copy copies one existing file to a new relative path and leaves the source. A todo step uses action add with the task text, or action complete with a 1-based index or id. At most 12 todos. Allowed commands are node --test plus relative paths, pnpm test with no extra arguments, tsc --noEmit plus relative paths, git status, git status -sb, git status --short --branch, git diff plus relative paths, and git log --oneline -n N with N from 1 to 20, and git show HEAD: plus one relative path.`;
 }
 
 async function mkdirThroughTurn(
@@ -1245,6 +1250,33 @@ async function copyThroughTurn(
   }
   const local = await copySandboxFile(input.sandboxRoot, fromPath, toPath);
   return { ok: local.ok, via: "local", detail: local.detail };
+}
+
+async function appendThroughTurn(
+  input: ChatTurnInput,
+  openclawDrove: boolean,
+  relativePath: string,
+  content: string,
+): Promise<{ ok: boolean; via: "openclaw" | "local"; detail: string }> {
+  if (openclawDrove && input.openclawAppend) {
+    const remote = await input.openclawAppend(relativePath, content);
+    if (remote.ok && (await fileEndsWith(input.sandboxRoot, relativePath, content))) {
+      return { ok: true, via: "openclaw", detail: remote.detail };
+    }
+    if (remote.ok || !remote.missing) {
+      return { ok: false, via: "openclaw", detail: remote.ok ? "Orchestration append did not add the text." : remote.detail };
+    }
+  }
+  const local = await appendSandboxFile(input.sandboxRoot, relativePath, content);
+  return { ok: local.ok, via: "local", detail: local.detail };
+}
+
+async function fileEndsWith(sandboxRoot: string, relativePath: string, content: string): Promise<boolean> {
+  try {
+    return (await readFile(path.join(sandboxRoot, relativePath), "utf8")).endsWith(content);
+  } catch {
+    return false;
+  }
 }
 
 async function renameThroughTurn(

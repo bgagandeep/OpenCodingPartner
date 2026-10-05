@@ -92,6 +92,22 @@ export default function register(api) {
     },
   });
   api.registerTool({
+    name: "ocp_sandbox_append",
+    description: "Append text to one existing sandbox file through the OpenCodingPartner write bridge.",
+    parameters: {
+      type: "object",
+      properties: {
+        bridgeUrl: { type: "string" },
+        relativePath: { type: "string" },
+        content: { type: "string" },
+      },
+      required: ["bridgeUrl", "relativePath", "content"],
+    },
+    async execute(_id, args) {
+      return postBridge(args.bridgeUrl, { relativePath: args.relativePath, content: args.content });
+    },
+  });
+  api.registerTool({
     name: "ocp_sandbox_rename",
     description: "Rename one sandbox file through the OpenCodingPartner write bridge.",
     parameters: {

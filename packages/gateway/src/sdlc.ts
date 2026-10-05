@@ -249,6 +249,66 @@ export function approveDoctorLine(pending: number): string {
   return `yellow Approvals: ${pending} pending. This check does not decide a card.`;
 }
 
+export interface ReviewHold {
+  partner: string;
+  workspace: string;
+  reason: string;
+}
+
+async function readReviewHold(sandboxRoot: string): Promise<string | undefined> {
+  try {
+    const text = (await readFile(sdlcPath(sandboxRoot, "review-hold"), "utf8")).trim();
+    return text.length > 0 ? text : "review hold";
+  } catch {
+    return undefined;
+  }
+}
+
+/** Review holds in the session sandbox and each partner workspace. This does not clear a hold. */
+export async function listReviewHolds(sessionRoot: string): Promise<ReviewHold[]> {
+  const holds: ReviewHold[] = [];
+  const session = await readReviewHold(sessionRoot);
+  if (session) holds.push({ partner: "session", workspace: ".", reason: session });
+  let names: string[] = [];
+  try {
+    names = await readdir(path.join(sessionRoot, ".ocp", "fleet"));
+  } catch {
+    names = [];
+  }
+  const partners: { id: string; workspace: string }[] = [];
+  for (const name of names) {
+    const workspace = path.join(sessionRoot, ".ocp", "fleet", name);
+    try {
+      const body = JSON.parse(await readFile(path.join(workspace, ".ocp", "identity.json"), "utf8")) as { id?: string };
+      if (body.id) partners.push({ id: body.id, workspace });
+    } catch {
+      // A directory without an identity is not a partner.
+    }
+  }
+  partners.sort((left, right) => left.id.localeCompare(right.id));
+  for (const partner of partners) {
+    const reason = await readReviewHold(partner.workspace);
+    if (reason) holds.push({ partner: partner.id, workspace: `.ocp/fleet/${partner.id}`, reason });
+  }
+  return holds;
+}
+
+export function formatReviewHolds(holds: readonly ReviewHold[]): string {
+  if (holds.length === 0) return "Review hold: none\n";
+  const lines = ["Review hold"];
+  for (const hold of holds) {
+    const reason = hold.reason.replace(/\s+/g, " ").trim().slice(0, 160);
+    lines.push(`${hold.partner} ${hold.workspace} ${reason}`);
+  }
+  lines.push("One coding worker until the plan is accepted again. This list does not accept the plan.");
+  return `${lines.join("\n")}\n`;
+}
+
+export function reviewHoldDoctorLine(count: number): string {
+  if (count === 0) return "green Review hold: none. One coding worker is not forced.";
+  return `yellow Review hold: ${count}. One coding worker until the plan is accepted again. This check does not accept the plan.`;
+}
+
 export async function formatApproveCards(sandboxRoot: string): Promise<string> {
   const cards = await readCards(sandboxRoot);
   if (cards.length === 0) return "";

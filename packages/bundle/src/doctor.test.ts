@@ -31,6 +31,7 @@ test("doctor marks missing pieces and does not print a key", async () => {
     assert.match(missing.transcript, /green Approvals: none pending/);
     assert.match(missing.transcript, /does not decide a card/);
     assert.match(missing.transcript, /yellow Computer frame: none at gtm\/last-frame.png/);
+    assert.match(missing.transcript, /green Review hold: none/);
     assert.match(missing.transcript, /yellow Docker: docker is not available/);
     assert.match(missing.transcript, /does not start containers/);
     assert.match(missing.transcript, /yellow Fleet: no partners/);

@@ -7,7 +7,7 @@ import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 import { codingRunnerForEnv, appendViaOpenClaw, computerFrameLine, copyViaOpenClaw, deleteViaOpenClaw, discoverStack, dockerLine, mkdirViaOpenClaw, predictWithLaya, renameViaOpenClaw, rmdirViaOpenClaw, runConnectedPath, runDoctor, sendOrchestrationTurn, startSandboxWriteBridge, todoViaOpenClaw, writeViaOpenClaw } from "@opencodingpartner/bundle";
 import { access, copyFile, mkdir, readFile } from "node:fs/promises";
-import { acpOptIn, applySwarmManifest, approveDoctorLine, captureComputerFrame, checkComputerFrame, checkComputerFrames, computerTabText, createRoutine, fireDueRoutines, fireEvent, formatApproveQueue, formatApproveQueueJson, formatRoutineList, formatSettings, fleetDoctorLine, formatFleetStatus, formatFleetStatusJson, isolatePartner, listApproveQueue, listRoutines, parseSwarmManifest, pauseRoutine, postSlackReply, postTelegramReply, readFleetStatus, readPackaging, resumeRoutine, returnComputer, runChatTurn, runDemo, slackCredentialStatus, slackTurn, startPartnerContainer, stopPartnerContainer, takeoverComputer, telegramCredentialStatus, telegramTurn, deliverSlackEvent, deliverTelegramUpdate, validateSwarmManifest, type ChatTurnInput } from "@opencodingpartner/gateway";
+import { acpOptIn, applySwarmManifest, approveDoctorLine, captureComputerFrame, checkComputerFrame, checkComputerFrames, computerTabText, createRoutine, fireDueRoutines, fireEvent, formatApproveQueue, formatApproveQueueJson, formatReviewHolds, formatRoutineList, formatSettings, fleetDoctorLine, formatFleetStatus, formatFleetStatusJson, isolatePartner, listApproveQueue, listReviewHolds, listRoutines, parseSwarmManifest, pauseRoutine, postSlackReply, postTelegramReply, readFleetStatus, readPackaging, resumeRoutine, returnComputer, reviewHoldDoctorLine, runChatTurn, runDemo, slackCredentialStatus, slackTurn, startPartnerContainer, stopPartnerContainer, takeoverComputer, telegramCredentialStatus, telegramTurn, deliverSlackEvent, deliverTelegramUpdate, validateSwarmManifest, type ChatTurnInput } from "@opencodingpartner/gateway";
 import { playwrightBrowserDriver } from "@opencodingpartner/workers";
 import { routeWithPredict } from "@opencodingpartner/policy";
 import { proveCoding, proveComputer } from "./prove.js";
@@ -258,7 +258,12 @@ export async function main(argv: readonly string[]): Promise<number> {
     }
     const sandbox = sand.value ?? ".sandbox";
     const items = await listApproveQueue(sandbox);
-    process.stdout.write(json ? formatApproveQueueJson(items) : formatApproveQueue(items));
+    const holds = await listReviewHolds(sandbox);
+    if (json) {
+      process.stdout.write(formatApproveQueueJson(items));
+      return 0;
+    }
+    process.stdout.write(`${formatApproveQueue(items)}${formatReviewHolds(holds)}`);
     return 0;
   }
   if (command === "doctor") {
@@ -296,6 +301,7 @@ export async function main(argv: readonly string[]): Promise<number> {
       approveLine: approveDoctorLine(pending),
       frameLine,
       dockerLine: dockerLine(await dockerAnswers()),
+      reviewLine: reviewHoldDoctorLine((await listReviewHolds(sandbox)).length),
     });
     process.stdout.write(report.transcript);
     return report.code;

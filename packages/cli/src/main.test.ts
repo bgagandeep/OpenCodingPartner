@@ -1471,6 +1471,60 @@ test("ocp stat names a file or directory and does not print contents", async () 
   }
 });
 
+test("ocp same compares two files and does not print them", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "ocp-same-"));
+  let captured = "";
+  const original = process.stdout.write.bind(process.stdout);
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    captured += String(chunk);
+    return true;
+  }) as typeof process.stdout.write;
+  try {
+    const { existsSync, mkdirSync, writeFileSync } = await import("node:fs");
+    assert.equal(await main(["same", "--sandbox", root]), 2);
+    assert.match(captured, /Usage: ocp same/);
+    writeFileSync(path.join(root, "a.txt"), "alpha-body\n");
+    writeFileSync(path.join(root, "b.txt"), "alpha-body\n");
+    captured = "";
+    assert.equal(await main(["same", "--from", "a.txt", "--to", "b.txt", "--sandbox", root]), 0);
+    assert.match(captured, /(^|\n)same\n/);
+    assert.doesNotMatch(captured, /alpha-body/);
+    assert.equal(existsSync(path.join(root, ".ocp/last-check.json")), false);
+    writeFileSync(path.join(root, "b.txt"), "beta-body\n");
+    captured = "";
+    assert.equal(await main(["same", "--from", "a.txt", "--to", "b.txt", "--sandbox", root]), 0);
+    assert.match(captured, /(^|\n)different\n/);
+    assert.doesNotMatch(captured, /alpha-body/);
+    assert.doesNotMatch(captured, /beta-body/);
+    captured = "";
+    assert.equal(await main(["same", "--from", "a.txt", "--to", "missing.txt", "--sandbox", root]), 1);
+    assert.match(captured, /file missing/);
+    writeFileSync(path.join(root, "secret.txt"), "password=hunter2\n");
+    captured = "";
+    assert.equal(await main(["same", "--from", "secret.txt", "--to", "a.txt", "--sandbox", root]), 1);
+    assert.match(captured, /blocked \(secret pattern\)/);
+    assert.doesNotMatch(captured, /hunter2/);
+    mkdirSync(path.join(root, "subdir"));
+    captured = "";
+    assert.equal(await main(["same", "--from", "subdir", "--to", "a.txt", "--sandbox", root]), 1);
+    assert.match(captured, /path is a directory/);
+    captured = "";
+    assert.equal(await main(["same", "--from", "../secret", "--to", "a.txt", "--sandbox", root]), 1);
+    assert.match(captured, /path refused/);
+    mkdirSync(path.join(root, ".ocp/fleet/coding"), { recursive: true });
+    writeFileSync(path.join(root, ".ocp/fleet/coding/one.txt"), "partner-body\n");
+    writeFileSync(path.join(root, ".ocp/fleet/coding/two.txt"), "partner-body\n");
+    captured = "";
+    assert.equal(await main(["same", "--from", "one.txt", "--to", "two.txt", "--sandbox", root, "--partner", "coding"]), 0);
+    assert.match(captured, /(^|\n)same\n/);
+    assert.doesNotMatch(captured, /partner-body/);
+    assert.doesNotMatch(captured, /beta-body/);
+  } finally {
+    process.stdout.write = original;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("ocp fleet status lists a partner and can print json", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "ocp-fleet-cli-"));
   let captured = "";

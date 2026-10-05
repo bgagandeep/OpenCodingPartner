@@ -1726,11 +1726,11 @@ test("ocp count names how many entries are in a directory", async () => {
     const { existsSync, mkdirSync, writeFileSync } = await import("node:fs");
     assert.equal(await main(["count", "--sandbox", root, "a", "b"]), 2);
     assert.match(captured, /Usage: ocp count/);
+    const missingRoot = path.join(root, "no-such-sandbox");
     captured = "";
-    assert.equal(await main(["count", "--sandbox", root]), 1);
+    assert.equal(await main(["count", "--sandbox", missingRoot]), 1);
     assert.match(captured, /directory missing/);
-    assert.equal(existsSync(root), false);
-    mkdirSync(root);
+    assert.equal(existsSync(missingRoot), false);
     captured = "";
     assert.equal(await main(["count", "--sandbox", root]), 0);
     assert.match(captured, /count 0\n/);

@@ -2807,6 +2807,99 @@ test("ocp shared only and join edit one file from another without printing it", 
   }
 });
 
+test("ocp clip pad and fold set a line width without printing the file", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "ocp-width-"));
+  let captured = "";
+  const original = process.stdout.write.bind(process.stdout);
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    captured += String(chunk);
+    return true;
+  }) as typeof process.stdout.write;
+  try {
+    const { existsSync, mkdirSync, writeFileSync } = await import("node:fs");
+    assert.equal(await main(["clip", "--sandbox", root]), 2);
+    assert.match(captured, /Usage: ocp clip/);
+    assert.equal(await main(["pad", "--n", "0", "--sandbox", root, "hello.txt"]), 2);
+    assert.equal(await main(["fold", "--sandbox", root, "hello.txt"]), 2);
+    captured = "";
+    assert.equal(await main(["clip", "--n", "4", "--sandbox", root, "missing.txt"]), 1);
+    assert.match(captured, /file missing/);
+    assert.equal(existsSync(path.join(root, "missing.txt")), false);
+    writeFileSync(path.join(root, "hello.txt"), "north-line\n\nsouth-line\n");
+    captured = "";
+    assert.equal(await main(["clip", "--n", "5", "--sandbox", root, "hello.txt"]), 0);
+    assert.match(captured, /clipped\n/);
+    assert.doesNotMatch(captured, /north-line/);
+    assert.doesNotMatch(captured, /south-line/);
+    assert.equal(readFileSync(path.join(root, "hello.txt"), "utf8"), "north\n\nsouth\n");
+    writeFileSync(path.join(root, "hello.txt"), "north-line\r\n");
+    captured = "";
+    assert.equal(await main(["pad", "--n", "12", "--sandbox", root, "hello.txt"]), 0);
+    assert.match(captured, /padded\n/);
+    assert.doesNotMatch(captured, /north-line/);
+    assert.equal(readFileSync(path.join(root, "hello.txt"), "utf8"), "north-line  \r\n");
+    writeFileSync(path.join(root, "hello.txt"), "north-line\n");
+    captured = "";
+    assert.equal(await main(["fold", "--n", "5", "--sandbox", root, "hello.txt"]), 0);
+    assert.match(captured, /folded\n/);
+    assert.doesNotMatch(captured, /north-line/);
+    assert.equal(readFileSync(path.join(root, "hello.txt"), "utf8"), "north\n-line\n");
+    writeFileSync(path.join(root, "hello.txt"), "ab\n");
+    captured = "";
+    assert.equal(await main(["clip", "--n", "5", "--sandbox", root, "hello.txt"]), 0);
+    assert.match(captured, /clean\n/);
+    assert.equal(readFileSync(path.join(root, "hello.txt"), "utf8"), "ab\n");
+    captured = "";
+    assert.equal(await main(["fold", "--n", "2", "--sandbox", root, "hello.txt"]), 0);
+    assert.match(captured, /clean\n/);
+    writeFileSync(path.join(root, "hello.txt"), "");
+    captured = "";
+    assert.equal(await main(["clip", "--n", "3", "--sandbox", root, "hello.txt"]), 0);
+    assert.equal(await main(["pad", "--n", "3", "--sandbox", root, "hello.txt"]), 0);
+    assert.equal(await main(["fold", "--n", "3", "--sandbox", root, "hello.txt"]), 0);
+    assert.match(captured, /clean\n/);
+    assert.equal(readFileSync(path.join(root, "hello.txt"), "utf8"), "");
+    assert.equal(existsSync(path.join(root, ".ocp/last-check.json")), false);
+    writeFileSync(path.join(root, "secret.txt"), "password=hunter2\n");
+    captured = "";
+    assert.equal(await main(["clip", "--n", "4", "--sandbox", root, "secret.txt"]), 1);
+    assert.match(captured, /blocked \(secret pattern\)/);
+    assert.doesNotMatch(captured, /hunter2/);
+    assert.equal(readFileSync(path.join(root, "secret.txt"), "utf8"), "password=hunter2\n");
+    writeFileSync(path.join(root, "hello.txt"), "north-line\0south-line\n");
+    captured = "";
+    assert.equal(await main(["fold", "--n", "4", "--sandbox", root, "hello.txt"]), 1);
+    assert.match(captured, /not a text file/);
+    assert.equal(readFileSync(path.join(root, "hello.txt"), "utf8"), "north-line\0south-line\n");
+    mkdirSync(path.join(root, "subdir"));
+    captured = "";
+    assert.equal(await main(["pad", "--n", "4", "--sandbox", root, "subdir"]), 1);
+    assert.match(captured, /path is a directory/);
+    captured = "";
+    assert.equal(await main(["clip", "--n", "4", "--sandbox", root, "../secret"]), 1);
+    assert.match(captured, /path refused/);
+    captured = "";
+    assert.equal(await main(["pad", "--n", "4", "--sandbox", root, ".ocp/note"]), 1);
+    assert.match(captured, /path refused/);
+    captured = "";
+    assert.equal(await main(["fold", "--n", "4", "--sandbox", root, "gtm/note"]), 1);
+    assert.match(captured, /path refused/);
+    mkdirSync(path.join(root, ".ocp/fleet/coding"), { recursive: true });
+    writeFileSync(path.join(root, ".ocp/fleet/coding/note.txt"), "north-line\n");
+    writeFileSync(path.join(root, "hello.txt"), "stay-line\n");
+    captured = "";
+    assert.equal(await main(["clip", "--n", "5", "--sandbox", root, "--partner", "coding", "note.txt"]), 0);
+    assert.match(captured, /clipped\n/);
+    assert.doesNotMatch(captured, /north-line/);
+    assert.doesNotMatch(captured, /stay-line/);
+    assert.equal(readFileSync(path.join(root, ".ocp/fleet/coding/note.txt"), "utf8"), "north\n");
+    assert.equal(readFileSync(path.join(root, "hello.txt"), "utf8"), "stay-line\n");
+  } finally {
+    process.stdout.write = original;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("ocp fleet status lists a partner and can print json", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "ocp-fleet-cli-"));
   let captured = "";

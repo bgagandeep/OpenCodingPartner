@@ -1926,6 +1926,67 @@ test("ocp keep drop and uniq edit lines without printing them", async () => {
   }
 });
 
+test("ocp sort and reverse reorder lines without printing them", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "ocp-order-"));
+  let captured = "";
+  const original = process.stdout.write.bind(process.stdout);
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    captured += String(chunk);
+    return true;
+  }) as typeof process.stdout.write;
+  try {
+    const { existsSync, mkdirSync, writeFileSync } = await import("node:fs");
+    assert.equal(await main(["sort", "--sandbox", root]), 2);
+    assert.match(captured, /Usage: ocp sort/);
+    assert.equal(await main(["reverse", "--sandbox", root]), 2);
+    captured = "";
+    assert.equal(await main(["sort", "--sandbox", root, "missing.txt"]), 1);
+    assert.match(captured, /file missing/);
+    assert.equal(existsSync(path.join(root, "missing.txt")), false);
+    writeFileSync(path.join(root, "hello.txt"), "beta-line\nalpha-line\n");
+    captured = "";
+    assert.equal(await main(["sort", "--sandbox", root, "hello.txt"]), 0);
+    assert.match(captured, /sorted\n/);
+    assert.doesNotMatch(captured, /beta-line/);
+    assert.doesNotMatch(captured, /alpha-line/);
+    assert.equal(readFileSync(path.join(root, "hello.txt"), "utf8"), "alpha-line\nbeta-line\n");
+    captured = "";
+    assert.equal(await main(["sort", "--sandbox", root, "hello.txt"]), 0);
+    assert.match(captured, /clean\n/);
+    assert.equal(readFileSync(path.join(root, "hello.txt"), "utf8"), "alpha-line\nbeta-line\n");
+    captured = "";
+    assert.equal(await main(["reverse", "--sandbox", root, "hello.txt"]), 0);
+    assert.match(captured, /reversed\n/);
+    assert.doesNotMatch(captured, /alpha-line/);
+    assert.equal(readFileSync(path.join(root, "hello.txt"), "utf8"), "beta-line\nalpha-line\n");
+    assert.equal(existsSync(path.join(root, ".ocp/last-check.json")), false);
+    writeFileSync(path.join(root, "secret.txt"), "password=hunter2\nzeta\n");
+    captured = "";
+    assert.equal(await main(["sort", "--sandbox", root, "secret.txt"]), 1);
+    assert.match(captured, /blocked \(secret pattern\)/);
+    assert.doesNotMatch(captured, /hunter2/);
+    assert.equal(readFileSync(path.join(root, "secret.txt"), "utf8"), "password=hunter2\nzeta\n");
+    mkdirSync(path.join(root, "subdir"));
+    captured = "";
+    assert.equal(await main(["reverse", "--sandbox", root, "subdir"]), 1);
+    assert.match(captured, /path is a directory/);
+    captured = "";
+    assert.equal(await main(["sort", "--sandbox", root, "../secret"]), 1);
+    assert.match(captured, /path refused/);
+    mkdirSync(path.join(root, ".ocp/fleet/coding"), { recursive: true });
+    writeFileSync(path.join(root, ".ocp/fleet/coding/note.txt"), "zeta\nalpha\n");
+    captured = "";
+    assert.equal(await main(["sort", "--sandbox", root, "--partner", "coding", "note.txt"]), 0);
+    assert.match(captured, /sorted\n/);
+    assert.doesNotMatch(captured, /zeta/);
+    assert.equal(readFileSync(path.join(root, ".ocp/fleet/coding/note.txt"), "utf8"), "alpha\nzeta\n");
+    assert.equal(readFileSync(path.join(root, "hello.txt"), "utf8"), "beta-line\nalpha-line\n");
+  } finally {
+    process.stdout.write = original;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("ocp fleet status lists a partner and can print json", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "ocp-fleet-cli-"));
   let captured = "";

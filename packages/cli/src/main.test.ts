@@ -1926,6 +1926,66 @@ test("ocp keep drop and uniq edit lines without printing them", async () => {
   }
 });
 
+test("ocp mtime prints when a path changed and does not print the file", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "ocp-mtime-"));
+  let captured = "";
+  const original = process.stdout.write.bind(process.stdout);
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    captured += String(chunk);
+    return true;
+  }) as typeof process.stdout.write;
+  try {
+    const { existsSync, mkdirSync, statSync, writeFileSync } = await import("node:fs");
+    assert.equal(await main(["mtime", "--sandbox", root]), 2);
+    assert.match(captured, /Usage: ocp mtime/);
+    captured = "";
+    assert.equal(await main(["mtime", "--sandbox", root, "missing.txt"]), 1);
+    assert.match(captured, /file missing/);
+    assert.equal(existsSync(path.join(root, "missing.txt")), false);
+    writeFileSync(path.join(root, "hello.txt"), "private-body\n");
+    const fileTime = statSync(path.join(root, "hello.txt")).mtime.toISOString();
+    captured = "";
+    assert.equal(await main(["mtime", "--sandbox", root, "hello.txt"]), 0);
+    assert.ok(captured.includes(`mtime ${fileTime}\n`));
+    assert.doesNotMatch(captured, /private-body/);
+    assert.equal(existsSync(path.join(root, ".ocp/last-check.json")), false);
+    mkdirSync(path.join(root, "subdir"));
+    const dirTime = statSync(path.join(root, "subdir")).mtime.toISOString();
+    captured = "";
+    assert.equal(await main(["mtime", "--sandbox", root, "subdir"]), 0);
+    assert.ok(captured.includes(`mtime ${dirTime}\n`));
+    writeFileSync(path.join(root, "secret.txt"), "password=hunter2\n");
+    captured = "";
+    assert.equal(await main(["mtime", "--sandbox", root, "secret.txt"]), 0);
+    assert.match(captured, /skipped\n/);
+    assert.doesNotMatch(captured, /hunter2/);
+    assert.doesNotMatch(captured, /mtime /);
+    captured = "";
+    assert.equal(await main(["mtime", "--sandbox", root, "password=hunter2"]), 1);
+    assert.match(captured, /blocked \(secret pattern\)/);
+    assert.doesNotMatch(captured, /hunter2/);
+    captured = "";
+    assert.equal(await main(["mtime", "--sandbox", root, "../secret"]), 1);
+    assert.match(captured, /path refused/);
+    captured = "";
+    assert.equal(await main(["mtime", "--sandbox", root, ".ocp/note"]), 1);
+    assert.match(captured, /path refused/);
+    mkdirSync(path.join(root, ".ocp/fleet/coding"), { recursive: true });
+    writeFileSync(path.join(root, ".ocp/fleet/coding/note.txt"), "partner-only\n");
+    const partnerTime = statSync(path.join(root, ".ocp/fleet/coding/note.txt")).mtime.toISOString();
+    captured = "";
+    assert.equal(await main(["mtime", "--sandbox", root, "--partner", "coding", "note.txt"]), 0);
+    assert.ok(captured.includes(`mtime ${partnerTime}\n`));
+    assert.doesNotMatch(captured, /partner-only/);
+    captured = "";
+    assert.equal(await main(["mtime", "--sandbox", root, "note.txt"]), 1);
+    assert.match(captured, /file missing/);
+  } finally {
+    process.stdout.write = original;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("ocp fleet status lists a partner and can print json", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "ocp-fleet-cli-"));
   let captured = "";

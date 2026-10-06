@@ -1781,6 +1781,126 @@ test("ocp count names how many entries are in a directory", async () => {
   }
 });
 
+test("ocp swap exchanges two files and does not print them", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "ocp-swap-"));
+  let captured = "";
+  const original = process.stdout.write.bind(process.stdout);
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    captured += String(chunk);
+    return true;
+  }) as typeof process.stdout.write;
+  try {
+    const { existsSync, mkdirSync, writeFileSync } = await import("node:fs");
+    assert.equal(await main(["swap", "--sandbox", root]), 2);
+    assert.match(captured, /Usage: ocp swap/);
+    writeFileSync(path.join(root, "a.txt"), "alpha-body\n");
+    captured = "";
+    assert.equal(await main(["swap", "--from", "a.txt", "--to", "missing.txt", "--sandbox", root]), 1);
+    assert.match(captured, /file missing/);
+    assert.equal(readFileSync(path.join(root, "a.txt"), "utf8"), "alpha-body\n");
+    assert.equal(existsSync(path.join(root, "missing.txt")), false);
+    writeFileSync(path.join(root, "b.txt"), "beta-body\n");
+    captured = "";
+    assert.equal(await main(["swap", "--from", "a.txt", "--to", "b.txt", "--sandbox", root]), 0);
+    assert.match(captured, /swapped\n/);
+    assert.doesNotMatch(captured, /alpha-body/);
+    assert.doesNotMatch(captured, /beta-body/);
+    assert.equal(readFileSync(path.join(root, "a.txt"), "utf8"), "beta-body\n");
+    assert.equal(readFileSync(path.join(root, "b.txt"), "utf8"), "alpha-body\n");
+    assert.equal(existsSync(path.join(root, ".ocp/last-check.json")), false);
+    captured = "";
+    assert.equal(await main(["swap", "--from", "a.txt", "--to", "a.txt", "--sandbox", root]), 1);
+    assert.match(captured, /path refused/);
+    assert.equal(readFileSync(path.join(root, "a.txt"), "utf8"), "beta-body\n");
+    mkdirSync(path.join(root, "subdir"));
+    captured = "";
+    assert.equal(await main(["swap", "--from", "subdir", "--to", "a.txt", "--sandbox", root]), 1);
+    assert.match(captured, /path is a directory/);
+    assert.equal(readFileSync(path.join(root, "a.txt"), "utf8"), "beta-body\n");
+    writeFileSync(path.join(root, "secret.txt"), "password=hunter2\n");
+    captured = "";
+    assert.equal(await main(["swap", "--from", "secret.txt", "--to", "a.txt", "--sandbox", root]), 1);
+    assert.match(captured, /blocked \(secret pattern\)/);
+    assert.doesNotMatch(captured, /hunter2/);
+    assert.equal(readFileSync(path.join(root, "secret.txt"), "utf8"), "password=hunter2\n");
+    assert.equal(readFileSync(path.join(root, "a.txt"), "utf8"), "beta-body\n");
+    captured = "";
+    assert.equal(await main(["swap", "--from", "../secret", "--to", "a.txt", "--sandbox", root]), 1);
+    assert.match(captured, /path refused/);
+    mkdirSync(path.join(root, ".ocp/fleet/coding"), { recursive: true });
+    writeFileSync(path.join(root, ".ocp/fleet/coding/one.txt"), "partner-one\n");
+    writeFileSync(path.join(root, ".ocp/fleet/coding/two.txt"), "partner-two\n");
+    captured = "";
+    assert.equal(await main(["swap", "--from", "one.txt", "--to", "two.txt", "--sandbox", root, "--partner", "coding"]), 0);
+    assert.match(captured, /swapped\n/);
+    assert.doesNotMatch(captured, /partner-one/);
+    assert.equal(readFileSync(path.join(root, ".ocp/fleet/coding/one.txt"), "utf8"), "partner-two\n");
+    assert.equal(readFileSync(path.join(root, ".ocp/fleet/coding/two.txt"), "utf8"), "partner-one\n");
+    assert.equal(readFileSync(path.join(root, "a.txt"), "utf8"), "beta-body\n");
+  } finally {
+    process.stdout.write = original;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("ocp mvdir moves one directory and does not print its files", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "ocp-mvdir-"));
+  let captured = "";
+  const original = process.stdout.write.bind(process.stdout);
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    captured += String(chunk);
+    return true;
+  }) as typeof process.stdout.write;
+  try {
+    const { existsSync, mkdirSync, writeFileSync } = await import("node:fs");
+    assert.equal(await main(["mvdir", "--sandbox", root]), 2);
+    assert.match(captured, /Usage: ocp mvdir/);
+    mkdirSync(path.join(root, "src"));
+    writeFileSync(path.join(root, "src/note.txt"), "private-body\n");
+    writeFileSync(path.join(root, "keep.txt"), "stay-body\n");
+    captured = "";
+    assert.equal(await main(["mvdir", "--from", "src", "--to", "dest", "--sandbox", root]), 0);
+    assert.match(captured, /moved\n/);
+    assert.doesNotMatch(captured, /private-body/);
+    assert.equal(existsSync(path.join(root, "src")), false);
+    assert.equal(readFileSync(path.join(root, "dest/note.txt"), "utf8"), "private-body\n");
+    assert.equal(readFileSync(path.join(root, "keep.txt"), "utf8"), "stay-body\n");
+    assert.equal(existsSync(path.join(root, ".ocp/last-check.json")), false);
+    captured = "";
+    assert.equal(await main(["mvdir", "--from", "keep.txt", "--to", "other", "--sandbox", root]), 1);
+    assert.match(captured, /path is a file/);
+    assert.equal(readFileSync(path.join(root, "keep.txt"), "utf8"), "stay-body\n");
+    captured = "";
+    assert.equal(await main(["mvdir", "--from", "missing", "--to", "gone", "--sandbox", root]), 1);
+    assert.match(captured, /directory missing/);
+    assert.equal(existsSync(path.join(root, "gone")), false);
+    mkdirSync(path.join(root, "taken"));
+    captured = "";
+    assert.equal(await main(["mvdir", "--from", "dest", "--to", "taken", "--sandbox", root]), 1);
+    assert.match(captured, /target already exists/);
+    assert.equal(existsSync(path.join(root, "dest/note.txt")), true);
+    captured = "";
+    assert.equal(await main(["mvdir", "--from", "dest", "--to", "dest/inner", "--sandbox", root]), 1);
+    assert.match(captured, /path refused/);
+    assert.equal(existsSync(path.join(root, "dest/note.txt")), true);
+    captured = "";
+    assert.equal(await main(["mvdir", "--from", "../secret", "--to", "out", "--sandbox", root]), 1);
+    assert.match(captured, /path refused/);
+    mkdirSync(path.join(root, ".ocp/fleet/coding/box"), { recursive: true });
+    writeFileSync(path.join(root, ".ocp/fleet/coding/box/note.txt"), "partner-only\n");
+    captured = "";
+    assert.equal(await main(["mvdir", "--from", "box", "--to", "boxed", "--sandbox", root, "--partner", "coding"]), 0);
+    assert.match(captured, /moved\n/);
+    assert.doesNotMatch(captured, /partner-only/);
+    assert.equal(readFileSync(path.join(root, ".ocp/fleet/coding/boxed/note.txt"), "utf8"), "partner-only\n");
+    assert.equal(existsSync(path.join(root, "box")), false);
+    assert.equal(existsSync(path.join(root, "dest/note.txt")), true);
+  } finally {
+    process.stdout.write = original;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("ocp fleet status lists a partner and can print json", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "ocp-fleet-cli-"));
   let captured = "";

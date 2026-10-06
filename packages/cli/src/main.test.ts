@@ -2048,6 +2048,106 @@ test("ocp lower and upper change case without printing the file", async () => {
   }
 });
 
+test("ocp sub once and erase change a phrase without printing the file", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "ocp-sub-"));
+  let captured = "";
+  const original = process.stdout.write.bind(process.stdout);
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    captured += String(chunk);
+    return true;
+  }) as typeof process.stdout.write;
+  try {
+    const { existsSync, mkdirSync, writeFileSync } = await import("node:fs");
+    assert.equal(await main(["sub", "--sandbox", root]), 2);
+    assert.match(captured, /Usage: ocp sub/);
+    assert.equal(await main(["once", "--text", "alpha-token", "--sandbox", root]), 2);
+    assert.equal(await main(["erase", "--sandbox", root, "hello.txt"]), 2);
+    captured = "";
+    assert.equal(await main(["sub", "--text", "alpha-token", "--with", "beta-token", "--sandbox", root, "missing.txt"]), 1);
+    assert.match(captured, /file missing/);
+    assert.equal(existsSync(path.join(root, "missing.txt")), false);
+    writeFileSync(path.join(root, "hello.txt"), "alpha-token and alpha-token\n");
+    captured = "";
+    assert.equal(await main(["sub", "--text", "alpha-token", "--with", "beta-token", "--sandbox", root, "hello.txt"]), 0);
+    assert.match(captured, /changed\n/);
+    assert.doesNotMatch(captured, /alpha-token/);
+    assert.doesNotMatch(captured, /beta-token/);
+    assert.equal(readFileSync(path.join(root, "hello.txt"), "utf8"), "beta-token and beta-token\n");
+    writeFileSync(path.join(root, "hello.txt"), "alpha-token and alpha-token\n");
+    captured = "";
+    assert.equal(await main(["once", "--text", "alpha-token", "--with", "beta-token", "--sandbox", root, "hello.txt"]), 0);
+    assert.match(captured, /once\n/);
+    assert.doesNotMatch(captured, /alpha-token/);
+    assert.doesNotMatch(captured, /beta-token/);
+    assert.equal(readFileSync(path.join(root, "hello.txt"), "utf8"), "beta-token and alpha-token\n");
+    writeFileSync(path.join(root, "hello.txt"), "alpha-token and alpha-token\r\n");
+    captured = "";
+    assert.equal(await main(["erase", "--text", "alpha-token", "--sandbox", root, "hello.txt"]), 0);
+    assert.match(captured, /erased\n/);
+    assert.doesNotMatch(captured, /alpha-token/);
+    assert.equal(readFileSync(path.join(root, "hello.txt"), "utf8"), " and \r\n");
+    writeFileSync(path.join(root, "hello.txt"), "stay-token\n");
+    captured = "";
+    assert.equal(await main(["sub", "--text", "missing-token", "--with", "beta-token", "--sandbox", root, "hello.txt"]), 0);
+    assert.match(captured, /clean\n/);
+    assert.equal(readFileSync(path.join(root, "hello.txt"), "utf8"), "stay-token\n");
+    assert.equal(existsSync(path.join(root, ".ocp/last-check.json")), false);
+    writeFileSync(path.join(root, "secret.txt"), "password=hunter2\n");
+    captured = "";
+    assert.equal(await main(["erase", "--text", "password", "--sandbox", root, "secret.txt"]), 1);
+    assert.match(captured, /blocked \(secret pattern\)/);
+    assert.doesNotMatch(captured, /hunter2/);
+    assert.equal(readFileSync(path.join(root, "secret.txt"), "utf8"), "password=hunter2\n");
+    captured = "";
+    assert.equal(await main(["sub", "--text", "password=hunter2", "--with", "beta-token", "--sandbox", root, "hello.txt"]), 1);
+    assert.match(captured, /query refused/);
+    assert.doesNotMatch(captured, /hunter2/);
+    assert.equal(readFileSync(path.join(root, "hello.txt"), "utf8"), "stay-token\n");
+    captured = "";
+    assert.equal(await main(["once", "--text", "stay-token", "--with", "password=hunter2", "--sandbox", root, "hello.txt"]), 1);
+    assert.match(captured, /query refused/);
+    assert.doesNotMatch(captured, /hunter2/);
+    assert.equal(readFileSync(path.join(root, "hello.txt"), "utf8"), "stay-token\n");
+    writeFileSync(path.join(root, "hello.txt"), "word =hunter2\n");
+    captured = "";
+    assert.equal(await main(["sub", "--text", "word", "--with", "password", "--sandbox", root, "hello.txt"]), 1);
+    assert.match(captured, /blocked \(secret pattern\)/);
+    assert.doesNotMatch(captured, /hunter2/);
+    assert.equal(readFileSync(path.join(root, "hello.txt"), "utf8"), "word =hunter2\n");
+    writeFileSync(path.join(root, "hello.txt"), "alpha-token\0stay\n");
+    captured = "";
+    assert.equal(await main(["once", "--text", "alpha-token", "--with", "beta-token", "--sandbox", root, "hello.txt"]), 1);
+    assert.match(captured, /not a text file/);
+    assert.equal(readFileSync(path.join(root, "hello.txt"), "utf8"), "alpha-token\0stay\n");
+    mkdirSync(path.join(root, "subdir"));
+    captured = "";
+    assert.equal(await main(["erase", "--text", "alpha-token", "--sandbox", root, "subdir"]), 1);
+    assert.match(captured, /path is a directory/);
+    captured = "";
+    assert.equal(await main(["sub", "--text", "alpha-token", "--with", "beta-token", "--sandbox", root, "../secret"]), 1);
+    assert.match(captured, /path refused/);
+    captured = "";
+    assert.equal(await main(["once", "--text", "alpha-token", "--with", "beta-token", "--sandbox", root, ".ocp/note"]), 1);
+    assert.match(captured, /path refused/);
+    captured = "";
+    assert.equal(await main(["erase", "--text", "alpha-token", "--sandbox", root, "gtm/note"]), 1);
+    assert.match(captured, /path refused/);
+    mkdirSync(path.join(root, ".ocp/fleet/coding"), { recursive: true });
+    writeFileSync(path.join(root, ".ocp/fleet/coding/note.txt"), "alpha-token\n");
+    writeFileSync(path.join(root, "hello.txt"), "stay-token\n");
+    captured = "";
+    assert.equal(await main(["sub", "--text", "alpha-token", "--with", "beta-token", "--sandbox", root, "--partner", "coding", "note.txt"]), 0);
+    assert.match(captured, /changed\n/);
+    assert.doesNotMatch(captured, /alpha-token/);
+    assert.doesNotMatch(captured, /beta-token/);
+    assert.equal(readFileSync(path.join(root, ".ocp/fleet/coding/note.txt"), "utf8"), "beta-token\n");
+    assert.equal(readFileSync(path.join(root, "hello.txt"), "utf8"), "stay-token\n");
+  } finally {
+    process.stdout.write = original;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("ocp fleet status lists a partner and can print json", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "ocp-fleet-cli-"));
   let captured = "";

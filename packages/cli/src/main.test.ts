@@ -2900,6 +2900,103 @@ test("ocp clip pad and fold set a line width without printing the file", async (
   }
 });
 
+test("ocp col dropcol and swapcol edit fields without printing the file", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "ocp-col-"));
+  let captured = "";
+  const original = process.stdout.write.bind(process.stdout);
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    captured += String(chunk);
+    return true;
+  }) as typeof process.stdout.write;
+  try {
+    const { existsSync, mkdirSync, writeFileSync } = await import("node:fs");
+    assert.equal(await main(["col", "--sandbox", root]), 2);
+    assert.match(captured, /Usage: ocp col/);
+    assert.equal(await main(["dropcol", "--n", "0", "--sandbox", root, "hello.txt"]), 2);
+    assert.equal(await main(["swapcol", "--n", "1", "--sandbox", root, "hello.txt"]), 2);
+    captured = "";
+    assert.equal(await main(["col", "--n", "1", "--sandbox", root, "missing.txt"]), 1);
+    assert.match(captured, /file missing/);
+    assert.equal(existsSync(path.join(root, "missing.txt")), false);
+    writeFileSync(path.join(root, "hello.txt"), "alpha-name  beta-mail\n\ngamma-id\n");
+    captured = "";
+    assert.equal(await main(["col", "--n", "2", "--sandbox", root, "hello.txt"]), 0);
+    assert.match(captured, /column\n/);
+    assert.doesNotMatch(captured, /alpha-name/);
+    assert.doesNotMatch(captured, /beta-mail/);
+    assert.doesNotMatch(captured, /gamma-id/);
+    assert.equal(readFileSync(path.join(root, "hello.txt"), "utf8"), "beta-mail\n\n\n");
+    writeFileSync(path.join(root, "hello.txt"), "alpha-name\tbeta-mail\r\n");
+    captured = "";
+    assert.equal(await main(["dropcol", "--n", "1", "--sandbox", root, "hello.txt"]), 0);
+    assert.match(captured, /dropcol\n/);
+    assert.doesNotMatch(captured, /alpha-name/);
+    assert.doesNotMatch(captured, /beta-mail/);
+    assert.equal(readFileSync(path.join(root, "hello.txt"), "utf8"), "beta-mail\r\n");
+    writeFileSync(path.join(root, "hello.txt"), "alpha-name beta-mail gamma-id\n");
+    captured = "";
+    assert.equal(await main(["swapcol", "--n", "1", "--with", "3", "--sandbox", root, "hello.txt"]), 0);
+    assert.match(captured, /swapcol\n/);
+    assert.doesNotMatch(captured, /alpha-name/);
+    assert.doesNotMatch(captured, /gamma-id/);
+    assert.equal(readFileSync(path.join(root, "hello.txt"), "utf8"), "gamma-id beta-mail alpha-name\n");
+    writeFileSync(path.join(root, "hello.txt"), "alpha-name\n");
+    captured = "";
+    assert.equal(await main(["col", "--n", "1", "--sandbox", root, "hello.txt"]), 0);
+    assert.match(captured, /clean\n/);
+    assert.equal(readFileSync(path.join(root, "hello.txt"), "utf8"), "alpha-name\n");
+    captured = "";
+    assert.equal(await main(["swapcol", "--n", "1", "--with", "1", "--sandbox", root, "hello.txt"]), 0);
+    assert.match(captured, /clean\n/);
+    writeFileSync(path.join(root, "hello.txt"), "");
+    captured = "";
+    assert.equal(await main(["col", "--n", "1", "--sandbox", root, "hello.txt"]), 0);
+    assert.equal(await main(["dropcol", "--n", "1", "--sandbox", root, "hello.txt"]), 0);
+    assert.equal(await main(["swapcol", "--n", "1", "--with", "2", "--sandbox", root, "hello.txt"]), 0);
+    assert.match(captured, /clean\n/);
+    assert.equal(readFileSync(path.join(root, "hello.txt"), "utf8"), "");
+    assert.equal(existsSync(path.join(root, ".ocp/last-check.json")), false);
+    writeFileSync(path.join(root, "secret.txt"), "password=hunter2\n");
+    captured = "";
+    assert.equal(await main(["col", "--n", "1", "--sandbox", root, "secret.txt"]), 1);
+    assert.match(captured, /blocked \(secret pattern\)/);
+    assert.doesNotMatch(captured, /hunter2/);
+    assert.equal(readFileSync(path.join(root, "secret.txt"), "utf8"), "password=hunter2\n");
+    writeFileSync(path.join(root, "hello.txt"), "alpha-name\0beta-mail\n");
+    captured = "";
+    assert.equal(await main(["dropcol", "--n", "1", "--sandbox", root, "hello.txt"]), 1);
+    assert.match(captured, /not a text file/);
+    assert.equal(readFileSync(path.join(root, "hello.txt"), "utf8"), "alpha-name\0beta-mail\n");
+    mkdirSync(path.join(root, "subdir"));
+    captured = "";
+    assert.equal(await main(["swapcol", "--n", "1", "--with", "2", "--sandbox", root, "subdir"]), 1);
+    assert.match(captured, /path is a directory/);
+    captured = "";
+    assert.equal(await main(["col", "--n", "1", "--sandbox", root, "../secret"]), 1);
+    assert.match(captured, /path refused/);
+    captured = "";
+    assert.equal(await main(["dropcol", "--n", "1", "--sandbox", root, ".ocp/note"]), 1);
+    assert.match(captured, /path refused/);
+    captured = "";
+    assert.equal(await main(["swapcol", "--n", "1", "--with", "2", "--sandbox", root, "gtm/note"]), 1);
+    assert.match(captured, /path refused/);
+    mkdirSync(path.join(root, ".ocp/fleet/coding"), { recursive: true });
+    writeFileSync(path.join(root, ".ocp/fleet/coding/note.txt"), "alpha-name beta-mail\n");
+    writeFileSync(path.join(root, "hello.txt"), "stay-line\n");
+    captured = "";
+    assert.equal(await main(["col", "--n", "1", "--sandbox", root, "--partner", "coding", "note.txt"]), 0);
+    assert.match(captured, /column\n/);
+    assert.doesNotMatch(captured, /alpha-name/);
+    assert.doesNotMatch(captured, /beta-mail/);
+    assert.doesNotMatch(captured, /stay-line/);
+    assert.equal(readFileSync(path.join(root, ".ocp/fleet/coding/note.txt"), "utf8"), "alpha-name\n");
+    assert.equal(readFileSync(path.join(root, "hello.txt"), "utf8"), "stay-line\n");
+  } finally {
+    process.stdout.write = original;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("ocp fleet status lists a partner and can print json", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "ocp-fleet-cli-"));
   let captured = "";

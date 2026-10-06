@@ -1951,6 +1951,101 @@ export async function main(argv: readonly string[]): Promise<number> {
     process.stdout.write(command === "insert" ? "inserted\n" : command === "cut" ? "cut\n" : "exchanged\n");
     return 0;
   }
+  if (command === "until" || command === "from" || command === "between") {
+    const sand = takeFlag(tail, "--sandbox");
+    const sandbox = sand.value ?? ".sandbox";
+    const partner = takeFlag(sand.rest, "--partner");
+    const textFlag = takeFlag(partner.rest, "--text");
+    const withFlag = command === "between" ? takeFlag(textFlag.rest, "--with") : { value: undefined as string | undefined, rest: textFlag.rest };
+    const relative = withFlag.rest.join(" ").trim();
+    const query = textFlag.value ?? "";
+    const replacement = withFlag.value ?? "";
+    const usage = command === "between"
+      ? "Usage: ocp between --text \"...\" --with \"...\" [--sandbox .sandbox] [--partner name] path\n"
+      : `Usage: ocp ${command} --text "..." [--sandbox .sandbox] [--partner name] path\n`;
+    if (!relative || query.length === 0 || (command === "between" && (withFlag.value === undefined || replacement.length === 0))) {
+      process.stdout.write(usage);
+      return 2;
+    }
+    if (refusedSandboxRead(relative)) {
+      process.stdout.write("path refused\n");
+      return 1;
+    }
+    const queryGate = securityGate({ relativePath: "query.txt", content: query, sandboxRoot: sandbox });
+    if (!queryGate.allow) {
+      process.stdout.write("query refused\n");
+      return 1;
+    }
+    if (command === "between") {
+      const withGate = securityGate({ relativePath: "query.txt", content: replacement, sandboxRoot: sandbox });
+      if (!withGate.allow) {
+        process.stdout.write("query refused\n");
+        return 1;
+      }
+    }
+    let root = sandbox;
+    try {
+      if (partner.value) root = await isolatePartner(sandbox, partner.value);
+    } catch (error) {
+      process.stdout.write(`${error instanceof Error ? error.message : "partner refused"}\n`);
+      return 1;
+    }
+    const nameGate = securityGate({ relativePath: relative, content: relative, sandboxRoot: root });
+    if (!nameGate.allow) {
+      process.stdout.write(`${redactListName(`blocked (${nameGate.reasons.join(", ")})`)}\n`);
+      return 1;
+    }
+    const target = path.join(root, relative);
+    let source = "";
+    try {
+      const info = await stat(target);
+      if (info.isDirectory()) {
+        process.stdout.write("path is a directory\n");
+        return 1;
+      }
+      source = await readFile(target, "utf8");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        process.stdout.write("file missing\n");
+        return 1;
+      }
+      process.stdout.write("file could not be read\n");
+      return 1;
+    }
+    if (source.includes("\0")) {
+      process.stdout.write("not a text file\n");
+      return 1;
+    }
+    const sourceGate = securityGate({ relativePath: relative, content: source, sandboxRoot: root });
+    if (!sourceGate.allow) {
+      process.stdout.write(`${redactListName(`blocked (${sourceGate.reasons.join(", ")})`)}\n`);
+      return 1;
+    }
+    const split = splitKeptLines(source);
+    const at = split.lines.findIndex((line) => line.includes(query));
+    let lines = split.lines;
+    if (command === "until") {
+      if (at >= 0) lines = lines.slice(0, at + 1);
+    } else if (command === "from") {
+      if (at >= 0) lines = lines.slice(at);
+    } else {
+      const end = at < 0 ? -1 : split.lines.findIndex((line, index) => index > at && line.includes(replacement));
+      if (at >= 0 && end > at) lines = lines.slice(at + 1, end);
+    }
+    const next = joinKeptLines(lines, split.trailing);
+    const nextGate = securityGate({ relativePath: relative, content: next, sandboxRoot: root });
+    if (!nextGate.allow) {
+      process.stdout.write(`${redactListName(`blocked (${nextGate.reasons.join(", ")})`)}\n`);
+      return 1;
+    }
+    if (next === source) {
+      process.stdout.write("clean\n");
+      return 0;
+    }
+    await writeSandboxFile(root, relative, next);
+    process.stdout.write(command === "until" ? "until\n" : command === "from" ? "from\n" : "between\n");
+    return 0;
+  }
   if (command === "doctor") {
     const sand = takeFlag(tail, "--sandbox");
     const sandbox = sand.value ?? ".sandbox";
@@ -2050,7 +2145,7 @@ export async function main(argv: readonly string[]): Promise<number> {
     return 0;
   }
   process.stdout.write(
-    "Open Coding Partner chat\n\n  ocp chat --sandbox .sandbox\n  ocp chat --sandbox .sandbox \"Use the coding worker to create hello.txt with content:\nhello\n\"\n  ocp chat --sandbox .sandbox --computer-execute \"Open https://example.com\"\n  ocp demo --sandbox .sandbox\n  ocp doctor\n  ocp check --sandbox .sandbox\n  ocp read --sandbox .sandbox path\n  ocp list --sandbox .sandbox\n  ocp grep --text \"...\" --sandbox .sandbox\n  ocp glob --pattern \"*.txt\" --sandbox .sandbox\n  ocp git status --sandbox .sandbox\n  ocp git log --sandbox .sandbox\n  ocp git diff --sandbox .sandbox\n  ocp git show --sandbox .sandbox path\n  ocp turns --sandbox .sandbox\n  ocp append --text \"...\" --sandbox .sandbox path\n  ocp mkdir --sandbox .sandbox path\n  ocp delete --sandbox .sandbox path\n  ocp rmdir --sandbox .sandbox path\n  ocp rename --from path --to path --sandbox .sandbox\n  ocp copy --from path --to path --sandbox .sandbox\n  ocp write --text \"...\" --sandbox .sandbox path\n  ocp patch --text \"...\" --sandbox .sandbox path\n  ocp replace --text \"...\" --sandbox .sandbox path\n  ocp stat --sandbox .sandbox path\n  ocp same --from path --to path --sandbox .sandbox\n  ocp contains --text \"...\" --sandbox .sandbox path\n  ocp lines --sandbox .sandbox path\n  ocp bytes --sandbox .sandbox path\n  ocp count --sandbox .sandbox\n  ocp trail --sandbox .sandbox path\n  ocp keep --text \"...\" --sandbox .sandbox path\n  ocp drop --text \"...\" --sandbox .sandbox path\n  ocp uniq --sandbox .sandbox path\n  ocp mtime --sandbox .sandbox path\n  ocp lower --sandbox .sandbox path\n  ocp upper --sandbox .sandbox path\n  ocp first --sandbox .sandbox path\n  ocp last --sandbox .sandbox path\n  ocp chop --sandbox .sandbox path\n  ocp prefix --text \"...\" --sandbox .sandbox path\n  ocp suffix --text \"...\" --sandbox .sandbox path\n  ocp wrap --text \"...\" --with \"...\" --sandbox .sandbox path\n  ocp take --n N --sandbox .sandbox path\n  ocp skip --n N --sandbox .sandbox path\n  ocp span --n START --with END --sandbox .sandbox path\n  ocp squeeze --sandbox .sandbox path\n  ocp purge --sandbox .sandbox path\n  ocp trim --sandbox .sandbox path\n  ocp insert --n N --text \"...\" --sandbox .sandbox path\n  ocp cut --n N --sandbox .sandbox path\n  ocp exchange --n N --with N --sandbox .sandbox path\n  ocp prove coding\n  ocp prove computer\n  ocp computer --sandbox .sandbox\n  ocp computer --sandbox .sandbox takeover\n  ocp computer --sandbox .sandbox return\n  ocp computer --sandbox .sandbox qa\n\nThe Computer tab shows the sandbox desktop status and the last frame path. There is no live pixel stream in this build. takeover hands the browser to you. return hands it back to the partner. ocp computer qa checks the frame file and does not open a page.\nOrchestration owns the session plan. After it accepts the plan, it invokes the sandbox write bridge. The transcript says Write path: orchestration. Delete and rename use the same bridge when the gateway drove the turn. When the gateway is down, the transcript says Write path: local sandbox. fs_write, apply_patch, and sessions_spawn stay blocked.\nThe computer agent opens a browser only with --computer-execute or OCP_COMPUTER_EXECUTE=1, and only after an Approve card when the sandbox has PARTNER.md. It opens a named http(s) URL, reads the screen, and types into one selector when you ask. A live stream is not in this build.\n",
+    "Open Coding Partner chat\n\n  ocp chat --sandbox .sandbox\n  ocp chat --sandbox .sandbox \"Use the coding worker to create hello.txt with content:\nhello\n\"\n  ocp chat --sandbox .sandbox --computer-execute \"Open https://example.com\"\n  ocp demo --sandbox .sandbox\n  ocp doctor\n  ocp check --sandbox .sandbox\n  ocp read --sandbox .sandbox path\n  ocp list --sandbox .sandbox\n  ocp grep --text \"...\" --sandbox .sandbox\n  ocp glob --pattern \"*.txt\" --sandbox .sandbox\n  ocp git status --sandbox .sandbox\n  ocp git log --sandbox .sandbox\n  ocp git diff --sandbox .sandbox\n  ocp git show --sandbox .sandbox path\n  ocp turns --sandbox .sandbox\n  ocp append --text \"...\" --sandbox .sandbox path\n  ocp mkdir --sandbox .sandbox path\n  ocp delete --sandbox .sandbox path\n  ocp rmdir --sandbox .sandbox path\n  ocp rename --from path --to path --sandbox .sandbox\n  ocp copy --from path --to path --sandbox .sandbox\n  ocp write --text \"...\" --sandbox .sandbox path\n  ocp patch --text \"...\" --sandbox .sandbox path\n  ocp replace --text \"...\" --sandbox .sandbox path\n  ocp stat --sandbox .sandbox path\n  ocp same --from path --to path --sandbox .sandbox\n  ocp contains --text \"...\" --sandbox .sandbox path\n  ocp lines --sandbox .sandbox path\n  ocp bytes --sandbox .sandbox path\n  ocp count --sandbox .sandbox\n  ocp trail --sandbox .sandbox path\n  ocp keep --text \"...\" --sandbox .sandbox path\n  ocp drop --text \"...\" --sandbox .sandbox path\n  ocp uniq --sandbox .sandbox path\n  ocp mtime --sandbox .sandbox path\n  ocp lower --sandbox .sandbox path\n  ocp upper --sandbox .sandbox path\n  ocp first --sandbox .sandbox path\n  ocp last --sandbox .sandbox path\n  ocp chop --sandbox .sandbox path\n  ocp prefix --text \"...\" --sandbox .sandbox path\n  ocp suffix --text \"...\" --sandbox .sandbox path\n  ocp wrap --text \"...\" --with \"...\" --sandbox .sandbox path\n  ocp take --n N --sandbox .sandbox path\n  ocp skip --n N --sandbox .sandbox path\n  ocp span --n START --with END --sandbox .sandbox path\n  ocp squeeze --sandbox .sandbox path\n  ocp purge --sandbox .sandbox path\n  ocp trim --sandbox .sandbox path\n  ocp insert --n N --text \"...\" --sandbox .sandbox path\n  ocp cut --n N --sandbox .sandbox path\n  ocp exchange --n N --with N --sandbox .sandbox path\n  ocp until --text \"...\" --sandbox .sandbox path\n  ocp from --text \"...\" --sandbox .sandbox path\n  ocp between --text \"...\" --with \"...\" --sandbox .sandbox path\n  ocp prove coding\n  ocp prove computer\n  ocp computer --sandbox .sandbox\n  ocp computer --sandbox .sandbox takeover\n  ocp computer --sandbox .sandbox return\n  ocp computer --sandbox .sandbox qa\n\nThe Computer tab shows the sandbox desktop status and the last frame path. There is no live pixel stream in this build. takeover hands the browser to you. return hands it back to the partner. ocp computer qa checks the frame file and does not open a page.\nOrchestration owns the session plan. After it accepts the plan, it invokes the sandbox write bridge. The transcript says Write path: orchestration. Delete and rename use the same bridge when the gateway drove the turn. When the gateway is down, the transcript says Write path: local sandbox. fs_write, apply_patch, and sessions_spawn stay blocked.\nThe computer agent opens a browser only with --computer-execute or OCP_COMPUTER_EXECUTE=1, and only after an Approve card when the sandbox has PARTNER.md. It opens a named http(s) URL, reads the screen, and types into one selector when you ask. A live stream is not in this build.\n",
   );
   return command === undefined || command === "--help" || command === "-h" ? 0 : 2;
 }

@@ -163,6 +163,8 @@ const HISTORY_CHARS = 4000;
 
 type CodingVia = "local-sandbox" | "grok-build" | "openai-compatible" | "litellm" | "openclaw-write" | "scripted";
 
+type CodingVia = "local-sandbox" | "grok-build" | "openai-compatible" | "litellm" | "openclaw-write";
+
 function idempotencyKey(input: ChatTurnInput, sessionKey: string): string {
   const mode = input.codingVia ?? (input.grokRunner ? "grok-build" : "local-sandbox");
   const remote = input.openclawWrite ? "openclaw-write" : "no-openclaw-write";

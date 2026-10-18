@@ -3613,6 +3613,51 @@ test("a partner turn writes in its own workspace, not the shared session root", 
   }
 });
 
+test("a routine fires a partner turn, and Slack approve still gates the edit", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-routine-"));
+  try {
+    await writeFile(path.join(root, "PARTNER.md"), "partner\n");
+    const routine = await createRoutine(root, {
+      partnerId: "coding",
+      message: "Use the coding worker to create note.txt with content:\nfrom routine\n",
+      everyMs: 1000,
+      now: 0,
+    });
+    assert.equal(routine.status, "active");
+    const early = await fireDueRoutines(root, 500, async () => "too soon");
+    assert.deepEqual(early, []);
+    const fired = await fireDueRoutines(root, 1000, async (item) => {
+      const turn = await runChatTurn({ message: item.message, sandboxRoot: root, partnerId: item.partnerId });
+      return turn.transcript;
+    });
+    assert.equal(fired.length, 1);
+    assert.match(await readFile(path.join(root, ".ocp/fleet/coding/note.txt"), "utf8"), /from routine/);
+    await pauseRoutine(root, routine.id);
+    const paused = await fireDueRoutines(root, 10_000, async () => "again");
+    assert.deepEqual(paused, []);
+    const listed = await listRoutines(root);
+    assert.equal(listed[0]?.status, "paused");
+
+    const asked = await slackTurn({ text: "add a helper", channel: "dev" }, async (message, partnerId) => {
+      const turn = await runChatTurn({ message, sandboxRoot: root, partnerId });
+      return turn.transcript;
+    });
+    assert.equal(asked.partnerId, "slack-dev");
+    assert.match(asked.reply, /Plan is waiting/);
+    assert.match(asked.reply, /Approve card/);
+    const denied = await slackTurn({ text: "deny", channel: "dev" }, async (message, partnerId) => {
+      const turn = await runChatTurn({ message, sandboxRoot: root, partnerId });
+      return turn.transcript;
+    });
+    assert.match(denied.reply, /Approve denied/);
+    await createRoutine(root, { partnerId: "coding", message: "add a note", event: "build-finished", now: 0 });
+    const events = await fireEvent(root, "build-finished", async (item) => item.message);
+    assert.deepEqual(events, ["add a note"]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("a failed partner check returns to intent and holds one coding worker", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "ocp-partner-fail-"));
   try {

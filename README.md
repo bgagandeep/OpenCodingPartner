@@ -51,6 +51,33 @@ That command opens `https://example.com` with a fake browser driver, scrolls, pr
 
 Read the transcript. `System-1: real.` or `System-1: fallback.` `Write path: orchestration.` only if the gateway accepted the plan and the write landed. Otherwise `Write path: local sandbox.` `Meter: proxy`, `Meter: compatible`, `Meter: worker`, or `Meter: none`. The offline command `pnpm exec ocp demo --sandbox .sandbox` does not pretend those live pieces ran.
 
+## First run
+
+```bash
+pnpm install
+pnpm bundle:install
+pnpm exec ocp doctor
+```
+
+`ocp doctor` prints green, yellow, or red. It does not print keys.
+
+- Laya weights: green when `.bundle/laya` python and `.bundle/laya/hf` are present. The next chat can say `System-1: real Laya.` Yellow means the transcript will say `System-1: fallback.` System python is not Laya.
+- Meter: set one of these, in this order. `LITELLM_API_KEY` or `LITELLM_MASTER_KEY` (optional `LITELLM_BASE_URL`, default `http://127.0.0.1:4000/v1`). Else `OPENAI_API_KEY` and `OPENAI_BASE_URL`. Else `XAI_API_KEY` with the `grok` binary. Yellow `Meter: none` means a general edit will refuse. A simple create-file still writes on the local sandbox.
+- OpenClaw: `docker compose up -d openclaw-gateway`. Doctor checks `GET /healthz`. Yellow means the chat turn writes locally and says `Write path: local sandbox.`
+- Write bridge: load `integrations/openclaw-sandbox-write` on that gateway. Doctor checks that the plugin is in this repo. It does not prove the gateway loaded it. `fs_write` stays blocked.
+- Playwright: yellow until you install it. Needed only for `--computer-execute`.
+
+Prove-it chat, after doctor is green for the pieces you care about:
+
+```bash
+export LITELLM_API_KEY="the operator key"
+pnpm exec ocp chat --sandbox .sandbox "Use Grok Build to create hello.txt with content:
+hello
+"
+```
+
+Read the transcript. `System-1: real Laya.` or `System-1: fallback.` `Write path: OpenClaw-driven.` only if the gateway accepted the plan and the write landed. Otherwise `Write path: local sandbox.` `Meter: LiteLLM`, `Meter: OpenAI-compatible`, `Meter: Grok Build`, or `Meter: none`. The offline command `pnpm exec ocp demo --sandbox .sandbox` does not pretend those live pieces ran.
+
 ## Which tool runs what
 
 | User-facing name | Runs on |

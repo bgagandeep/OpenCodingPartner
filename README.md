@@ -172,6 +172,14 @@ After a coding write, `expect file path to contain "text"` asks the QA agent to 
 pnpm exec ocp chat --sandbox .sandbox --computer-execute "Open https://example.com and expect title \"Example Domain\""
 ```
 
+A page check can chain steps in one message: `expect title "..."`, `expect text "..."`, `type "..." into SELECTOR`, and `expect selector SELECTOR value "..."`. Each step is recorded in `gtm/last-run.json` with pass or fail and a screenshot when it ran. If a step fails, later steps stay `executed: false` and the transcript names the failed step. The QA agent also reads `gtm/assertion.json`. It fails when the claim does not match, when execute is off, or when the browser did not start.
+
+After a coding write, `expect file path to contain "text"` asks the QA agent to check that snippet. A missing file, an empty file, or a file the security agent removed fails the review. The transcript says which file failed.
+
+```bash
+pnpm exec ocp chat --sandbox .sandbox --computer-execute "Open https://example.com and expect title \"Example Domain\""
+```
+
 You can also send one message and return:
 
 ```bash

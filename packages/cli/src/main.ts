@@ -2442,6 +2442,7 @@ export async function main(argv: readonly string[]): Promise<number> {
       playwrightPresent,
       fleetLine,
       approveLine: approveDoctorLine(pendingItems.length, pendingItems),
+      decisionLine: await doctorDecisionLine(sandbox),
       frameLine,
       runLine,
       controlLine,

@@ -61,6 +61,32 @@ export interface ComputerStepEvidence {
   screenshot?: string;
 }
 
+export interface ScreenShot {
+  title: string;
+  text: string;
+  screenshotPng: Uint8Array;
+}
+
+export interface BrowserSession {
+  open(url: string): Promise<ScreenShot>;
+  readScreen(): Promise<ScreenShot>;
+  typeInto(selector: string, text: string): Promise<ScreenShot>;
+  close(): Promise<void>;
+}
+
+export interface BrowserDriver {
+  start(): Promise<BrowserSession>;
+}
+
+export interface ComputerStepEvidence {
+  kind: ComputerAction["kind"];
+  executed: boolean;
+  title?: string;
+  text?: string;
+  selector?: string;
+  screenshot?: string;
+}
+
 export interface GtmPlan {
   title: string;
   note: string;

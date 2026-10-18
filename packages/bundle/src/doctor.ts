@@ -28,6 +28,7 @@ export interface DoctorDeps {
   routineLine?: string;
   writeLine?: string;
   swarmLine?: string;
+  acpLine?: string;
 }
 
 export interface DoctorReport {
@@ -63,6 +64,7 @@ export async function runDoctor(deps: DoctorDeps): Promise<DoctorReport> {
   lines.push(deps.routineLine ?? "green Routines: none. This check does not run a routine and does not print its message.");
   lines.push(deps.writeLine ?? "green Last write: none. This check does not write a file and does not print a path.");
   lines.push(deps.swarmLine ?? "green Swarm: none. This check does not apply a manifest and does not start containers.");
+  lines.push(deps.acpLine ?? "green Advanced ACP: off. No backend is installed. The local swarm still runs. This check does not start one.");
   lines.push("Prove-it: pnpm exec ocp chat --sandbox .sandbox \"Use the coding worker to create hello.txt with content:");
   lines.push("hello");
   lines.push("\"");

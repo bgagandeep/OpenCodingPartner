@@ -40,7 +40,7 @@ import { recordLastCheck } from "./last-check.js";
 import { recordLastQa } from "./last-qa.js";
 import { recordLastWrite } from "./last-write.js";
 import { noopAcpBackend, type AcpBackend } from "./acp.js";
-export { acpOptIn, formatSettings, noopAcpBackend } from "./acp.js";
+export { acpOptIn, doctorAcpLine, formatSettings, noopAcpBackend } from "./acp.js";
 export { coreIsOpen, readPackaging } from "./packaging.js";
 export { approveDoctorLine, doctorPlanLine, formatApproveQueue, formatApproveQueueJson, formatReviewHolds, listApproveQueue, listReviewHolds, partnerAgreementDoctorLine, partnerAgreementStatus, reviewHoldDoctorLine } from "./sdlc.js";
 export { formatTodoQueue, formatTodoQueueJson, listTodoQueue, todoDoctorLine } from "./todos.js";

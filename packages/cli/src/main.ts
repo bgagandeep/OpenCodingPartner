@@ -1337,17 +1337,17 @@ export async function main(argv: readonly string[]): Promise<number> {
     process.stdout.write(trailed ? "trail\n" : "clean\n");
     return 0;
   }
-  if (command === "keep" || command === "drop" || command === "uniq") {
+  if (command === "keep" || command === "drop" || command === "uniq" || command === "sort" || command === "reverse") {
     const sand = takeFlag(tail, "--sandbox");
     const sandbox = sand.value ?? ".sandbox";
     const partner = takeFlag(sand.rest, "--partner");
-    const textFlag = command === "uniq" ? { value: undefined as string | undefined, rest: partner.rest } : takeFlag(partner.rest, "--text");
+    const textFlag = command === "keep" || command === "drop" ? takeFlag(partner.rest, "--text") : { value: undefined as string | undefined, rest: partner.rest };
     const relative = textFlag.rest.join(" ").trim();
     const query = textFlag.value ?? "";
-    const usage = command === "uniq"
-      ? "Usage: ocp uniq [--sandbox .sandbox] [--partner name] path\n"
-      : `Usage: ocp ${command} --text "..." [--sandbox .sandbox] [--partner name] path\n`;
-    if (!relative || (command !== "uniq" && query.length === 0)) {
+    const usage = command === "keep" || command === "drop"
+      ? `Usage: ocp ${command} --text "..." [--sandbox .sandbox] [--partner name] path\n`
+      : `Usage: ocp ${command} [--sandbox .sandbox] [--partner name] path\n`;
+    if (!relative || ((command === "keep" || command === "drop") && query.length === 0)) {
       process.stdout.write(usage);
       return 2;
     }
@@ -1355,7 +1355,7 @@ export async function main(argv: readonly string[]): Promise<number> {
       process.stdout.write("path refused\n");
       return 1;
     }
-    if (command !== "uniq") {
+    if (command === "keep" || command === "drop") {
       const queryGate = securityGate({ relativePath: "query.txt", content: query, sandboxRoot: sandbox });
       if (!queryGate.allow) {
         process.stdout.write("query refused\n");
@@ -1404,6 +1404,8 @@ export async function main(argv: readonly string[]): Promise<number> {
     let lines = split.lines;
     if (command === "keep") lines = lines.filter((line) => line.includes(query));
     else if (command === "drop") lines = lines.filter((line) => !line.includes(query));
+    else if (command === "sort") lines = [...lines].sort((left, right) => (left < right ? -1 : left > right ? 1 : 0));
+    else if (command === "reverse") lines = [...lines].reverse();
     else {
       const seen = new Set<string>();
       lines = lines.filter((line) => {
@@ -1423,7 +1425,8 @@ export async function main(argv: readonly string[]): Promise<number> {
       return 0;
     }
     await writeSandboxFile(root, relative, next);
-    process.stdout.write(command === "keep" ? "kept\n" : command === "drop" ? "dropped\n" : "unique\n");
+    const wrote = command === "keep" ? "kept" : command === "drop" ? "dropped" : command === "uniq" ? "unique" : command === "sort" ? "sorted" : "reversed";
+    process.stdout.write(`${wrote}\n`);
     return 0;
   }
   if (command === "mtime") {

@@ -1291,6 +1291,33 @@ async function dirExists(sandboxRoot: string, relativePath: string): Promise<boo
   }
 }
 
+async function mkdirThroughTurn(
+  input: ChatTurnInput,
+  openclawDrove: boolean,
+  relativePath: string,
+): Promise<{ ok: boolean; via: "openclaw" | "local"; detail: string }> {
+  if (openclawDrove && input.openclawMkdir) {
+    const remote = await input.openclawMkdir(relativePath);
+    if (remote.ok && (await dirExists(input.sandboxRoot, relativePath))) {
+      return { ok: true, via: "openclaw", detail: remote.detail };
+    }
+    if (remote.ok || !remote.missing) {
+      return { ok: false, via: "openclaw", detail: remote.ok ? "OpenClaw mkdir did not create the directory." : remote.detail };
+    }
+  }
+  const local = await mkdirSandboxDir(input.sandboxRoot, relativePath);
+  return { ok: local.ok, via: "local", detail: local.detail };
+}
+
+async function dirExists(sandboxRoot: string, relativePath: string): Promise<boolean> {
+  try {
+    const info = await stat(path.join(sandboxRoot, relativePath));
+    return info.isDirectory();
+  } catch {
+    return false;
+  }
+}
+
 async function deleteThroughTurn(
   input: ChatTurnInput,
   openclawDrove: boolean,

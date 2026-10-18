@@ -159,8 +159,26 @@ function discordLine(env: NodeJS.ProcessEnv): string {
 
 function telegramLine(env: NodeJS.ProcessEnv): string {
   const missing = [env.TELEGRAM_BOT_TOKEN ? "" : "TELEGRAM_BOT_TOKEN", env.TELEGRAM_WEBHOOK_SECRET ? "" : "TELEGRAM_WEBHOOK_SECRET"].filter((name) => name.length > 0);
-  if (missing.length === 0) return "green Telegram: bot token and webhook secret are set. The values are not printed.";
-  return `yellow Telegram: missing ${missing.join(", ")}. The offline channel path still runs.`;
+  if (missing.length > 0) return `yellow Telegram: missing ${missing.join(", ")}. The offline channel path still runs.`;
+  const token = env.TELEGRAM_BOT_TOKEN ?? "";
+  const fetchImpl = deps.fetchImpl ?? fetch;
+  try {
+    const response = await fetchImpl(`https://api.telegram.org/bot${encodeURIComponent(token)}/getMe`, {
+      signal: AbortSignal.timeout(1500),
+    });
+    let payload: { ok?: boolean } = {};
+    try {
+      payload = (await response.json()) as { ok?: boolean };
+    } catch {
+      payload = {};
+    }
+    if (response.ok && payload.ok === true) {
+      return "green Telegram: the bot token was accepted. The webhook secret is set and was not sent. Values are not printed. This check does not post a message.";
+    }
+    return "yellow Telegram: the bot token was not accepted. The value is not printed. This check does not post a message.";
+  } catch {
+    return "yellow Telegram: Telegram did not answer. The value is not printed. The offline channel path still runs.";
+  }
 }
 
 /** Report whether `docker version` answered. This does not start a container. */
@@ -184,10 +202,30 @@ export async function computerFrameLine(sandboxRoot: string): Promise<string> {
   }
 }
 
-function slackLine(env: NodeJS.ProcessEnv): string {
+async function slackLine(deps: DoctorDeps): Promise<string> {
+  const env = deps.env;
   const missing = [env.SLACK_BOT_TOKEN ? "" : "SLACK_BOT_TOKEN", env.SLACK_SIGNING_SECRET ? "" : "SLACK_SIGNING_SECRET"].filter((name) => name.length > 0);
-  if (missing.length === 0) return "green Slack: bot token and signing secret are set. The values are not printed.";
-  return `yellow Slack: missing ${missing.join(", ")}. The offline channel path still runs.`;
+  if (missing.length > 0) return `yellow Slack: missing ${missing.join(", ")}. The offline channel path still runs.`;
+  const fetchImpl = deps.fetchImpl ?? fetch;
+  try {
+    const response = await fetchImpl("https://slack.com/api/auth.test", {
+      method: "POST",
+      headers: { authorization: `Bearer ${env.SLACK_BOT_TOKEN ?? ""}` },
+      signal: AbortSignal.timeout(1500),
+    });
+    let payload: { ok?: boolean } = {};
+    try {
+      payload = (await response.json()) as { ok?: boolean };
+    } catch {
+      payload = {};
+    }
+    if (response.ok && payload.ok === true) {
+      return "green Slack: the bot token was accepted. The signing secret is set and was not sent. Values are not printed. This check does not post a message.";
+    }
+    return "yellow Slack: the bot token was not accepted. The value is not printed. This check does not post a message.";
+  } catch {
+    return "yellow Slack: Slack did not answer. The value is not printed. The offline channel path still runs.";
+  }
 }
 
 function playwrightLine(present: boolean): string {

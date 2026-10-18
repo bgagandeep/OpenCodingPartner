@@ -51,6 +51,14 @@ function joinKeptLines(lines: string[], trailing: boolean): string {
   return trailing ? `${lines.join("\n")}\n` : lines.join("\n");
 }
 
+function unnestLine(line: string): string {
+  if (line.trim().length === 0) return line;
+  if (line.startsWith("\t")) return line.slice(1);
+  if (line.startsWith("  ")) return line.slice(2);
+  if (line.startsWith(" ")) return line.slice(1);
+  return line;
+}
+
 function runGitArgv(cwd: string, argv: readonly string[]): Promise<{ code: number; output: string; missing: boolean }> {
   if (!commandDecision([...argv]).allow) return Promise.resolve({ code: 2, output: "", missing: true });
   return new Promise((resolve) => {

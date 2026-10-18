@@ -1475,6 +1475,61 @@ async function fileExists(sandboxRoot: string, relativePath: string): Promise<bo
   }
 }
 
+async function deleteThroughTurn(
+  input: ChatTurnInput,
+  openclawDrove: boolean,
+  relativePath: string,
+): Promise<{ ok: boolean; via: "openclaw" | "local"; detail: string }> {
+  if (openclawDrove && input.openclawDelete) {
+    const remote = await input.openclawDelete(relativePath);
+    if (remote.ok && (await fileGone(input.sandboxRoot, relativePath))) {
+      return { ok: true, via: "openclaw", detail: remote.detail };
+    }
+    if (remote.ok || !remote.missing) {
+      return { ok: false, via: "openclaw", detail: remote.ok ? "OpenClaw delete did not remove the file." : remote.detail };
+    }
+  }
+  const local = await deleteSandboxFile(input.sandboxRoot, relativePath);
+  return { ok: local.ok, via: "local", detail: local.detail };
+}
+
+async function renameThroughTurn(
+  input: ChatTurnInput,
+  openclawDrove: boolean,
+  fromPath: string,
+  toPath: string,
+): Promise<{ ok: boolean; via: "openclaw" | "local"; detail: string }> {
+  if (openclawDrove && input.openclawRename) {
+    const remote = await input.openclawRename(fromPath, toPath);
+    if (remote.ok && (await fileGone(input.sandboxRoot, fromPath)) && (await fileExists(input.sandboxRoot, toPath))) {
+      return { ok: true, via: "openclaw", detail: remote.detail };
+    }
+    if (remote.ok || !remote.missing) {
+      return { ok: false, via: "openclaw", detail: remote.ok ? "OpenClaw rename did not move the file." : remote.detail };
+    }
+  }
+  const local = await renameSandboxFile(input.sandboxRoot, fromPath, toPath);
+  return { ok: local.ok, via: "local", detail: local.detail };
+}
+
+async function fileGone(sandboxRoot: string, relativePath: string): Promise<boolean> {
+  try {
+    await readFile(path.join(sandboxRoot, relativePath));
+    return false;
+  } catch {
+    return true;
+  }
+}
+
+async function fileExists(sandboxRoot: string, relativePath: string): Promise<boolean> {
+  try {
+    await readFile(path.join(sandboxRoot, relativePath));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function fileMatches(sandboxRoot: string, relativePath: string, content: string): Promise<boolean> {
   try {
     return (await readFile(path.join(sandboxRoot, relativePath), "utf8")) === content;

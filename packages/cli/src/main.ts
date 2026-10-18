@@ -557,6 +557,10 @@ export async function main(argv: readonly string[]): Promise<number> {
       process.stdout.write("path refused\n");
       return 1;
     }
+    if (!logOk && !statusOk && !diffOk && !showOk) {
+      process.stdout.write("Usage: ocp git status [--sandbox .sandbox] [--partner name]\n       ocp git log [--n N] [--sandbox .sandbox] [--partner name]\n       ocp git diff [--sandbox .sandbox] [--partner name] [path]\n       ocp git show [--sandbox .sandbox] [--partner name] path\n");
+      return 2;
+    }
     let root = sandbox;
     try {
       if (partner.value) root = await isolatePartner(sandbox, partner.value);

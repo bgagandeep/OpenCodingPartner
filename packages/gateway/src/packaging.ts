@@ -34,6 +34,25 @@ export function coreIsOpen(_packaging: Packaging): boolean {
   return true;
 }
 
+/** Doctor line for packaging. Billing stays inert. This does not charge and does not print a key. */
+export async function doctorPackagingLine(sandboxRoot: string): Promise<string> {
+  const tail = "No charge is made. Ads are off.";
+  const file = path.join(sandboxRoot, ".ocp", "settings.json");
+  let raw: string;
+  try {
+    raw = await readFile(file, "utf8");
+  } catch {
+    return `green Billing: inert. Seats: 1 design only. Credits: 0 design only. ${tail}`;
+  }
+  try {
+    JSON.parse(raw);
+  } catch {
+    return `yellow Billing: the settings file could not be read. The core stays free. ${tail}`;
+  }
+  const packaging = await readPackaging(sandboxRoot);
+  return `green Billing: inert. Seats: ${packaging.seats} design only. Credits: ${packaging.credits} design only. ${tail}`;
+}
+
 export function formatPackaging(packaging: Packaging): string {
   return [
     "Packaging: free OSS core",

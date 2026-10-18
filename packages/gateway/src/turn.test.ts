@@ -3483,6 +3483,20 @@ test("a billing key stays inert and the core stays open", async () => {
     assert.equal(packaging.billing, "inert");
     assert.equal(packaging.core, "full");
     assert.equal(coreIsOpen(packaging), true);
+    const line = await doctorPackagingLine(root);
+    assert.match(line, /green Billing: inert/);
+    assert.match(line, /Seats: 4 design only/);
+    assert.match(line, /Credits: 10 design only/);
+    assert.match(line, /Ads are off/);
+    assert.match(line, /No charge is made/);
+    assert.doesNotMatch(line, /later/);
+    assert.doesNotMatch(line, /hunter2/);
+    await writeFile(path.join(root, ".ocp/settings.json"), `${JSON.stringify({ packaging: { seats: 4 }, billingKey: "sk-live-hunter2" })}\n`);
+    assert.doesNotMatch(await doctorPackagingLine(root), /hunter2/);
+    await writeFile(path.join(root, ".ocp/settings.json"), "not-json\n");
+    const broken = await doctorPackagingLine(root);
+    assert.match(broken, /yellow Billing: the settings file could not be read/);
+    assert.doesNotMatch(broken, /not-json/);
     const turn = await runChatTurn({
       message: "Use the coding worker to create hello.txt with content:\nhello\n",
       sandboxRoot: root,

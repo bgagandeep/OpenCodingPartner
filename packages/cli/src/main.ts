@@ -2456,6 +2456,7 @@ export async function main(argv: readonly string[]): Promise<number> {
       dockerLine: dockerLine(await dockerAnswers()),
       reviewLine: reviewHoldDoctorLine((await listReviewHolds(sandbox)).length),
       planLine: await doctorPlanLine(sandbox),
+      packagingLine: await doctorPackagingLine(sandbox),
       agreementLine: partnerAgreementDoctorLine(await partnerAgreementStatus(sandbox)),
       todoLine: todoDoctorLine((await listTodoQueue(sandbox)).filter((item) => !item.done).length),
     });

@@ -3582,6 +3582,37 @@ test("advanced ACP stays off unless asked, and the stub does not replace the swa
   }
 });
 
+test("a partner turn writes in its own workspace, not the shared session root", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-fleet-"));
+  try {
+    const turn = await runChatTurn({
+      message: "Use the coding worker to create hello.txt with content:\nhello\n",
+      sandboxRoot: root,
+      partnerId: "coding",
+    });
+    assert.equal(turn.coding?.wrote, true);
+    assert.equal(await readFile(path.join(root, ".ocp/fleet/coding/hello.txt"), "utf8"), "hello\n");
+    await assert.rejects(readFile(path.join(root, "hello.txt"), "utf8"));
+    const tab = await computerTabText(path.join(root, ".ocp/fleet/coding"));
+    assert.match(tab, /Partner: coding/);
+    assert.match(tab, /Desktop: partner sandbox/);
+    assert.match(tab, /Fleet: coding/);
+    const mount = JSON.parse(await readFile(path.join(root, ".ocp/fleet/coding/.ocp/mount.json"), "utf8")) as { shared: string; mode: string };
+    assert.equal(mount.shared, "/shared");
+    assert.equal(mount.mode, "read-only");
+    const argv = partnerContainerArgv(root, "coding");
+    assert.equal(argv[0], "docker");
+    assert.ok(argv.includes("/workspace"));
+    assert.ok(argv.some((part) => part.endsWith(":/shared:ro")));
+    await isolatePartner(root, "qa");
+    const fleet = await computerTabText(path.join(root, ".ocp/fleet/coding"));
+    assert.match(fleet, /Fleet: coding, qa/);
+    await assert.rejects(isolatePartner(root, "../escape"));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("a failed partner check returns to intent and holds one coding worker", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "ocp-partner-fail-"));
   try {

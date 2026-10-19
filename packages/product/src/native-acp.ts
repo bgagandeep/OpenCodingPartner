@@ -427,8 +427,8 @@ export async function runNativeAcpAgent(): Promise<void> {
           }
         }
 
-        // If no cloud API key is set, check if a local Ollama server is running on 127.0.0.1:11434
-        if (!config.apiKey && process.env.OCP_DISABLE_LOCAL_OLLAMA !== "1") {
+        // Optional local Ollama auto-discovery when explicitly enabled via OCP_ENABLE_LOCAL_OLLAMA=1
+        if (!config.apiKey && process.env.OCP_ENABLE_LOCAL_OLLAMA === "1") {
           try {
             const ollamaRes = await fetch("http://127.0.0.1:11434/v1/models", {
               signal: AbortSignal.timeout(250),
@@ -448,7 +448,14 @@ export async function runNativeAcpAgent(): Promise<void> {
           }
         }
 
-        if (!config.apiKey) {
+        const cleanReq = extractCleanUserRequest(promptText);
+        const directFleetAction =
+          /(?:spin\s+up|spawn|setup|set\s+up|bootstrap|build|create|initialize|start)\b[\s\S]*\b(?:team|swarm|squad|fleet|all\s+bots|starter\s+bots)/i.test(cleanReq) ||
+          /\b(?:create|add|make|spawn|provision)\b[\s\S]*\b(?:bot|bots|teammate|teammates)\b/i.test(cleanReq) ||
+          /\b(?:delete|remove|drop)\s+(?:the\s+)?bot\s+[A-Za-z0-9_-]+/i.test(cleanReq) ||
+          /\b(?:list|show|manage)\b[\s\S]*\bbots?\b/i.test(cleanReq);
+
+        if (!config.apiKey || directFleetAction) {
           const reply = await runLocalOrchestratorTurn(sessionId, state, promptText, toolMap, requestPermissionFromClient);
           state.messages.push({ role: "assistant", content: reply });
           send({

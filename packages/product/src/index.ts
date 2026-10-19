@@ -815,7 +815,7 @@ function executableOnPath(binary: string, env: NodeJS.ProcessEnv = process.env):
   return false;
 }
 
-/** Resolve the executable command and arguments for OCP Agent or OCP Coder, falling back to the built-in ACP runtime when external CLIs are absent. */
+/** Resolve the executable command and arguments for OCP Agent or OCP Coder, defaulting to the built-in ACP runtime unless an explicit binary is configured. */
 export function resolveRuntimeCommand(
   agentRuntime: boolean,
   env: NodeJS.ProcessEnv = process.env,
@@ -827,7 +827,7 @@ export function resolveRuntimeCommand(
     return { command: explicit, args: agentRuntime ? ["acp"] : ["agent", "stdio"], fallback: false };
   }
   const defaultBin = agentRuntime ? "hermes" : "grok";
-  if (executableOnPath(defaultBin, env)) {
+  if (env.OCP_USE_EXTERNAL_CLI === "1" && executableOnPath(defaultBin, env)) {
     return { command: defaultBin, args: agentRuntime ? ["acp"] : ["agent", "stdio"], fallback: false };
   }
   const nativeScript = fileURLToPath(new URL("./native-acp.js", import.meta.url));

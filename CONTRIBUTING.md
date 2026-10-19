@@ -1,27 +1,92 @@
-# Contributing
+# Contributing to OpenCodingPartner
 
-Open Coding Partner is Apache-2.0. See [LICENSE](LICENSE).
+Thank you for contributing to **OpenCodingPartner (OCP)**!
+
+OpenCodingPartner is an open-source (`Apache-2.0`), local-first, provider-neutral AI teammate platform built around the **OCP Agent** and **OCP Coder** ecosystem. Before opening a pull request, please review [ARCHITECTURE.md](ARCHITECTURE.md) for the system design and [ROADMAP.md](ROADMAP.md) for current milestones.
+
+---
+
+## Monorepo Layout
+
+OpenCodingPartner is a TypeScript ESM monorepo managed with `pnpm` workspaces:
+
+| Package | Path | Responsibility |
+| --- | --- | --- |
+| `@opencodingpartner/product` | `packages/product` | Core local product: bot & task state (`index.ts`), loopback Web Dashboard (`server.ts`), built-in native ACP runtime (`native-acp.ts`), guarded workspace/memory/history/computer MCP server (`workspace-mcp.ts`), and virtual computer desktop controller (`computer-desktop.ts`). |
+| `@opencodingpartner/cli` | `packages/cli` | `ocp` / `opencodingpartner` CLI entrypoints (`app`, `bot`, `task`, `backup`, `restore`, `demo`, `prove`, `doctor`). |
+| `@opencodingpartner/workers` | `packages/workers` | Pure, zero-spawn sandboxed file helpers, unified diff patching, secret-pattern security gate, QA verifiers, and Playwright browser chain helpers. |
+| `@opencodingpartner/gateway` | `packages/gateway` | Multi-agent turn orchestration, specialist review handoffs, computer tab state, and Slack/Telegram webhook verification. |
+| `@opencodingpartner/policy` | `packages/policy` | Approval card state machine, partner agreements, and security policy gates. |
+| `@opencodingpartner/swarm` | `packages/swarm` | Swarm manifest validation and multi-partner workspace layout. |
+| `@opencodingpartner/mesh` | `packages/mesh` | System-1 Laya router client and fallback routing. |
+| `@opencodingpartner/bundle` | `packages/bundle` | Environment readiness doctor and optional bundle installer. |
+
+---
+
+## Development Setup
+
+### Prerequisites
+- **Node.js `>= 22.14`**
+- **Corepack** (`corepack enable` to activate the pinned `pnpm` version)
+- **Git**
+
+### Install, Build & Test
 
 ```bash
-pnpm install
-pnpm test
-pnpm exec ocp demo --sandbox .sandbox
-pnpm bundle:plan
-pnpm demo:connected
+# 1. Install workspace dependencies
+corepack pnpm install
+
+# 2. Build all TypeScript packages
+corepack pnpm build
+
+# 3. Run the full unit, integration, and invariant test suite
+corepack pnpm test
+
+# 4. Check formatting and whitespace hygiene
+git diff --check
 ```
 
-`pnpm bundle:install` downloads the connected stack and the System-1 English weights into `.bundle/`. Do not commit that directory. Do not paste that source or those weights into this repo. Keep upstream names and licenses in `THIRD_PARTY_NOTICES.md`.
+### Run the Local Web Dashboard in Development
 
-You need Node 22.14 or newer.
+```bash
+export OPENROUTER_API_KEY="sk-or-v1-..."   # or LITELLM_API_KEY
+corepack pnpm app
+```
 
-Write plain short sentences in docs. Say chat agent, orchestration agent swarm, coding agent, QA agent, computer agent, and security agent.
+The dashboard starts on <http://127.0.0.1:4317>.
 
-Multi-agent is the product. Do not turn the product into a one-worker tool. The temporary early-test cap may stay only if the docs still call it temporary.
+---
 
-Do not vendor the connected stack. Cite the real upstreams only in `THIRD_PARTY_NOTICES.md` and Credits. Do not claim a partnership.
+## Architectural & Security Invariants
 
-Ads are off. Payments are off in the core. Do not add payment code to the core. A billing key in settings stays inert. The core stays open.
+Every contribution must preserve these core project invariants (enforced by `tests/invariants.test.mjs` and package test suites):
 
-The computer-agent stub must not claim a live browser ran. Mark recorded actions as not executed until a real worker runs them.
+1. **Provider-Neutral, Open-Source Core**
+   - Keep bot identity, conversation sessions, task history, approvals, and workspace policies inside OpenCodingPartner.
+   - Runtimes (**OCP Agent** / `hermes`, **OCP Coder** / `grok`, and the built-in `native-acp` runtime) and model providers (**OpenRouter**, **LiteLLM**, local endpoints) must remain modular, replaceable integrations.
+   - Ads are off and payments are off in the core.
+2. **Strict Credential Hygiene**
+   - Never store API keys or bearer tokens in `state.json`, bot definitions, task logs, or generated profile files (`config.yaml` / `config.toml`).
+   - Redact credentials (`Bearer ...`, `sk-...`, `API_KEY=...`) from all runtime error messages before recording or displaying them.
+3. **Fail-Closed Approvals & Bounded File Access**
+   - Runtime permission requests (`session/request_permission`) must require explicit user confirmation (`Allow once` vs `Deny`) and fail closed when non-interactive or unapproved.
+   - Workspace MCP file operations must stay inside the canonical workspace root, refuse symbolic link escapes, enforce the 500 KB file size bound, and pass `securityGate` secret scanning.
+   - Do not import `node:child_process` inside `packages/workers/src` (worker helpers must remain pure file/data operations; process spawning belongs in `packages/product` or `packages/cli`).
+4. **Honest Computer-Use & Isolation Claims**
+   - Keep virtual computer actions (`computer_screen`, `computer_mouse`, `computer_keyboard`, `computer_browser`) tied to real execution and recorded frame evidence (`gtm/last-frame.png`).
+   - Respect human takeover (`control: "human"`): when a human takes over the virtual computer, bot mouse, keyboard, and browser actions must be refused until control is returned.
+5. **Clean-Room Apache-2.0 Licensing**
+   - Prefer documented protocols (ACP JSON-RPC over stdio, MCP stdio, OpenAI-compatible HTTP/SSE) over copying upstream code.
+   - Preserve attributions in [NOTICE](NOTICE) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
-The offline tests must keep passing: chat, stand up agents, coding write, QA check, security gate, and a recorded GTM plan.
+---
+
+## Pull Request Checklist
+
+Before submitting a pull request, verify that:
+
+- [ ] `corepack pnpm build` compiles cleanly with zero TypeScript errors.
+- [ ] `corepack pnpm test` passes all unit, integration, CLI E2E, and documentation invariant tests.
+- [ ] `git diff --check` reports no trailing whitespace or conflict markers.
+- [ ] New features or bug fixes include focused tests in the corresponding `*.test.ts` file.
+- [ ] No hardcoded local paths, `.env` files, or API keys are included in the diff.

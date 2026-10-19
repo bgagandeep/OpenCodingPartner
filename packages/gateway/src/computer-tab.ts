@@ -90,69 +90,7 @@ async function lastRun(sandboxRoot: string): Promise<{ url: string; screenshot: 
 
 async function lastFrame(sandboxRoot: string): Promise<string> {
   const run = await lastRun(sandboxRoot);
-  if (run?.screenshot) return run.screenshot;
-  try {
-    await stat(path.join(sandboxRoot, FRAME_FILE));
-    return FRAME_FILE;
-  } catch {
-    return undefined;
-  }
-}
-
-async function lastFrame(sandboxRoot: string): Promise<string> {
-  const run = await lastRun(sandboxRoot);
   return run?.screenshot || "none";
-}
-
-async function frameTime(sandboxRoot: string, relativePath: string): Promise<string> {
-  if (relativePath === "none") return "none";
-  try {
-    const info = await stat(path.join(sandboxRoot, relativePath));
-    return info.mtime.toISOString();
-  } catch {
-    return "missing";
-  }
-}
-
-export type FrameCapturer = (url: string) => Promise<Uint8Array>;
-
-async function playwrightCapture(url: string): Promise<Uint8Array> {
-  const { playwrightBrowserDriver } = await import("@opencodingpartner/workers");
-  const session = await playwrightBrowserDriver().start();
-  try {
-    const screen = await session.open(url);
-    return screen.screenshotPng;
-  } finally {
-    await session.close();
-  }
-}
-
-/** Write gtm/last-frame.png from the open page. A missing browser is an error, not a blank image. */
-export async function captureComputerFrame(
-  sandboxRoot: string,
-  options: { capture?: FrameCapturer } = {},
-): Promise<{ ok: boolean; text: string }> {
-  const run = await lastRun(sandboxRoot);
-  const url = run?.url ?? "";
-  if (!url.startsWith("http://") && !url.startsWith("https://")) {
-    return { ok: false, text: "No page is open. Open a URL first. No frame was written." };
-  }
-  let png: Uint8Array;
-  try {
-    png = await (options.capture ?? playwrightCapture)(url);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "browser missing";
-    return { ok: false, text: `Browser is missing. No frame was written. ${message}` };
-  }
-  if (png.length < 8 || png[0] !== 0x89 || png[1] !== 0x50 || png[2] !== 0x4e || png[3] !== 0x47) {
-    return { ok: false, text: "Capture did not return a PNG. No frame was written." };
-  }
-  await mkdir(path.join(sandboxRoot, "gtm"), { recursive: true });
-  await writeFile(path.join(sandboxRoot, "gtm", "last-frame.png"), png);
-  const next = { ...(run?.body ?? {}), url, screenshot: "gtm/last-frame.png" };
-  await writeFile(path.join(sandboxRoot, "gtm", "last-run.json"), `${JSON.stringify(next, null, 2)}\n`);
-  const when = await frameTime(sandboxRoot, "gtm/last-frame.png");
-  return { ok: true, text: `Last frame: gtm/last-frame.png\nFrame time: ${when}` };
 }
 
 /** Point the Computer tab at gtm/last-frame.png when a step screenshot already exists. */
@@ -183,6 +121,19 @@ async function frameTime(sandboxRoot: string, relativePath: string): Promise<str
 
 const FRAME_FILE = "gtm/last-frame.png";
 const PNG_SIGNATURE = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
+export type FrameCapturer = (url: string) => Promise<Uint8Array>;
+
+async function playwrightCapture(url: string): Promise<Uint8Array> {
+  const { playwrightBrowserDriver } = await import("@opencodingpartner/workers");
+  const session = await playwrightBrowserDriver().start();
+  try {
+    const screen = await session.open(url);
+    return screen.screenshotPng;
+  } finally {
+    await session.close();
+  }
+}
 
 /** Session turns report gtm/last-frame.png. A partner workspace reports .ocp/fleet/<id>/gtm/last-frame.png. */
 async function reportedFrame(sandboxRoot: string, relative = FRAME_FILE): Promise<string> {
@@ -433,19 +384,6 @@ export async function doctorComputerControlLine(sessionRoot: string): Promise<st
   if (held.length === 0) return `green Computer control: partner. ${tail}`;
   const who = held.map((name) => (name === "the session" ? "you hold the session browser" : `you hold the ${name} browser`)).join(". ");
   return `yellow Computer control: ${who}. ${tail}`;
-}
-
-export type FrameCapturer = (url: string) => Promise<Uint8Array>;
-
-async function playwrightCapture(url: string): Promise<Uint8Array> {
-  const { playwrightBrowserDriver } = await import("@opencodingpartner/workers");
-  const session = await playwrightBrowserDriver().start();
-  try {
-    const screen = await session.open(url);
-    return screen.screenshotPng;
-  } finally {
-    await session.close();
-  }
 }
 
 function isPng(png: Uint8Array): boolean {

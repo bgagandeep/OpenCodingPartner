@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
-import { createHash } from "node:crypto";
 import { realpathSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,11 +7,13 @@ import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 import { codingRunnerForEnv, appendViaOpenClaw, copyViaOpenClaw, deleteViaOpenClaw, discoverStack, dockerLine, mkdirViaOpenClaw, predictWithLaya, renameViaOpenClaw, rmdirViaOpenClaw, runConnectedPath, runDoctor, sendOrchestrationTurn, startSandboxWriteBridge, todoViaOpenClaw, writeViaOpenClaw } from "@opencodingpartner/bundle";
 import { access, copyFile, mkdir, readFile, readdir, stat } from "node:fs/promises";
-import { acpOptIn, doctorAcpLine, applySwarmManifest, doctorSwarmLine, approveDoctorLine, captureComputerFrame, checkComputerFrame, checkComputerFrames, computerTabText, doctorComputerControlLine, doctorComputerFrameLine, doctorComputerRunLine, doctorComputerStatusLine, allowedCheckArgv, doctorLastCheckLine, doctorLastQaLine, runAllowedCheck, doctorLastWriteLine, doctorRoutineLine, doctorSharedMountLine, createRoutine, fireDueRoutines, fireEvent, formatApproveQueue, formatApproveQueueJson, formatReviewHolds, formatRoutineList, formatTodoQueue, formatTodoQueueJson, formatSettings, fleetDoctorLine, formatFleetStatus, formatFleetStatusJson, isolatePartner, listApproveQueue, listReviewHolds, listRoutines, listTodoQueue, partnerAgreementDoctorLine, partnerAgreementStatus, parseSwarmManifest, pauseRoutine, postSlackReply, postTelegramReply, readFleetStatus, readPackaging, resumeRoutine, returnComputer, reviewHoldDoctorLine, doctorPlanLine, runChatTurn, todoDoctorLine, runDemo, slackCredentialStatus, slackTurn, startPartnerContainer, stopPartnerContainer, takeoverComputer, telegramCredentialStatus, telegramTurn, deliverSlackEvent, deliverTelegramUpdate, validateSwarmManifest, type ChatTurnInput } from "@opencodingpartner/gateway";
+import { acpOptIn, doctorAcpLine, applySwarmManifest, doctorSwarmLine, approveDoctorLine, captureComputerFrame, checkComputerFrame, checkComputerFrames, computerTabText, doctorComputerControlLine, doctorComputerFrameLine, doctorComputerRunLine, doctorComputerStatusLine, allowedCheckArgv, doctorDecisionLine, doctorLastCheckLine, doctorLastQaLine, runAllowedCheck, doctorLastWriteLine, doctorPackagingLine, doctorPriorTurnLine, doctorRoutineLine, doctorSharedMountLine, createRoutine, fireDueRoutines, fireEvent, formatApproveQueue, formatApproveQueueJson, formatReviewHolds, formatRoutineList, formatTodoQueue, formatTodoQueueJson, formatSettings, fleetDoctorLine, formatFleetStatus, formatFleetStatusJson, isolatePartner, listApproveQueue, listReviewHolds, listRoutines, listTodoQueue, partnerAgreementDoctorLine, partnerAgreementStatus, parseSwarmManifest, pauseRoutine, postSlackReply, postTelegramReply, readFleetStatus, readPackaging, resumeRoutine, returnComputer, reviewHoldDoctorLine, doctorPlanLine, runChatTurn, todoDoctorLine, runDemo, slackCredentialStatus, slackTurn, startPartnerContainer, stopPartnerContainer, takeoverComputer, telegramCredentialStatus, telegramTurn, deliverSlackEvent, deliverTelegramUpdate, validateSwarmManifest, type ChatTurnInput } from "@opencodingpartner/gateway";
 import { appendSandboxFile, applySandboxTodo, applyUnifiedDiff, commandDecision, copySandboxFile, deleteSandboxFile, globSandbox, grepSandbox, listSandboxDir, mkdirSandboxDir, playwrightBrowserDriver, readSandboxText, renameSandboxFile, rmdirSandboxDir, securityGate, writeSandboxFile } from "@opencodingpartner/workers";
 import { routeWithPredict } from "@opencodingpartner/policy";
 import { proveCoding, proveComputer } from "./prove.js";
 import { runChatRepl } from "./repl.js";
+import { backupProductData, captureWorkspaceBaseline, collectWorkspaceChanges, createBot, createTask, defaultBotInstructions, deleteBot, deleteTask, findBot, findTask, isOcpAgentRuntime, listBots, listTasks, missingProviderKey, productDataDir, recordTaskApproval, recordTaskEvent, restoreProductData, runBotSession, updateBotSession, updateTask, validBotNetworkMode, validBotProvider, validBotRole, validBotRuntime, workspacePathsMatch } from "@opencodingpartner/product";
+import { startProductApp } from "@opencodingpartner/product/server";
 
 function sameFile(left: string, right: string): boolean {
   try {
@@ -51,14 +52,6 @@ function joinKeptLines(lines: string[], trailing: boolean): string {
   return trailing ? `${lines.join("\n")}\n` : lines.join("\n");
 }
 
-function unnestLine(line: string): string {
-  if (line.trim().length === 0) return line;
-  if (line.startsWith("\t")) return line.slice(1);
-  if (line.startsWith("  ")) return line.slice(2);
-  if (line.startsWith(" ")) return line.slice(1);
-  return line;
-}
-
 function runGitArgv(cwd: string, argv: readonly string[]): Promise<{ code: number; output: string; missing: boolean }> {
   if (!commandDecision([...argv]).allow) return Promise.resolve({ code: 2, output: "", missing: true });
   return new Promise((resolve) => {
@@ -94,14 +87,6 @@ function runGitArgv(cwd: string, argv: readonly string[]): Promise<{ code: numbe
   });
 }
 
-function runGitStatus(cwd: string): Promise<{ code: number; output: string; missing: boolean }> {
-  return runGitArgv(cwd, ["git", "status", "-sb"]);
-}
-
-function runGitLog(cwd: string, count: number): Promise<{ code: number; output: string; missing: boolean }> {
-  return runGitArgv(cwd, ["git", "log", "--oneline", "-n", String(count)]);
-}
-
 function redactListName(name: string): string {
   const gate = securityGate({ relativePath: "name.txt", content: name, sandboxRoot: "." });
   return gate.reasons.includes("secret pattern") ? "[redacted]" : name;
@@ -122,8 +107,354 @@ function takeFlag(argv: readonly string[], name: string): { value: string | unde
   return { value, rest };
 }
 
+function waitForCliAnswer(question: Promise<string>, signal: AbortSignal): Promise<string> {
+  if (signal.aborted) return Promise.resolve("");
+  return new Promise((resolve) => {
+    const finish = (answer: string) => {
+      signal.removeEventListener("abort", onAbort);
+      resolve(answer);
+    };
+    const onAbort = () => finish("");
+    signal.addEventListener("abort", onAbort, { once: true });
+    question.then(finish, () => finish(""));
+  });
+}
+
 export async function main(argv: readonly string[]): Promise<number> {
   const [command, ...tail] = argv;
+  if (command === "app") {
+    const portFlag = takeFlag(tail, "--port");
+    const port = portFlag.value === undefined ? 4317 : Number(portFlag.value);
+    if (!Number.isInteger(port) || port < 0 || port > 65535 || portFlag.rest.length > 0) {
+      process.stdout.write("Usage: ocp app [--port 4317]\n");
+      return 2;
+    }
+    const app = await startProductApp({ port, env: process.env });
+    process.stdout.write(`OpenCodingPartner is running at ${app.url}\nPress Ctrl+C to stop.\n`);
+    await new Promise<void>((resolve) => {
+      process.once("SIGINT", resolve);
+      process.once("SIGTERM", resolve);
+    });
+    await app.close();
+    return 0;
+  }
+  if (command === "backup") {
+    const destination = takeFlag(tail, "--to");
+    if (!destination.value || destination.rest.length > 0) {
+      process.stdout.write("Usage: ocp backup --to PATH\nCreates a new backup directory; existing paths are never overwritten.\n");
+      return 2;
+    }
+    try {
+      const backup = await backupProductData(destination.value);
+      process.stdout.write(`Backup created: ${backup}\nBot/task state and OCP Agent profiles are included. Project workspaces are not copied.\n`);
+      return 0;
+    } catch (error) {
+      process.stderr.write(`${error instanceof Error ? error.message : "Could not create backup."}\n`);
+      return 1;
+    }
+  }
+  if (command === "restore") {
+    const source = takeFlag(tail, "--from");
+    const destination = takeFlag(source.rest, "--to");
+    const workspaceFrom = takeFlag(destination.rest, "--workspace-from");
+    const workspaceTo = takeFlag(workspaceFrom.rest, "--workspace-to");
+    if (!source.value || !destination.value || workspaceTo.rest.length > 0 || (!!workspaceFrom.value !== !!workspaceTo.value)) {
+      process.stdout.write("Usage: ocp restore --from BACKUP_DIR --to NEW_DATA_DIR [--workspace-from OLD_ROOT --workspace-to NEW_ROOT]\nDestination must be new. Project workspaces stay external and must exist; map their old root to a new existing root when relocating.\n");
+      return 2;
+    }
+    try {
+      const restored = await restoreProductData(source.value, destination.value, workspaceFrom.value && workspaceTo.value ? { from: workspaceFrom.value, to: workspaceTo.value } : undefined);
+      process.stdout.write(`Restored OpenCodingPartner data: ${restored.directory}\nSet OCP_DATA_DIR=${restored.directory} to use it. Project workspaces were not copied.\n`);
+      if (restored.remappedBots.length) process.stdout.write(`Workspace paths remapped; runtime sessions reset for: ${restored.remappedBots.join(", ")}\n`);
+      return 0;
+    } catch (error) {
+      process.stderr.write(`${error instanceof Error ? error.message : "Could not restore OpenCodingPartner data."}\n`);
+      return 1;
+    }
+  }
+  if (command === "bots" || command === "bot" || command === "tasks" || command === "task") {
+    const isBots = command === "bots" || command === "bot";
+    const sub = tail[0];
+    const args = tail.slice(1);
+    const root = productDataDir();
+    if (isBots && sub === "list") {
+      const bots = await listBots(root);
+      process.stdout.write(bots.length === 0
+        ? `No bots yet. Create one with: ocp bot create --name "OCP Coder" --role coding --workspace .\nData: ${root}\n`
+        : `${bots.map((bot) => `${bot.id}\t${bot.name}\t${bot.role}\t${bot.runtime}\t${bot.workspace}`).join("\n")}\n`);
+      return 0;
+    }
+    if (isBots && sub === "create") {
+      const name = takeFlag(args, "--name");
+      const role = takeFlag(name.rest, "--role");
+      const runtime = takeFlag(role.rest, "--runtime");
+      const isolation = takeFlag(runtime.rest, "--isolation");
+      const network = takeFlag(isolation.rest, "--network");
+      const workspace = takeFlag(network.rest, "--workspace");
+      const instructions = takeFlag(workspace.rest, "--instructions");
+      const provider = takeFlag(instructions.rest, "--provider");
+      const model = takeFlag(provider.rest, "--model");
+      const endpoint = takeFlag(model.rest, "--endpoint");
+      const apiKeyEnv = takeFlag(endpoint.rest, "--api-key-env");
+      const chosenRole = role.value ?? "general";
+      const chosenRuntime = runtime.value ?? "ocp-agent";
+      const chosenIsolation = isolation.value ?? "docker";
+      const chosenNetwork = network.value ?? "disabled";
+      const chosenProvider = provider.value;
+      const chosenEndpoint = endpoint.value;
+      const chosenApiKeyEnv = apiKeyEnv.value ?? (chosenProvider === "litellm" ? "LITELLM_API_KEY" : undefined);
+      const validEndpoint = (value: string | undefined): boolean => {
+        if (!value) return false;
+        try {
+          const url = new URL(value);
+          return (url.protocol === "http:" || url.protocol === "https:") && !url.username && !url.password && !url.search && !url.hash;
+        } catch { return false; }
+      };
+      const validEnvName = (value: string | undefined): boolean => value === undefined || /^[A-Za-z_][A-Za-z0-9_]*$/.test(value);
+      const agentRuntime = isOcpAgentRuntime(chosenRuntime);
+      const providerValid = chosenProvider === undefined || (validBotProvider(chosenProvider) && !!model.value?.trim());
+      const modelRequiresProvider = model.value !== undefined && chosenProvider === undefined;
+      const endpointValid = chosenProvider !== "litellm" || validEndpoint(chosenEndpoint);
+      const endpointUnexpected = chosenProvider !== "litellm" && chosenEndpoint !== undefined;
+      const keyEnvUnexpected = chosenProvider !== "litellm" && apiKeyEnv.value !== undefined;
+      const isolationValid = agentRuntime ? ["docker", "host"].includes(chosenIsolation) : isolation.value === undefined;
+      const networkValid = validBotNetworkMode(chosenNetwork) && (chosenNetwork !== "enabled" || agentRuntime && chosenIsolation === "docker");
+      if (!name.value?.trim() || !validBotRole(chosenRole) || !validBotRuntime(chosenRuntime) || !isolationValid || !networkValid || !providerValid || modelRequiresProvider || !endpointValid || endpointUnexpected || keyEnvUnexpected || !validEnvName(chosenApiKeyEnv) || apiKeyEnv.rest.length > 0) {
+        process.stdout.write("Usage: ocp bot create --name \"name\" [--role general|coding|qa|security|research|computer] [--runtime ocp-agent|ocp-coder] [--isolation docker|host] [--network disabled|enabled] [--workspace path] [--instructions text] [--provider openrouter|litellm --model model-id] [--endpoint https://litellm.example/v1] [--api-key-env ENV_NAME]\nOCP Agent uses Docker isolation and disables Docker terminal network access by default; --network enabled opts in, --isolation host opts out of the container.\n");
+        return 2;
+      }
+      const cwd = path.resolve(workspace.value ?? process.cwd());
+      const info = await stat(cwd).catch(() => undefined);
+      if (!info?.isDirectory()) {
+        process.stdout.write(`Workspace is not a directory: ${cwd}\n`);
+        return 2;
+      }
+      const bot = await createBot({
+        name: name.value.trim(),
+        role: chosenRole,
+        runtime: chosenRuntime,
+        isolation: agentRuntime ? chosenIsolation as "docker" | "host" : undefined,
+        network: agentRuntime && chosenIsolation === "docker" ? chosenNetwork as "disabled" | "enabled" : undefined,
+        workspace: cwd,
+        instructions: instructions.value ?? defaultBotInstructions(chosenRole),
+        provider: chosenProvider as "openrouter" | "litellm" | undefined,
+        endpoint: chosenEndpoint,
+        apiKeyEnv: chosenApiKeyEnv,
+        model: model.value,
+      }, root);
+      process.stdout.write(`Created ${bot.name} (${bot.id})\nRuntime: ${bot.runtime}\nWorkspace: ${bot.workspace}\nData: ${root}\n`);
+      if (isOcpAgentRuntime(bot.runtime)) process.stdout.write(`Isolation: ${bot.isolation ?? "docker"}\n`);
+      if (isOcpAgentRuntime(bot.runtime) && bot.isolation === "docker") process.stdout.write(`Docker terminal network: ${bot.network ?? "disabled"}\n`);
+      if (bot.provider) process.stdout.write(`Provider: ${bot.provider}\nModel: ${bot.model}\nAPI key: read from ${bot.provider === "openrouter" ? "OPENROUTER_API_KEY" : `${bot.apiKeyEnv}${bot.apiKeyEnv === "LITELLM_API_KEY" ? " or LITELLM_MASTER_KEY" : ""}`}\n`);
+      return 0;
+    }
+    if (isBots && sub === "show") {
+      const bot = await findBot(args[0] ?? "", root);
+      if (!bot) {
+        process.stdout.write("Bot not found. Run `ocp bots list`.\n");
+        return 1;
+      }
+      const publicBot = Object.fromEntries(Object.entries(bot).filter(([key]) => key !== "instructions"));
+      process.stdout.write(`${JSON.stringify(publicBot, null, 2)}\n`);
+      return 0;
+    }
+    if (isBots && sub === "delete") {
+      const id = args[0];
+      if (!id || args.length !== 1) {
+        process.stdout.write("Usage: ocp bot delete BOT_ID\n");
+        return 2;
+      }
+      try {
+        const bot = await findBot(id, root);
+        if (!bot) throw new Error(`Unknown bot: ${id}`);
+        await deleteBot(id, root);
+        process.stdout.write(`Deleted bot definition: ${bot.name} (${bot.id})\nTask history and OCP Agent session files were retained.\n`);
+        return 0;
+      } catch (error) {
+        process.stderr.write(`${error instanceof Error ? error.message : "Could not delete bot."}\n`);
+        return 1;
+      }
+    }
+    if (!isBots && sub === "list") {
+      const tasks = await listTasks(root);
+      process.stdout.write(tasks.length === 0
+        ? "No tasks yet. Create one with: ocp task run BOT_ID --text \"your request\"\n"
+        : `${tasks.map((task) => `${task.id}\t${task.status}\t${task.botId}`).join("\n")}\n`);
+      return 0;
+    }
+    if (!isBots && sub === "delete") {
+      const id = args[0] ?? "";
+      if (!id || args.length !== 1) {
+        process.stdout.write("Usage: ocp task delete TASK_ID\nOnly inactive task records can be deleted.\n");
+        return 2;
+      }
+      try {
+        await deleteTask(id, root);
+        process.stdout.write(`Deleted local task record ${id}. The OCP Agent bot session is unchanged.\n`);
+        return 0;
+      } catch (error) {
+        process.stderr.write(`${error instanceof Error ? error.message : "Could not delete task."}\n`);
+        return 1;
+      }
+    }
+    if (!isBots && sub === "show") {
+      const task = await findTask(args[0] ?? "", root);
+      if (!task) {
+        process.stdout.write("Task not found. Run `ocp tasks list`.\n");
+        return 1;
+      }
+      const bot = await findBot(task.botId, root);
+      const reviewer = task.reviewerBotId ? await findBot(task.reviewerBotId, root) : undefined;
+      process.stdout.write(`Task ${task.id}\nStatus: ${task.status}\nBot: ${bot?.name ?? task.botId}${reviewer ? `\nReviewer: ${reviewer.name}` : ""}\nCreated: ${task.createdAt}\n\nRequest\n${task.prompt}\n`);
+      if (task.agents?.length) {
+        process.stdout.write("\nRun configuration\n");
+        for (const agent of task.agents) process.stdout.write(`${agent.name} (${agent.role})\t${agent.runtime}\t${agent.provider ?? "OCP Agent default"}${agent.model ? `\t${agent.model}` : ""}${agent.endpoint ? `\t${agent.endpoint}` : ""}\n`);
+      }
+      if (task.events?.length) {
+        process.stdout.write("\nActivity\n");
+        for (const event of task.events) process.stdout.write(`${event.createdAt}\t${event.kind}${event.title ? `\t${event.title}` : ""}${event.text ? `\n${event.text}` : ""}\n`);
+      }
+      if (task.approvals?.length) process.stdout.write(`\nApprovals\n${JSON.stringify(task.approvals, null, 2)}\n`);
+      if (task.result) process.stdout.write(`\nResult\n${task.result}\n`);
+      if (task.error) process.stdout.write(`\nError\n${task.error}\n`);
+      if (task.workspaceChanges) {
+        const review = task.workspaceChanges;
+        process.stdout.write(`\nWorkspace changes\n${review.available ? `${review.files.length} changed paths${review.pathsTruncated ? " (path list truncated)" : ""}` : review.diffOmittedReason}\n`);
+        if (review.dirtyAtStart) process.stdout.write("The workspace already had changes before this task; the diff may include work from before the run.\n");
+        for (const file of review.files) process.stdout.write(`${file.status}\t${file.path}${file.alreadyModified ? " (already modified at task start)" : ""}\n`);
+        if (review.diffOmittedReason) process.stdout.write(`${review.diffOmittedReason}\n`);
+        if (review.diff) process.stdout.write(`\n${review.diff}\n`);
+      }
+      return 0;
+    }
+    if (!isBots && sub === "run") {
+      const bot = await findBot(args[0] ?? "", root);
+      const reviewFlag = takeFlag(args.slice(1), "--review-by");
+      const textFlag = takeFlag(reviewFlag.rest, "--text");
+      const reviewer = reviewFlag.value ? await findBot(reviewFlag.value, root) : undefined;
+      if (!bot || !textFlag.value?.trim() || (reviewFlag.value && (!reviewer || reviewer.id === bot.id || !["qa", "security"].includes(reviewer.role) || !(await workspacePathsMatch(reviewer.workspace, bot.workspace))))) {
+        process.stdout.write("Usage: ocp task run BOT_ID [--review-by QA_OR_SECURITY_BOT_ID] --text \"what the bot should do\"\nThe reviewer must be a separate QA or security bot using the same workspace. Run `ocp bots list` to see bots.\n");
+        return 2;
+      }
+      const missingKey = missingProviderKey(bot, process.env) ?? (reviewer ? missingProviderKey(reviewer, process.env) : undefined);
+      if (missingKey) {
+        process.stderr.write(`Provider key is missing. Set ${missingKey} in the environment before running this bot.\n`);
+        return 2;
+      }
+      const workspaceBaseline = await captureWorkspaceBaseline(bot.workspace);
+      let task: Awaited<ReturnType<typeof createTask>>;
+      try {
+        task = await createTask({ botId: bot.id, reviewerBotId: reviewer?.id, prompt: textFlag.value.trim() }, root);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Could not queue task.";
+        process.stderr.write(`${message}\n`);
+        return 2;
+      }
+      await updateTask(task.id, { status: "running", processId: process.pid }, root);
+      process.stdout.write(`Task ${task.id} started with ${bot.name} (${bot.runtime})${reviewer ? `; review by ${reviewer.name} after implementation` : ""}.\n`);
+      const approvalInput = stdin.isTTY ? createInterface({ input: stdin, output: stdout }) : undefined;
+      const controller = new AbortController();
+      const handleInterrupt = () => {
+        controller.abort();
+        approvalInput?.close();
+      };
+      process.once("SIGINT", handleInterrupt);
+      process.once("SIGTERM", handleInterrupt);
+      let eventWrites = Promise.resolve();
+      let eventWriteError: unknown;
+      try {
+        const agents = reviewer ? [bot, reviewer] : [bot];
+        const outputs: Array<{ sessionId: string; result: string; permissionDenied: boolean }> = [];
+        let permissionDenied = false;
+        for (let index = 0; index < agents.length; index += 1) {
+          if (controller.signal.aborted) throw new Error("Task cancelled.");
+          const agent = agents[index]!;
+          let agentPrompt: string;
+          if (index === 1) {
+            const implementation = outputs[0]!;
+            const reviewWorkspace = await collectWorkspaceChanges(bot.workspace, workspaceBaseline);
+            process.stdout.write(`\n--- Handoff to ${agent.name} (${agent.role}) ---\n`);
+            await recordTaskEvent(task.id, { kind: "handoff", title: `Handing workspace to ${agent.name} for ${agent.role} review.` }, root);
+            agentPrompt = `${agent.instructions}\n\nReview this implementation.\n\nUser request:\n${task.prompt.slice(0, 8_000)}\n\nImplementation report:\n${implementation.result.slice(-8_000)}\n\nChanged paths:\n${reviewWorkspace.files.map((file) => `${file.status} ${file.path}`).join("\n").slice(0, 4_000) || "No Git changes reported."}\n\n${reviewWorkspace.diff ? `Git diff excerpt:\n${reviewWorkspace.diff.slice(0, 10_000)}` : `Git diff unavailable: ${reviewWorkspace.diffOmittedReason ?? "no diff"}`}\n\nReport concrete findings with file references and note what you verified. Do not modify project files.`;
+          } else {
+            agentPrompt = `${agent.instructions}\n\nTask from user:\n${task.prompt}`;
+          }
+          const output = await runBotSession(agent, agentPrompt, {
+            dataDir: root,
+            signal: controller.signal,
+            onUpdate: (update) => {
+              if (update.kind === "agent_message_chunk" && update.text) process.stdout.write(update.text);
+              else if (update.kind === "tool_call" || update.kind === "tool_call_update" || update.kind === "session_reset") process.stdout.write(`\n[${agent.name} · ${update.kind}${update.title ? `: ${update.title}` : ""}]\n`);
+              else if (update.kind === "permission_denied") process.stdout.write(`\n[Permission denied: ${update.title}]\n`);
+              else if (update.kind === "permission_allowed") process.stdout.write(`\n[Approved once: ${update.title}]\n`);
+              if (["tool_call", "tool_call_update", "permission_denied", "permission_allowed", "session_reset"].includes(update.kind)) {
+                const title = update.title ? `${agent.name}: ${update.title}` : agent.name;
+                eventWrites = eventWrites.then(() => recordTaskEvent(task.id, { kind: update.kind, title }, root)).catch((error) => { eventWriteError = error; });
+              }
+            },
+            onPermissionRequest: async (request) => {
+              const allow = request.options.find((option) => option.kind === "allow_once");
+              if (!approvalInput || !allow) return undefined;
+              process.stdout.write(`\nPermission request: ${request.title}\n`);
+              if (request.description) process.stdout.write(`${request.description}\n`);
+              if (request.subject && typeof request.subject === "object") {
+                const subject = request.subject as Record<string, unknown>;
+                if (subject.type === "command") {
+                  if (typeof subject.command === "string") process.stdout.write(`Command: ${subject.command}\n`);
+                  if (typeof subject.cwd === "string") process.stdout.write(`Working directory: ${subject.cwd}\n`);
+                } else if (subject.type === "tool_call" && subject.toolCall && typeof subject.toolCall === "object") {
+                  const toolCall = subject.toolCall as Record<string, unknown>;
+                  if (typeof toolCall.title === "string") process.stdout.write(`Action: ${toolCall.title}\n`);
+                }
+              }
+              process.stdout.write("Only this action can be approved. No standing permission will be saved.\n");
+              const answer = await waitForCliAnswer(approvalInput.question("Allow once? [y/N] "), controller.signal);
+              return /^y(es)?$/i.test(answer.trim()) ? allow.optionId : undefined;
+            },
+            onPermissionResolved: (approval) => recordTaskApproval(task.id, approval, root),
+            onSessionReady: (sessionId) => updateBotSession(agent.id, sessionId, root),
+          });
+          outputs.push(output);
+          permissionDenied ||= output.permissionDenied;
+          if (index === 0 && reviewer) {
+            await updateTask(task.id, { result: `Implementation by ${bot.name}:\n${output.result}`.slice(-20_000) }, root);
+          }
+          if (output.permissionDenied) break;
+        }
+        if (controller.signal.aborted) throw new Error("Task cancelled.");
+        await eventWrites;
+        if (eventWriteError) throw eventWriteError;
+        const result = reviewer && outputs.length > 1
+          ? `Implementation by ${bot.name}:\n${outputs[0]!.result}\n\nReview by ${reviewer.name}:\n${outputs[1]!.result}`
+          : outputs[0]!.result;
+        const workspaceChanges = await collectWorkspaceChanges(bot.workspace, workspaceBaseline);
+        await updateTask(task.id, {
+          status: permissionDenied ? "needs-attention" : "succeeded",
+          runtimeSessionId: outputs[0]!.sessionId,
+          result: result.slice(-20_000),
+          workspaceChanges,
+          processId: undefined,
+        }, root);
+        if (!result.endsWith("\n")) process.stdout.write("\n");
+        return 0;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Agent run failed.";
+        const workspaceChanges = await collectWorkspaceChanges(bot.workspace, workspaceBaseline).catch(() => undefined);
+        const cancelled = controller.signal.aborted;
+        await updateTask(task.id, { status: cancelled ? "cancelled" : "failed", error: cancelled ? undefined : message, processId: undefined, workspaceChanges }, root);
+        process.stderr.write(cancelled ? "Task cancelled.\n" : `Task failed: ${message}\n`);
+        return cancelled ? 130 : 1;
+      } finally {
+        process.removeListener("SIGINT", handleInterrupt);
+        process.removeListener("SIGTERM", handleInterrupt);
+        approvalInput?.close();
+      }
+    }
+    process.stdout.write(isBots
+      ? "Usage: ocp bots list | ocp bot create ... | ocp bot show BOT_ID | ocp bot delete BOT_ID\n"
+      : "Usage: ocp tasks list | ocp task show TASK_ID | ocp task delete TASK_ID | ocp task run BOT_ID [--review-by QA_OR_SECURITY_BOT_ID] --text \"...\"\n");
+    return 2;
+  }
   if (command === "demo") {
     const live = tail.includes("--live");
     const { value } = takeFlag(
@@ -2476,6 +2807,7 @@ export async function main(argv: readonly string[]): Promise<number> {
       controlLine,
       statusLine,
       mountLine,
+      priorLine: await doctorPriorTurnLine(sandbox),
       checkLine,
       qaLine,
       routineLine,
@@ -2530,7 +2862,7 @@ export async function main(argv: readonly string[]): Promise<number> {
     return 0;
   }
   process.stdout.write(
-    "Open Coding Partner chat\n\n  ocp chat --sandbox .sandbox\n  ocp chat --sandbox .sandbox \"Use the coding worker to create hello.txt with content:\nhello\n\"\n  ocp chat --sandbox .sandbox --computer-execute \"Open https://example.com\"\n  ocp demo --sandbox .sandbox\n  ocp doctor\n  ocp check --sandbox .sandbox\n  ocp read --sandbox .sandbox path\n  ocp list --sandbox .sandbox\n  ocp grep --text \"...\" --sandbox .sandbox\n  ocp glob --pattern \"*.txt\" --sandbox .sandbox\n  ocp git status --sandbox .sandbox\n  ocp git log --sandbox .sandbox\n  ocp git diff --sandbox .sandbox\n  ocp git show --sandbox .sandbox path\n  ocp turns --sandbox .sandbox\n  ocp append --text \"...\" --sandbox .sandbox path\n  ocp mkdir --sandbox .sandbox path\n  ocp delete --sandbox .sandbox path\n  ocp rmdir --sandbox .sandbox path\n  ocp rename --from path --to path --sandbox .sandbox\n  ocp copy --from path --to path --sandbox .sandbox\n  ocp write --text \"...\" --sandbox .sandbox path\n  ocp patch --text \"...\" --sandbox .sandbox path\n  ocp replace --text \"...\" --sandbox .sandbox path\n  ocp stat --sandbox .sandbox path\n  ocp same --from path --to path --sandbox .sandbox\n  ocp contains --text \"...\" --sandbox .sandbox path\n  ocp lines --sandbox .sandbox path\n  ocp bytes --sandbox .sandbox path\n  ocp count --sandbox .sandbox\n  ocp trail --sandbox .sandbox path\n  ocp keep --text \"...\" --sandbox .sandbox path\n  ocp drop --text \"...\" --sandbox .sandbox path\n  ocp uniq --sandbox .sandbox path\n  ocp mtime --sandbox .sandbox path\n  ocp lower --sandbox .sandbox path\n  ocp upper --sandbox .sandbox path\n  ocp first --sandbox .sandbox path\n  ocp last --sandbox .sandbox path\n  ocp chop --sandbox .sandbox path\n  ocp prefix --text \"...\" --sandbox .sandbox path\n  ocp suffix --text \"...\" --sandbox .sandbox path\n  ocp wrap --text \"...\" --with \"...\" --sandbox .sandbox path\n  ocp take --n N --sandbox .sandbox path\n  ocp skip --n N --sandbox .sandbox path\n  ocp span --n START --with END --sandbox .sandbox path\n  ocp squeeze --sandbox .sandbox path\n  ocp purge --sandbox .sandbox path\n  ocp trim --sandbox .sandbox path\n  ocp insert --n N --text \"...\" --sandbox .sandbox path\n  ocp cut --n N --sandbox .sandbox path\n  ocp exchange --n N --with N --sandbox .sandbox path\n  ocp until --text \"...\" --sandbox .sandbox path\n  ocp from --text \"...\" --sandbox .sandbox path\n  ocp between --text \"...\" --with \"...\" --sandbox .sandbox path\n  ocp shared --from path --to path --sandbox .sandbox\n  ocp only --from path --to path --sandbox .sandbox\n  ocp join --from path --to path --sandbox .sandbox\n  ocp clip --n N --sandbox .sandbox path\n  ocp pad --n N --sandbox .sandbox path\n  ocp fold --n N --sandbox .sandbox path\n  ocp col --n N --sandbox .sandbox path\n  ocp dropcol --n N --sandbox .sandbox path\n  ocp swapcol --n N --with N --sandbox .sandbox path\n  ocp up --n N --sandbox .sandbox path\n  ocp down --n N --sandbox .sandbox path\n  ocp shift --n START --with END --sandbox .sandbox path\n  ocp prove coding\n  ocp prove computer\n  ocp computer --sandbox .sandbox\n  ocp computer --sandbox .sandbox takeover\n  ocp computer --sandbox .sandbox return\n  ocp computer --sandbox .sandbox qa\n\nThe Computer tab shows the sandbox desktop status and the last frame path. There is no live pixel stream in this build. takeover hands the browser to you. return hands it back to the partner. ocp computer qa checks the frame file and does not open a page.\nOrchestration owns the session plan. After it accepts the plan, it invokes the sandbox write bridge. The transcript says Write path: orchestration. Delete and rename use the same bridge when the gateway drove the turn. When the gateway is down, the transcript says Write path: local sandbox. fs_write, apply_patch, and sessions_spawn stay blocked.\nThe computer agent opens a browser only with --computer-execute or OCP_COMPUTER_EXECUTE=1, and only after an Approve card when the sandbox has PARTNER.md. It opens a named http(s) URL, reads the screen, and types into one selector when you ask. A live stream is not in this build.\n",
+    "OpenCodingPartner — local AI teammates\n\n  ocp app [--port 4317]\n  ocp backup --to PATH\n  ocp restore --from BACKUP_DIR --to NEW_DATA_DIR [--workspace-from OLD_ROOT --workspace-to NEW_ROOT]\n  ocp bot create --name \"Coding Partner\" --role coding --workspace .\n  ocp bots list\n  ocp bot show BOT_ID\n  ocp task run BOT_ID --text \"your request\"\n  ocp task run CODER_ID --review-by REVIEWER_ID --text \"your request\"\n  ocp tasks list\n  ocp task show TASK_ID\n  ocp task delete TASK_ID\n\nLegacy sandbox and connected-stack commands follow; see docs/legacy-sandbox.md.\n\n  ocp chat --sandbox .sandbox\n  ocp chat --sandbox .sandbox \"Use the coding worker to create hello.txt with content:\nhello\n\"\n  ocp chat --sandbox .sandbox --computer-execute \"Open https://example.com\"\n  ocp demo --sandbox .sandbox\n  ocp doctor\n  ocp check --sandbox .sandbox\n  ocp read --sandbox .sandbox path\n  ocp list --sandbox .sandbox\n  ocp grep --text \"...\" --sandbox .sandbox\n  ocp glob --pattern \"*.txt\" --sandbox .sandbox\n  ocp git status --sandbox .sandbox\n  ocp git log --sandbox .sandbox\n  ocp git diff --sandbox .sandbox\n  ocp git show --sandbox .sandbox path\n  ocp turns --sandbox .sandbox\n  ocp append --text \"...\" --sandbox .sandbox path\n  ocp mkdir --sandbox .sandbox path\n  ocp delete --sandbox .sandbox path\n  ocp rmdir --sandbox .sandbox path\n  ocp rename --from path --to path --sandbox .sandbox\n  ocp copy --from path --to path --sandbox .sandbox\n  ocp write --text \"...\" --sandbox .sandbox path\n  ocp patch --text \"...\" --sandbox .sandbox path\n  ocp replace --text \"...\" --sandbox .sandbox path\n  ocp stat --sandbox .sandbox path\n  ocp same --from path --to path --sandbox .sandbox\n  ocp contains --text \"...\" --sandbox .sandbox path\n  ocp lines --sandbox .sandbox path\n  ocp bytes --sandbox .sandbox path\n  ocp count --sandbox .sandbox\n  ocp trail --sandbox .sandbox path\n  ocp keep --text \"...\" --sandbox .sandbox path\n  ocp drop --text \"...\" --sandbox .sandbox path\n  ocp uniq --sandbox .sandbox path\n  ocp mtime --sandbox .sandbox path\n  ocp lower --sandbox .sandbox path\n  ocp upper --sandbox .sandbox path\n  ocp first --sandbox .sandbox path\n  ocp last --sandbox .sandbox path\n  ocp chop --sandbox .sandbox path\n  ocp prefix --text \"...\" --sandbox .sandbox path\n  ocp suffix --text \"...\" --sandbox .sandbox path\n  ocp wrap --text \"...\" --with \"...\" --sandbox .sandbox path\n  ocp take --n N --sandbox .sandbox path\n  ocp skip --n N --sandbox .sandbox path\n  ocp span --n START --with END --sandbox .sandbox path\n  ocp squeeze --sandbox .sandbox path\n  ocp purge --sandbox .sandbox path\n  ocp trim --sandbox .sandbox path\n  ocp insert --n N --text \"...\" --sandbox .sandbox path\n  ocp cut --n N --sandbox .sandbox path\n  ocp exchange --n N --with N --sandbox .sandbox path\n  ocp until --text \"...\" --sandbox .sandbox path\n  ocp from --text \"...\" --sandbox .sandbox path\n  ocp between --text \"...\" --with \"...\" --sandbox .sandbox path\n  ocp shared --from path --to path --sandbox .sandbox\n  ocp only --from path --to path --sandbox .sandbox\n  ocp join --from path --to path --sandbox .sandbox\n  ocp clip --n N --sandbox .sandbox path\n  ocp pad --n N --sandbox .sandbox path\n  ocp fold --n N --sandbox .sandbox path\n  ocp col --n N --sandbox .sandbox path\n  ocp dropcol --n N --sandbox .sandbox path\n  ocp swapcol --n N --with N --sandbox .sandbox path\n  ocp up --n N --sandbox .sandbox path\n  ocp down --n N --sandbox .sandbox path\n  ocp shift --n START --with END --sandbox .sandbox path\n  ocp prove coding\n  ocp prove computer\n  ocp computer --sandbox .sandbox\n  ocp computer --sandbox .sandbox takeover\n  ocp computer --sandbox .sandbox return\n  ocp computer --sandbox .sandbox qa\n\nThe Computer tab shows the sandbox desktop status and the last frame path. There is no live pixel stream in this build. takeover hands the browser to you. return hands it back to the partner. ocp computer qa checks the frame file and does not open a page.\nOrchestration owns the session plan. After it accepts the plan, it invokes the sandbox write bridge. The transcript says Write path: orchestration. Delete and rename use the same bridge when the gateway drove the turn. When the gateway is down, the transcript says Write path: local sandbox. fs_write, apply_patch, and sessions_spawn stay blocked.\nThe computer agent opens a browser only with --computer-execute or OCP_COMPUTER_EXECUTE=1, and only after an Approve card when the sandbox has PARTNER.md. It opens a named http(s) URL, reads the screen, and types into one selector when you ask. A live stream is not in this build.\n",
   );
   return command === undefined || command === "--help" || command === "-h" ? 0 : 2;
 }

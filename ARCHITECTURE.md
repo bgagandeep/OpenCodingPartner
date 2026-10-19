@@ -1,81 +1,206 @@
-# Architecture
+# OpenCodingPartner: Product and Architecture Bible
 
-OpenCodingPartner is a chat agent that runs an orchestration agent swarm. You ask that swarm to stand up agents. One turn can stand up a coding agent, a QA agent, a security agent, and a computer agent. Multi-agent is the product.
+## Product thesis
 
-There is a temporary early-test cap of 8 agents in the code. That cap is for early tests only. It is not a one-worker rule.
+OpenCodingPartner (OCP) is an open, provider-neutral ecosystem for creating and working with persistent AI teammates, centered on **OCP Agent** and **OCP Coder**. A person creates named bots with a role, instructions, memory, tools, and a workspace, then gives them work through chat or an automation. A bot can plan, use tools, collaborate with other bots, make changes in a project, verify its work, and return for approval when a decision or risk requires the human.
 
-## Product path
+The product inspiration is the *AI teammate* experience associated with Grok Bot: persistent agents that do work across tools, keep context, and collaborate. OpenCodingPartner makes that experience buildable and self-hostable through **OCP Agent** (powered by Hermes Agent under the hood) and **OCP Coder**, with model access through LiteLLM or OpenRouter. This is a product reference, not an affiliation, compatibility claim, or attempt to reproduce proprietary Grok Bot internals. See [xAI's Grok Bot announcement](https://x.ai/news/introducing-grok-bot).
 
-`ocp chat` is the product. With no message, it is a chat loop. With a message, it runs one turn and exits. `ocp doctor` prints green, yellow, or red for System-1, the meter, orchestration `/healthz`, the write-bridge plugin, Computer capture, Slack, Telegram, and Discord. Discord is yellow because it is not in this build. That line does not post a message and does not print a token. Telegram is green when `TELEGRAM_BOT_TOKEN` and `TELEGRAM_WEBHOOK_SECRET` are set. Computer capture is green when Playwright is installed. That line does not start the browser. Slack is green when `SLACK_BOT_TOKEN` and `SLACK_SIGNING_SECRET` are set. It does not print keys or those values. Yellow means that piece will be an honest skip in the transcript. `ocp doctor --sandbox` also counts pending Approve cards, names each pending card as plan or computer without printing the request, says whether the plan is accepted without printing it, and counts review holds for that sandbox, checks each partner frame that has a page or a frame file, says whether `PARTNER.md` is present, and says whether the last page check passed without printing the page text. It also says who holds the browser and does not take or return it. It says whether a previous run marked the browser live and does not start it. Live stream is not in this build. It reports the last `node --test`, `pnpm test`, or `tsc --noEmit` exit code and does not print the command output. `ocp check` runs that command in the sandbox or `--partner` and records the exit code. The output is not stored. A secret line is not printed. `ocp list` names the files in the sandbox or `--partner`. It does not print file contents. `.ocp/` and `gtm/` are left out. A secret name is not printed. `ocp glob --pattern` names the files that match a relative pattern. It does not print file contents. `ocp git log` shows up to 20 short commits for that sandbox. It does not commit. A secret subject is not printed. `ocp git show` prints one committed file. A secret line is not printed. It does not commit. `ocp append --text` adds text to one existing file. It does not create a file. A secret is not written. It does not run a turn. `ocp delete` removes one file in this workspace. It does not remove a directory. A secret file stays. It does not run a turn. `ocp rename --from --to` moves one file in this workspace. It does not overwrite. A directory stays. A secret file stays. It does not run a turn. `ocp write --text` creates one new file in this workspace. It does not overwrite. A secret is not written. It does not run a turn. `ocp replace --text` replaces one existing file in this workspace. It does not create a file. A secret is not written. It does not run a turn. `ocp stat` says whether a path is a file, a directory, or missing. It does not print file contents. A secret name is not printed. It does not run a turn. `ocp same --from --to` says whether two files match. It does not print file contents. A secret file is skipped. It does not run a turn. `ocp contains --text` says whether one file includes that text. It does not print the line. A secret file is skipped. It does not run a turn. `ocp lines` prints only the line count of one existing file. It does not print the lines. A secret file is skipped. It does not run a turn. `ocp bytes` prints only the byte size of one existing file. It does not print the file. A secret file is skipped. It does not run a turn. `ocp count` prints how many entries are in one directory. It does not print their names. `.ocp/` and `gtm/` are left out. It does not run a turn. `ocp trail` says whether one existing file has trailing spaces or tabs. It does not print the file. A secret file is skipped. It does not run a turn. `ocp keep --text` keeps the lines that include that text. `ocp drop --text` removes them. `ocp uniq` drops repeated lines. None of them print the lines. A secret file stays. A secret query is refused. They do not run a turn. `ocp mtime` prints when a file or directory was last changed. It does not print file contents. A secret file is skipped. It does not run a turn. `ocp lower` rewrites one existing file in lowercase. `ocp upper` rewrites it in uppercase. Neither prints the file. A secret file stays. They do not run a turn. `ocp first` keeps the first line of one existing file. `ocp last` keeps the last line. `ocp chop` drops the last line. None of them prints the file. A secret file stays. They do not run a turn. `ocp prefix` adds one phrase to the start of each line that has text. `ocp suffix` adds it at the end of those lines. `ocp wrap` adds a phrase on both sides. Blank lines stay blank. None of them prints the file. A secret file stays. They do not run a turn. `ocp take` keeps the first N lines of one existing file. `ocp skip` drops the first N lines. `ocp span` keeps one inclusive range of lines. None of them prints the file. A secret file stays. They do not run a turn. `ocp squeeze` collapses repeated blank lines to one. `ocp purge` removes blank lines. `ocp trim` removes spaces and tabs at both ends of each line. None of them prints the file. A secret file stays. They do not run a turn. `ocp insert` adds one line at a numbered place. `ocp cut` removes that line. `ocp exchange` swaps two numbered lines. None of them prints the file. A secret file stays. They do not run a turn. `ocp until` keeps lines through the first line that contains a phrase. `ocp from` keeps that line and the lines after it. `ocp between` keeps the lines strictly between two phrases. None of them prints the file. A secret file stays. They do not run a turn. `ocp shared` keeps the lines of one file that also appear in a second file. `ocp only` keeps the lines that do not. `ocp join` appends the second file onto the first. None of them prints the file. A secret file stays. They do not run a turn. `ocp clip` shortens each line to a width. `ocp pad` lengthens a shorter line with spaces. `ocp fold` breaks a longer line into that width. A blank line stays blank. None of them prints the file. A secret file stays. They do not run a turn. `ocp col` keeps one field of each line. `ocp dropcol` removes that field. `ocp swapcol` swaps two fields. A blank line stays blank. None of them prints the file. A secret file stays. They do not run a turn. `ocp up` moves the first lines to the end. `ocp down` moves the last lines to the start. `ocp shift` moves one inclusive range to the end. None of them prints the file. A secret file stays. They do not run a turn. It reports whether the last QA passed and does not print the QA summary. It counts routines and does not run one or print its message. It says whether the last write was orchestration or local and does not print the path. It says which swarm manifest partners are missing and does not apply the manifest or start containers. It does not decide a card, clear a hold, copy the file, start the browser, or print the request text. `ocp prove coding` is a separate scripted turn in a temp sandbox. It uses a local runner, not a live meter. It mkdir, write, glob, patch, copy the patched file to `src/math.copy.mjs`, and `node --test`. The source and the copy match. The transcript says `Copy path: local sandbox.` Exit 0 means the files and the transcript matched. The orchestration gateway does not copy the file in this proof. `ocp prove computer` is a scripted computer chain in a temp sandbox. A fake browser driver opens a page, scrolls, presses Enter, hovers a selector, double-clicks a selector, right-clicks a selector, fills a selector, selects an option by label, checks a box, and checks the page text. Exit 0 means `gtm/last-run.json` recorded a pass and a screenshot for each of those steps. This is one scripted chain, not a full go-to-market run. Orchestration does not run the browser. Playwright is not required.
+The ecosystem includes both the **OCP Agent** teammate platform and **OCP Coder** as a first-class coding teammate. Coding is not a separate demo utility or a disconnected application: **OCP Coder** is part of the same identity, conversation, memory, tool, approval, and provider system. A user can switch a bot's model/provider without changing how they interact with it.
 
-Each turn does this:
+## Product promises
 
-1. The chat agent opens the orchestration session `agent:board:main`.
-2. System-1 picks the route. If System-1 is installed, the turn runs `integrations/laya/predict.py` (`Router.predict`) and the transcript says `System-1: real.` If System-1 is absent or the call fails, the fallback router runs and the transcript says `System-1: fallback.`
-3. That route becomes one manager plan: session `agent:board:main`, the roles, and the steps. If the orchestration gateway answers `/healthz`, the chat agent sends that plan with `sessions.send`, then calls `tools.invoke` for `skills.status` on that session. The accepted plan is the only standup list. The local swarm does not build a second plan. If the gateway is up but rejects the plan, the turn stops and no worker runs. If the gateway is down, the transcript prints the same plan object with source `local-manager` before workers run. That write is local. The transcript says `Write path: local sandbox.` After the session accepts the plan, this process asks the gateway to invoke `ocp_sandbox_write`, `ocp_sandbox_delete`, `ocp_sandbox_rename`, `ocp_sandbox_mkdir`, `ocp_sandbox_rmdir`, `ocp_sandbox_copy`, `ocp_sandbox_append`, or `ocp_sandbox_todo`. That tool posts to the loopback write bridge in `packages/bundle`. The bridge runs the security gate, then writes the sandbox file. The transcript says `Write path: orchestration.` The plugin the gateway loads is `integrations/openclaw-sandbox-write`. When the gateway answers, `ocp doctor` asks whether `ocp_sandbox_todo` is offered and does not update a list. The gateway still blocks `fs_write`, `apply_patch`, and `sessions_spawn`. This process does not call those tools. If `ocp_sandbox_write` is not installed, the turn falls back to the built-in `write` tool with an absolute sandbox path. If that refuses, the file does not land. A general edit is drafted in a temp directory by the meter, then each file goes through the same bridge. The meter order stays proxy, then compatible, then the coding worker.
-4. The swarm stands up only the roles in that plan.
-5. The security agent checks the path and the contents before a write.
-6. The coding agent edits the sandbox. A general request is the prompt, with the sandbox as the working directory. The prompt also lists text files already in the sandbox, skipping secrets, so a follow-up turn is not blind. The same prompt starts with `Prior turns:` for this session and this sandbox only: up to six short lines, about 4k characters, with the user text and whether QA passed. Blocked secrets are not copied into that history. The lines are also written to `.ocp/prior-turns.json` in that sandbox and read back when the process starts again. Listing and grep skip `.ocp/`. One turn can list, grep, glob a relative pattern such as `src/**/*.ts` or `*.md`, read, patch, write, delete one file, rename one file, copy one file (through `ocp_sandbox_copy` when the gateway drove the turn, otherwise locally; a missing plugin falls back locally; a refusal does not copy locally). Append adds text to one existing relative file and does not create a file (through `ocp_sandbox_append` when the gateway drove the turn, otherwise locally; a missing plugin falls back locally; a refusal does not append locally). A missing file, a directory, `../`, a secret, `gtm/`, or `.ocp/` is refused. The transcript says `Append path: orchestration.` or `Append path: local sandbox.` The turn can also mkdir one directory and run `node --test`, `pnpm test`, or `tsc --noEmit`, plus read-only `git status` (no args, `-sb`, or `--short --branch`) and `git diff` with relative paths, and `git log --oneline -n N` with N from 1 to 20, and `git show HEAD:` plus one relative path, then feed those results back for another round in the same turn. Delete unlinks a single file after the security gate. It does not remove directories or `gtm/` evidence. When the gateway drove the turn, it invokes `ocp_sandbox_delete` or `ocp_sandbox_rename` on the same bridge. The transcript says `Delete path: orchestration.` or `Rename path: orchestration.` If that plugin tool is missing, the step runs in the local sandbox and the transcript says so. Rename moves one file to another relative path in the same sandbox and does not overwrite. Mkdir creates one relative directory and its parents. An existing directory is a no-op. A file, `../`, an absolute path, `gtm/`, `.ocp/`, or a secret path is refused. When the gateway did not drive the turn, the transcript says `Mkdir path: local sandbox.` When it did, mkdir uses `ocp_sandbox_mkdir` and the transcript says `Mkdir path: orchestration.` A missing plugin falls back to the local sandbox. Rmdir removes one empty relative directory. A file or a non-empty directory is refused. When the gateway did not drive the turn, the transcript says `Rmdir path: local sandbox.` When it did, rmdir uses `ocp_sandbox_rmdir` and the transcript says `Rmdir path: orchestration.` A missing plugin falls back to the local sandbox. A refusal does not remove the directory locally. The same turn can add or complete a local todo. The list holds at most 12 items in `.ocp/todos.json`. Secret text and `../` are refused and not stored. `ocp todo list` shows the session and partner lists and does not change them. `ocp todo add --text` and `ocp todo complete --text` change that same checklist for the session or `--partner`. A secret is refused and is not stored. `ocp read` prints one relative file from the session or `--partner`. A secret, `../`, `.ocp/`, and `gtm/` are refused and not printed. `ocp grep --text` searches that sandbox and prints short line snippets. A secret file is skipped and is not printed. `ocp git status` shows the short status of that sandbox. It does not commit. A secret name is not printed. `ocp git diff` shows the unstaged diff. A secret line is not printed. It does not commit. `ocp turns` lists stored outcomes for this workspace. It does not print the request. A secret outcome is not printed. It does not run a turn. `ocp mkdir` creates one directory in this workspace. It does not replace a file. A secret path is not created. It does not run a turn. `ocp rmdir` removes one empty directory in this workspace. A file stays. A directory that still has files stays. A secret path is not removed. It does not run a turn. `ocp copy --from --to` copies one file in this workspace and leaves the source. It does not overwrite. A directory stays. A secret file stays. It does not run a turn. `ocp patch --text` applies one unified diff to an existing file. It does not create a file. A secret is not written. It does not run a turn. `ocp doctor` counts open items and does not print the text. When the gateway drives the turn, the list is updated through `ocp_sandbox_todo`. A missing plugin updates it locally. A refusal does not update it locally. The transcript says `Todo path: orchestration.` or `Todo path: local sandbox.` Grep is an in-process substring or `/pattern/` search. It skips secrets, binaries, and `gtm/`. The cap is ten rounds. It stops on no more steps, a passing check, or an explicit done. A failed check is still retried up to two times with the command output in the prompt. The meter is chosen in this order: a proxy key (`LITELLM_API_KEY` or `LITELLM_MASTER_KEY`, base `LITELLM_BASE_URL` or `http://127.0.0.1:4000/v1`), then `OPENAI_API_KEY` plus `OPENAI_BASE_URL`, then the native coding worker (`XAI_API_KEY` and `grok -p ... --cwd ... --output-format streaming-json`). The proxy sits behind the same coding worker. It is not a required peer of the gateway. The transcript says which meter ran. When the sandbox has `PARTNER.md`, an open edit writes intent, spec, and plan under `.ocp/sdlc/` and an Approve card at `.ocp/approvals.json`. The coding worker does not edit until you say `approve` or `accept the plan`. `deny` and `redirect:` decide that card. After the edit, the coding worker runs `node --test` in the sandbox and the transcript reports the exit code. QA does the mechanical review. The Approve card is the human intent and risk decision. A failed check returns to intent. While `.ocp/sdlc/review-hold` exists, orchestration stands up one coding worker. `ocp approve accept` accepts that plan again and clears the hold. It does not replace the intent. The board session already runs one turn at a time. `PARTNER.rules` and `.ocp/rules` load into the coding worker prompt. A `block:` line stops a matching request. A partner turn also loads those files from the read-only shared session and does not copy them. `ocp computer` is the Computer tab for the sandbox desktop. It shows status and the last frame path. There is no live pixel stream in this build. `takeover` and `return` hand the browser between you and the partner. With `PARTNER.md` present, computer-use waits on an Approve card before the partner opens a page. A turn with a partner id uses `.ocp/fleet/<id>` as its workspace and its Computer tab. The session root is recorded as a read-only `/shared` mount. A partner list, read, grep, or glob of `shared` or `shared/path` uses that root and does not copy it. A write to `shared` is refused. `ocp fleet status` lists partners, container state, and the last frame. It does not start containers. No telemetry is sent. `ocp fleet start` runs the container when Docker answers. If Docker is missing, the command fails and the Computer tab stays not started. `ocp computer capture` writes `gtm/last-frame.png` after a page is open. After computer-execute, capture copies the step screenshot to that file and Computer QA `computer-frame` checks it. A missing page, a missing screenshot, or a file that is not a PNG fails the turn in the transcript. With a partner id, the frame stays in `.ocp/fleet/<id>/gtm/`. A missing browser does not write a blank image. A live pixel stream, a fleet grid, and telemetry are later. Routines live in `.ocp/routines.json`. An interval routine that is due, or a named event, runs as a partner turn. Slack and Telegram inbound text uses that same turn, including approve and deny. Slack posts a reply when `SLACK_BOT_TOKEN` and `SLACK_SIGNING_SECRET` are set. Inbound Slack events are checked with that signing secret. Without them the offline turn still runs. Telegram posts a reply when `TELEGRAM_BOT_TOKEN` and `TELEGRAM_WEBHOOK_SECRET` are set. Inbound Telegram updates are checked with that webhook secret. Without them the offline turn still runs. WhatsApp is later. `ocp swarm apply` reads a JSON manifest and creates `.ocp/fleet/<id>` for each partner, plus any routines in that file. `--dry-run` writes nothing. The manifest does not start containers. A fleet grid and telemetry are later. Advanced ACP is an opt-in switch, off by default. Turning it on does not replace orchestration. No backend is installed. Packaging in Settings is a free OSS core. Seats and credits are design only. Billing is inert. No payment provider is connected. The QA agent reviews the files that changed. The security agent checks the request before the edit and the written files after it. Without a key, a simple create-file message still uses the local sandbox worker. Any other request is refused. The offline path is not a stand-in for a live model.7. The computer agent writes a go-to-market plan. Actions stay `executed: false` unless you pass `--computer-execute` or set `OCP_COMPUTER_EXECUTE=1` and name an http or https URL. Then this process opens that URL, reads the title and page text, and types into a CSS selector when the message says `type "text" into SELECTOR`. Playwright (headless Chromium) does that work here. `gtm/last-run.json` lists each step, and each finished step saves a screenshot under `gtm/`. A step is `executed: true` only if it ran. The message can chain `expect title`, `expect text`, `type ... into`, `click`, `navigate` to another URL on that same host, `wait SELECTOR` or a short `wait Nms` capped at 30 seconds, `scroll down`, `scroll up`, `scroll N` capped at 2000 pixels, or `scroll SELECTOR` to bring that element into view, `press KEY` for Enter, Escape, Tab, Backspace, or an arrow key, and `expect selector ... value`. Any other key fails. `hover SELECTOR` or `hover "text"` moves the pointer onto that element. `double-click SELECTOR` or `double-click "text"` clicks that element twice. `right-click SELECTOR` or `right-click "text"` clicks it with the right button. `fill SELECTOR with "text"` or `fill "label" with "text"` clears that field and types the quoted text. `select SELECTOR option "label"` or `select "field" option "label"` chooses that option by its visible label. `check SELECTOR` or `check "label"` checks that box. `uncheck SELECTOR` or `uncheck "label"` clears it. A missing selector, quoted target, or option fails that step. Each finished step records pass or fail in `gtm/last-run.json` and saves a screenshot. A failed step stops the chain. Later steps stay `executed: false`. The QA agent checks `gtm/assertion.json` and, after a coding write, any `expect file path to contain "..."` clause. A missing snippet, an empty file, or a file removed by security fails that review. A failed file or page check is retried up to two times. Each file retry uses the same write path as the first write. If QA still fails, the transcript says the fix budget is exhausted. The orchestration gateway does not run the browser and does not write those files.
+- **Bots are durable teammates.** Each has a stable identity and role, persistent conversation context, explicit workspace, reusable instructions, tools, and status. A bot survives process restarts; a turn is not the bot's identity.
+- **Bots finish work.** Responses can include artifacts and verified changes, not only advice. **OCP Coder** inspects a repository, edits files, runs bounded checks, and reports what changed.
+- **Bots can work as a team.** A lead bot can delegate bounded tasks to specialist bots, coordinate handoffs, and assemble a result. Multi-agent work is a user capability, not an arbitrary fixed four-agent demo.
+- **The computer is a tool surface.** Browser and desktop actions belong to a bot's workspace/runtime and produce inspectable evidence. Human takeover and approval remain possible.
+- **Provider choice is a first-class setting.** LiteLLM is the preferred self-hosted gateway and policy/budget point; OpenRouter is a hosted multi-provider option. Direct compatible endpoints may be supported. Provider/model configuration is separate from bot identity and tool permissions.
+- **Humans retain control.** Dangerous or externally consequential actions can require approval. Permissions are scoped and visible; audit history records plans, tool calls, checks, approvals, and outcomes.
+- **Open core, portable data.** Core bot definitions, conversations, workspace metadata, and tool contracts use documented formats. Optional hosted services must not be required for local use.
 
-The transcript is one block: session, route, which System-1 path ran, the manager plan, which agents stood up, the security decision, the file write, the QA result, and the computer plan.
+## Target architecture
 
-## A turn
+**OCP Agent** (powered by Hermes Agent ACP) is the **agent execution runtime**: it owns the model/tool loop, tool calling, and agent-level interaction. OpenCodingPartner is the **product layer** around **OCP Agent** and **OCP Coder**: bot roster and identity, workspaces, persistence, UI/chat surfaces, permissions, orchestration, approvals, audit trail, and integrations.
 
-1. You send a message to the chat agent (`ocp` or `opencodingpartner`).
-2. The orchestration agent swarm opens a session. The session shape is a binding of channel, account, and agent, and a session key like `agent:board:main`.
-3. System-1 picks the route and does not write code. The real bridge is `integrations/laya/predict.py`. The chat turn runs it when `pnpm bundle:install` has created `.bundle/laya`, with `HF_HOME` pointed at `.bundle/laya/hf`. Otherwise the transcript says the fallback ran. The offline demo does not download weights.
-4. The swarm stands up the agents the route needs. A build-and-sell request stands up all four roles.
-5. The security agent checks the path and the file contents before any write. It blocks path escape and secrets.
-6. The coding agent writes files. Offline, a local sandbox worker does the write. The coding worker seam builds `grok -p "<prompt>" --cwd <dir> --output-format streaming-json` and calls an injected runner. The demo does not spawn `grok`.
-7. The QA agent checks the file that was written.
-8. The computer agent records a go-to-market action plan. With live execution off, no browser runs and each action is `executed: false`. With live execution on, Playwright opens the named URL, reads the screen, and types into one selector when you ask.
-
-Turns on the same session run one after another. The same message on the same sandbox replays the stored result.
-
-## Which tool runs what
-
-| User-facing name | Runs on |
-| --- | --- |
-| Chat agent / chat bot | OpenCodingPartner CLI + orchestration |
-| Orchestration agent swarm | Orchestration gateway. The pin and license are in THIRD_PARTY_NOTICES.md. We do not vendor this code. |
-| Coding agents + QA agents | Coding worker. The pin and license are in THIRD_PARTY_NOTICES.md. We do not vendor this code. |
-| Computer agents (GTM) | Computer-use worker seam. Offline, it only records the plan. With `--computer-execute`, Playwright opens the named URL, reads the screen, and can type into one selector from this process. |
-| Security agents | Policy/security worker seam. It runs in the coding path, before the write. |
-
-System-1 only picks the route. The package pin and the English checkpoint are in THIRD_PARTY_NOTICES.md. `pnpm bundle:install` downloads about 800 MB into `.bundle/laya/hf`. That directory is not committed. The call shape is `router.predict(state, questions, model="english")`. Question types are choice, score, and noul.
-
-## Packaging
-
-```text
-pnpm bundle:install
-        |
-        +-- .bundle/openclaw   npm openclaw@2026.9.6          orchestration agent swarm
-        +-- .bundle/grok       npm @xai-official/grok@1.0.41   coding agents and QA agents
-        +-- .bundle/laya       pip laya==0.3.13               System-1 bridge
-        +-- docker compose     ghcr.io/openclaw/openclaw:2026.9.6
+```mermaid
+flowchart LR
+  UX[Chat, bot roster, OCP Coder workspace] --> APP[OpenCodingPartner product API]
+  APP --> REG[Bot registry, sessions, memory, approvals]
+  APP --> ORCH[Task planner and bot collaboration]
+  ORCH --> ADAPTER[OCP Agent / OCP Coder runtime adapter]
+  ADAPTER --> HERMES[OCP Agent - Hermes ACP runtime]
+  HERMES --> PROVIDER[LiteLLM or OpenRouter]
+  HERMES --> TOOLS[Scoped tools]
+  TOOLS --> CODE[OCP Coder repository and coding tools]
+  TOOLS --> COMPUTER[Browser and computer]
+  TOOLS --> CONNECTORS[Chat and app connectors]
+  TOOLS --> AUDIT[Policy, approval, audit]
 ```
 
-The chat agent reads `.bundle/stack.json` or `OCP_OPENCLAW_BIN`, `OCP_GROK_BIN`, and `OCP_LAYA_PYTHON`.
+### Responsibility boundaries
 
-`pnpm demo:connected` (`ocp demo --live`) does two real steps:
-
-1. It checks `GET /healthz` on the orchestration gateway (`http://127.0.0.1:18789`, or `OPENCLAW_GATEWAY_URL`). If the gateway answers, the chat agent sends a turn with `openclaw gateway call sessions.send` on session `agent:board:main`. If the `openclaw` binary is missing but HTTP is up, it uses `POST /v1/chat/completions`. If nothing answers `/healthz`, the chat turn is skipped.
-2. Coding and QA agents call the bundled `grok` binary through the coding worker (`grok -p ... --cwd ... --output-format streaming-json`) when `XAI_API_KEY` is set. `OPENAI_API_KEY` plus `OPENAI_BASE_URL` selects the compatible meter instead. The key stays in the operator environment. This repo does not store it. If no key is set, that step is skipped.
-
-The report says what ran and what was skipped. The offline sandbox demo does not use this path. Optional gateway auth is `OPENCLAW_GATEWAY_TOKEN`. Do not put that token in the repo.
-
-## Packages
-
-| Package | Job |
+| Layer | Owns |
 | --- | --- |
-| `mesh` | Roles, session binding, temporary agent cap |
-| `policy` | System-1 route (real result or fallback) |
-| `swarm` | Stand up, list, and dispatch agents |
-| `workers` | Local coding write, QA check, security gate, computer plan, coding-worker argv |
-| `gateway` | One chat turn |
-| `cli` | `ocp` and `opencodingpartner` |
-| `bundle` | Pinned installer and live probe |
+| Product experience | Bot roster, bot creation/configuration, chat, task handoff, status, approvals, **OCP Coder** workspace, settings |
+| Product core | Stable bot/task/session models, persistence, workspace lifecycle, permission policy, audit events, integrations |
+| Orchestration | Decide whether work stays with one bot or delegates; define tasks, dependencies, and handoffs; collect results |
+| **OCP Agent** / **OCP Coder** adapter | Run an agent turn, provide model/tool-loop behavior, stream structured events, expose cancellation and errors |
+| Model gateway | LiteLLM or OpenRouter handles provider/model routing, keys, fallback, usage and budgets; it does not define bot identity or application workflow |
+| Tools | Coding, filesystem, tests, browser/computer, search, and connectors behind scoped, auditable contracts |
 
-## Independence
+**OCP Agent** uses Hermes Agent's multi-provider inference support, including OpenRouter and OpenAI-compatible endpoints; configuration follows its [provider documentation](https://hermes-agent.nousresearch.com/docs/integrations/providers/). OpenRouter documents Hermes setup and provider routing in its [Hermes guide](https://openrouter.ai/blog/tutorials/hermes-agent/). These are integration options, not a reason to couple product data to either provider.
 
-`pnpm bundle:install` fetches the pinned packages into `.bundle/` and downloads the System-1 English weights there. This repo does not commit their source or their weights. Orchestration owns the session plan. A create-file after that plan uses the gateway `write` tool. General model edits still run in this process. We are not affiliated with those projects. Credits are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+## Core domain objects
+
+- **Bot:** stable ID, display name, role/persona, runtime settings (`ocp-agent` or `ocp-coder`), model preference, tool grants, workspace assignment, memory policy, lifecycle status, and timestamps.
+- **Task:** user goal, originating bot/user, plan, status, approval requirements, deadline/cancellation, and final outcome.
+- **Session:** durable conversation between a human and a bot (or team), with messages and links to tasks and artifacts.
+- **Run:** one execution attempt for a task/session; records selected runtime/model route, events, tool calls, usage, and result. Retries create runs rather than erasing history.
+- **Workspace:** isolated project/filesystem context with explicit read/write boundaries and optional computer/browser state.
+- **Artifact:** output file, patch, report, screenshot, or other result tied to a run and workspace.
+- **Approval:** a human decision attached to a specific proposed action or plan, including what is being approved and its scope.
+- **Tool grant:** permission to invoke a tool against a defined resource. The model does not grant itself access.
+
+Persist bot identity and product state independently from underlying runtime process state. Keep conversation/memory storage replaceable and make workspace files inspectable. Do not use one global session key as the identity for every bot.
+
+## Main user flows
+
+### Create and run a bot
+
+1. The user creates or selects a bot (**OCP Agent** or **OCP Coder**) and chooses its role, workspace, model/provider, and tool permissions.
+2. The product opens or resumes that bot's durable session and creates a task/run for new work.
+3. The orchestrator passes bounded instructions and granted tools to the runtime adapter.
+4. Runtime events stream into the product transcript and audit log. Tool requests pass through product policy before execution.
+5. The bot returns a result and linked artifacts. The product persists the outcome and updates bot/task status.
+
+### Build software with OCP Coder
+
+**OCP Coder** uses the same lifecycle as other bots in the **OCP Agent** ecosystem. It gets a repository workspace, scoped file and shell/check tools, and relevant project instructions. It inspects before editing, proposes a plan when useful, edits through guarded tools, runs explicitly permitted checks, and reports files changed plus check results. The QA/review role may be a specialist bot or a bounded delegated task. A coding session retains its own conversation and project context across turns. OpenCodingPartner does not maintain a disconnected product just for code generation.
+
+The current local dashboard shows task activity, results, approvals, changed paths, and a bounded Git diff. Selecting a changed path opens its current workspace contents through the same guarded reader used by the coding workspace tools. The reader enforces the workspace boundary, refuses symlink paths and secret-like files/content, and caps reads at 500 KB. This is a review aid for the current local prototype; it is not a versioned artifact store or a historical snapshot of file contents.
+
+The dashboard also provides a bot-centered conversation assembled from that bot's persisted task requests and responses. New requests continue the bot's saved **OCP Agent** session, while task-specific approvals, status, and review data remain attached to their originating task. This transcript is reconstructed from local task history; it is not a direct export of the runtime conversation store.
+
+Failed, cancelled, and `needs-attention` tasks can be retried from the dashboard as new task records. The original remains available for review; the UI warns that the previous run may have left partial workspace changes.
+
+Bot definitions can be deleted from the local dashboard or CLI when they have no queued or active work. Deletion preserves task records and **OCP Agent** session files so task history remains referentially useful and local session data is not removed as a side effect. There is not yet a bot archive/unarchive or explicit session cleanup workflow.
+
+Task recovery runs under the local state lock. When the recorded owner process is gone, an active task becomes `needs-attention`, loses its stale approval request, and receives a recovery event; new task creation performs this check before workspace-conflict detection. On Linux the task also stores the owner's boot ID and process start ticks to distinguish PID reuse. Other platforms fall back to conservative PID liveness, so an unrelated live process with a reused PID may delay recovery but is not incorrectly interrupted.
+
+The local app shutdown path first closes the request gate, then aborts and drains active runs. A task request already in flight during shutdown is either included in the drain or recorded as cancelled before it can launch a runtime. This avoids leaving a task owner process alive after the UI server exits.
+
+`ocp backup --to PATH` copies local bot/task state and per-bot **OCP Agent** profiles under the state lock. It refuses active runs, symbolic links, and existing or overlapping destinations. Workspace repositories stay in their assigned paths and are not included. The backup contains private prompts, results, instructions, endpoint metadata, and runtime session data; it is user-managed and unencrypted. `OCP_DATA_DIR` can point the application at the backup directory on the same machine.
+
+`ocp restore --from BACKUP_DIR --to NEW_DATA_DIR` restores a backup only into a new directory. Optional workspace-root remapping updates bot assignments after verifying destination workspaces exist and clears the affected bots' runtime session IDs. Workspace files are never copied by OCP. Historical task records stay intact; they continue to describe the original runs.
+
+### Delegate to a bot team
+
+A lead bot or the product orchestrator breaks a goal into tasks with clear ownership and dependencies. Specialist bots receive only the context and tools needed for their task. Handoffs are explicit and persisted. The lead bot reconciles outputs and asks the user when goals conflict, a permission is missing, or an approval is required. Parallelism is a scheduling decision, not an assumption that every request needs every role.
+
+### Human approval and computer use
+
+Tool policy classifies actions by scope and impact. Reads and low-risk workspace edits may be allowed by grant; external messages, account changes, publication, purchases, destructive operations, and other configured high-impact actions require approval. The approval must bind to the proposed action and relevant arguments. Browser/computer execution uses the bot's isolated workspace, has visible ownership/takeover state, and saves evidence. A failed check or denied action is recorded and surfaced; it is not silently treated as success.
+
+## Provider and runtime strategy
+
+```text
+Bot configuration -> OCP Agent adapter -> OCP Agent (Hermes ACP) -> configured endpoint
+                                                                 -> LiteLLM (self-host/routing) -> providers
+                                                                 -> OpenRouter (hosted routing) -> providers
+```
+
+- Keep provider credentials in the operator's secret store/environment, never bot prompts, transcripts, or repository files.
+- Let LiteLLM/OpenRouter route model requests; keep task planning, bot identity, permissions, and durable state in OpenCodingPartner.
+- Support per-bot model preferences while allowing an administrator to set defaults, allowed models, budget limits, and fallback policy.
+- Record the provider/model route and usage metadata for each run without exposing keys.
+- Treat provider APIs and runtime interfaces as replaceable adapters. Avoid provider-specific behavior in core domain types.
+- Do not make xAI/Grok the default or a product dependency. The “Grok Bot” reference describes the teammate experience, not the required model.
+
+## Current repository: implemented foundation
+
+This repository is an early product prototype, not yet the target product above. It now has a local browser dashboard, durable bot/task state, isolated **OCP Agent** profiles for explicit OpenRouter/LiteLLM bots, Docker-backed **OCP Agent** tool execution, task history, cancellation, and one-action approvals. It still lacks a complete product UI, secret-store integration, container isolation for standalone `ocp-coder` runtime processes, and team orchestration built on durable task records.
+
+| Package/path | Current role | Target direction |
+| --- | --- | --- |
+| `packages/cli` | `ocp` command parser, chat REPL, and loopback app entry point | Keep CLI useful while building a fuller app UI against product services |
+| `packages/gateway` | `runChatTurn` coordinates route, plan, local swarm, approvals, QA, computer, transcript | Split durable product/task services from the current large turn coordinator; make runtime adapter the execution boundary |
+| `packages/policy` | Laya/fallback selects status or a fixed set of roles | Keep policy where useful; routing should select bot/task workflow and permissions, not define the whole product |
+| `packages/swarm` | In-memory stand-up/list/dispatch of role records | Replace or evolve into durable bot registry and task orchestration; do not confuse role records with running independent agents |
+| `packages/workers` | Local coding, security, QA, and computer implementations; coding and OpenAI-compatible runners | Preserve valuable tool/policy functions behind **OCP Agent** / **OCP Coder** tool contracts; coding is a bot capability, not a disconnected app |
+| `packages/mesh` | Shared role and session types | Evolve into stable product domain contracts for bots, tasks, runs, sessions, grants, and events |
+| `packages/product` | Local JSON bot/task registry, **OCP Agent** & **OCP Coder** ACP runtime, task event history, and loopback dashboard server | Grow into durable product services, runtime lifecycle, provider and credential management, and team orchestration |
+| `packages/bundle` | Installs/probes legacy stack binaries; LiteLLM-compatible coding path | Add/replace with **OCP Agent** runtime setup and provider configuration; retain OpenClaw only as an optional integration if it adds value |
+| `integrations/openclaw-sandbox-write` | OpenClaw plugin plus loopback bridge for guarded sandbox writes | Keep the security boundary; decouple it from OpenClaw and expose guarded tool contracts to **OCP Agent** |
+
+Current code facts:
+
+- `runChatTurn` is serialized on the shared `agent:board:main` lane and caches completed results in process memory. That is not durable per-bot identity or task persistence.
+- `OrchestrationSwarm` stands up in-memory role records. It does not run a durable fleet of **OCP Agent** teammates.
+- The legacy coding path can use LiteLLM credentials or an OpenAI-compatible endpoint, but this is a coding worker adapter, not application-wide model configuration for persistent bots.
+- `packages/product` stores bot/task state under the OS user data directory (or `OCP_DATA_DIR`) and resumes an ACP session per bot. **OCP Agent** tool execution uses its Docker terminal backend by default and mounts the selected workspace at `/workspace`; `--isolation host` explicitly disables that. Explicit OpenRouter and LiteLLM bots get separate **OCP Agent** homes with provider/model configuration; provider keys are resolved from the run environment and are not persisted. Interactive CLI runs can approve an individual ACP action once; non-interactive runs cancel permission requests. Approval outcomes are recorded on the task.
+- **OCP Agent** ACP sessions receive an OCP workspace MCP server backed by the existing `packages/workers` coding utilities. It offers bounded list/read/grep/glob, create, patch, append, copy, rename, delete, and directory tools (file reads and mutations capped at 500 KB); it blocks `.ocp/`, `gtm/`, symlink paths, path escapes, and secret-pattern content. The bridge runs as a local host process, not inside **OCP Agent**'s Docker terminal container; command execution remains in the Docker terminal. This is the first concrete integration between the durable bot/task app and the guarded **OCP Coder** tool foundation, not yet a complete shared coding UI.
+- Docker-backed **OCP Agent** bots disable terminal-container network egress by default and can explicitly enable it per bot; provider requests and the workspace MCP bridge remain host processes, so this setting is not a whole-app air gap.
+- Built-in roles have editable default operating instructions shared by the dashboard and CLI. Coding (**OCP Coder**), QA, security, research, and computer presets set distinct scopes and reporting expectations; assigning a role is a starting configuration, not a separate runtime or an automatic multi-agent workflow.
+- ACP assistant-message chunks are coalesced and persisted to the task while it runs; the dashboard shows a live response, and task results are capped at 20 KB in product state.
+- Dashboard and CLI coding tasks can hand off sequentially to one QA or security bot in the same workspace. The reviewer gets the original request, implementation report, changed paths, and a bounded diff; both bot sessions remain separate while the task records one combined result and handoff event. This is an initial fixed workflow, not dynamic team orchestration.
+- Workspace paths are canonicalized on bot creation/reconfiguration, and active-task overlap checks resolve real paths while holding the shared state lock so symlink aliases cannot schedule concurrent writers to the same directory.
+- Tasks snapshot each participating bot's ID, name, role, runtime, provider, model, and non-credential endpoint when queued; the audit record is stable if the bot is reconfigured later.
+- Inactive task records can be removed from OCP local state through the dashboard or CLI; active tasks are protected. This does not delete **OCP Agent**'s separate conversation database.
+- CLI task runs handle SIGINT/SIGTERM by aborting the active ACP child, resolving any pending terminal approval, and persisting `cancelled`; ACP children escalate from SIGTERM to SIGKILL after a bounded delay.
+- A task is not marked complete when the ACP prompt response arrives; OCP closes stdin, waits for the child to exit, then uses a five-second graceful-shutdown window and bounded kill escalation before releasing the task/workspace lock.
+- Tasks capture Git changed paths and a bounded diff at the start/end of each run. Pre-existing workspace edits are called out, untracked file contents are excluded, and the existing secret scanner can suppress a diff.
+- `ocp app` serves a local dashboard on loopback. It creates/configures bots, launches and cancels tasks, displays bounded task activity, handles one-action approvals, and checks executable/daemon/key presence without printing credential values or sending prompts. Bot configuration changes are blocked while work is active and clear the saved runtime session when execution settings change. Mutating API calls require an in-memory token delivered to the same-origin page; host and origin checks reject requests from other origins.
+- **OCP Agent** and **OCP Coder** ACP processes themselves still run locally with the user's OS permissions. Standalone `ocp-coder` runtime processes do not use the **OCP Agent** Docker terminal boundary.
+- The `ocp bot` / `ocp task run` path launches an **OCP Agent** (`hermes acp`) or **OCP Coder** (`grok agent stdio`) process through ACP and stores a session ID per bot. The older `ocp chat` turn coordinator still uses the legacy fixed-role swarm and worker flow; it has not yet migrated to this runtime path.
+- OpenClaw may own a session plan and invoke the write bridge. Local orchestration otherwise runs in this process. This is the current architecture and should not dictate the target product boundary.
+- Security checks, sandbox operations, file QA, computer action recording, approval cards, partner workspaces, and channel adapters are existing assets to reuse or adapt.
+
+## Architecture principles
+
+1. **One ecosystem, one bot model.** **OCP Agent** and **OCP Coder** share identity, session, task, tool, and provider configuration. Specialization is configuration and grants, not disconnected applications.
+2. **OCP Agent executes; OpenCodingPartner productizes.** Integrate the Hermes-based **OCP Agent** runtime for agent execution. Do not duplicate its agent loop in a separate coding loop or let a single process own the whole product's durable identity and UI.
+3. **Durability first.** Store bot, session, task, run, approval, and audit state in durable storage. Process restarts must not erase the roster or history.
+4. **Events over transcript scraping.** Use structured runtime events/tool calls where **OCP Agent** supports them. Keep a compatibility adapter if an initial CLI integration requires parsing output; do not make parsing human-formatted text the permanent protocol.
+5. **Tools are guarded capabilities.** Tools receive explicit resource scope, validated arguments, bounded execution, and structured results. No agent gets ambient access to the host or secrets.
+6. **Human control is part of the model.** Approval, denial, cancellation, and takeover are domain operations with persisted state and audit evidence.
+7. **Provider-neutral core.** LiteLLM and OpenRouter are first-class connection paths. Core records provider/model as run metadata, not implementation-specific logic.
+8. **Observable work.** A user can see what a bot is doing, what it changed, which checks ran, what failed, and what awaits them.
+9. **Incremental migration.** Preserve working policy/security/tool code where possible; replace architectural seams deliberately rather than rewriting every worker at once.
+
+## Phased direction
+
+### 1. Harden the OCP Agent & OCP Coder runtime boundary
+
+The first ACP process adapter and local bot/task records are implemented. Validate them against installed **OCP Agent** (`hermes`) and **OCP Coder** runtimes and providers; normalize lifecycle and tool events; persist session IDs before long-running work can fail; add cancellation and approval UI; and support provider/model settings without leaking credentials.
+
+### 2. Make bots and runs durable
+
+Add persistent bot definitions, sessions, tasks, runs, messages/events, and approvals. Replace the single global session lane/cache with per-bot/per-task concurrency and idempotency. Add bot lifecycle and status operations.
+
+### 3. Integrate OCP Coder as a native teammate
+
+Expose repository exploration, patching, tests, and QA through scoped **OCP Agent** / **OCP Coder** tools. Reuse sandbox path checks and secret protections. Ensure all coding changes are attributable to a run and visible as diffs/artifacts.
+
+### 4. Add team collaboration and computer tools
+
+Move specialist dispatch into persisted task handoffs. Add bounded browser/computer tools and takeover/evidence flows. Keep user approvals attached to individual actions and ensure failed checks feed back into the task.
+
+### 5. Make the product approachable
+
+Build bot roster/configuration and a unified chat/work surface. Add onboarding for LiteLLM and OpenRouter, model/budget controls, and diagnostics that verify configuration without revealing secrets.
+
+## Out of scope for the architectural core
+
+- Reproducing xAI's proprietary Grok Bot internals or implying affiliation with xAI.
+- Requiring Grok/xAI models, OpenClaw, Laya, or any single vendor to use the product.
+- Treating ephemeral CLI role records as persistent bots.
+- Allowing the model provider to bypass OpenCodingPartner's workspace and tool policy.
+- Turning every user request into a multi-agent workflow when one bot is sufficient.
+- Billing, seats, or enterprise packaging before the core bot and coding loop is coherent.
+
+## Repository references
+
+- [README](README.md): setup and current CLI usage.
+- [ROADMAP](ROADMAP.md): implementation status and sequenced work; update it as milestones land.
+- [PARTNER.md](PARTNER.md): current sandbox partner agreement and approval behavior.
+- [Third-party notices](THIRD_PARTY_NOTICES.md): dependency licenses and credits.

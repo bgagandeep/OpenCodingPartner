@@ -12,7 +12,7 @@ for (const bin of ["ocp", "opencodingpartner"]) {
   test(`${bin} demo stands up the four agents`, () => {
     const sandbox = mkdtempSync(path.join(tmpdir(), `ocp-${bin}-`));
     try {
-      const result = spawnSync("pnpm", ["exec", bin, "demo", "--sandbox", sandbox], {
+      const result = spawnSync("corepack", ["pnpm", "exec", bin, "demo", "--sandbox", sandbox], {
         encoding: "utf8",
         cwd: root,
       });

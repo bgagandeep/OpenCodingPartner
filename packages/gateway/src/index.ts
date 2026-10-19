@@ -41,8 +41,9 @@ import { recordLastQa } from "./last-qa.js";
 import { recordLastWrite } from "./last-write.js";
 import { noopAcpBackend, type AcpBackend } from "./acp.js";
 export { acpOptIn, doctorAcpLine, formatSettings, noopAcpBackend } from "./acp.js";
-export { coreIsOpen, readPackaging } from "./packaging.js";
-export { approveDoctorLine, doctorPlanLine, formatApproveQueue, formatApproveQueueJson, formatReviewHolds, listApproveQueue, listReviewHolds, partnerAgreementDoctorLine, partnerAgreementStatus, reviewHoldDoctorLine } from "./sdlc.js";
+export { coreIsOpen, doctorPackagingLine, readPackaging } from "./packaging.js";
+export { approveDoctorLine, doctorDecisionLine, doctorPlanLine, formatApproveQueue, formatApproveQueueJson, formatReviewHolds, listApproveQueue, listReviewHolds, partnerAgreementDoctorLine, partnerAgreementStatus, reviewHoldDoctorLine } from "./sdlc.js";
+export { doctorPriorTurnLine } from "./history.js";
 export { formatTodoQueue, formatTodoQueueJson, listTodoQueue, todoDoctorLine } from "./todos.js";
 import {
   applyUnifiedDiff,
@@ -162,8 +163,6 @@ const HISTORY_TURNS = 6;
 const HISTORY_CHARS = 4000;
 
 type CodingVia = "local-sandbox" | "grok-build" | "openai-compatible" | "litellm" | "openclaw-write" | "scripted";
-
-type CodingVia = "local-sandbox" | "grok-build" | "openai-compatible" | "litellm" | "openclaw-write";
 
 function idempotencyKey(input: ChatTurnInput, sessionKey: string): string {
   const mode = input.codingVia ?? (input.grokRunner ? "grok-build" : "local-sandbox");
@@ -1293,51 +1292,6 @@ async function dirExists(sandboxRoot: string, relativePath: string): Promise<boo
   }
 }
 
-async function mkdirThroughTurn(
-  input: ChatTurnInput,
-  openclawDrove: boolean,
-  relativePath: string,
-): Promise<{ ok: boolean; via: "openclaw" | "local"; detail: string }> {
-  if (openclawDrove && input.openclawMkdir) {
-    const remote = await input.openclawMkdir(relativePath);
-    if (remote.ok && (await dirExists(input.sandboxRoot, relativePath))) {
-      return { ok: true, via: "openclaw", detail: remote.detail };
-    }
-    if (remote.ok || !remote.missing) {
-      return { ok: false, via: "openclaw", detail: remote.ok ? "OpenClaw mkdir did not create the directory." : remote.detail };
-    }
-  }
-  const local = await mkdirSandboxDir(input.sandboxRoot, relativePath);
-  return { ok: local.ok, via: "local", detail: local.detail };
-}
-
-async function rmdirThroughTurn(
-  input: ChatTurnInput,
-  openclawDrove: boolean,
-  relativePath: string,
-): Promise<{ ok: boolean; via: "openclaw" | "local"; detail: string }> {
-  if (openclawDrove && input.openclawRmdir) {
-    const remote = await input.openclawRmdir(relativePath);
-    if (remote.ok && !(await dirExists(input.sandboxRoot, relativePath))) {
-      return { ok: true, via: "openclaw", detail: remote.detail };
-    }
-    if (remote.ok || !remote.missing) {
-      return { ok: false, via: "openclaw", detail: remote.ok ? "OpenClaw rmdir did not remove the directory." : remote.detail };
-    }
-  }
-  const local = await rmdirSandboxDir(input.sandboxRoot, relativePath);
-  return { ok: local.ok, via: "local", detail: local.detail };
-}
-
-async function dirExists(sandboxRoot: string, relativePath: string): Promise<boolean> {
-  try {
-    const info = await stat(path.join(sandboxRoot, relativePath));
-    return info.isDirectory();
-  } catch {
-    return false;
-  }
-}
-
 async function deleteThroughTurn(
   input: ChatTurnInput,
   openclawDrove: boolean,
@@ -1471,61 +1425,6 @@ async function renameThroughTurn(
     }
     if (remote.ok || !remote.missing) {
       return { ok: false, via: "openclaw", detail: remote.ok ? "Orchestration rename did not move the file." : remote.detail };
-    }
-  }
-  const local = await renameSandboxFile(input.sandboxRoot, fromPath, toPath);
-  return { ok: local.ok, via: "local", detail: local.detail };
-}
-
-async function fileGone(sandboxRoot: string, relativePath: string): Promise<boolean> {
-  try {
-    await readFile(path.join(sandboxRoot, relativePath));
-    return false;
-  } catch {
-    return true;
-  }
-}
-
-async function fileExists(sandboxRoot: string, relativePath: string): Promise<boolean> {
-  try {
-    await readFile(path.join(sandboxRoot, relativePath));
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function deleteThroughTurn(
-  input: ChatTurnInput,
-  openclawDrove: boolean,
-  relativePath: string,
-): Promise<{ ok: boolean; via: "openclaw" | "local"; detail: string }> {
-  if (openclawDrove && input.openclawDelete) {
-    const remote = await input.openclawDelete(relativePath);
-    if (remote.ok && (await fileGone(input.sandboxRoot, relativePath))) {
-      return { ok: true, via: "openclaw", detail: remote.detail };
-    }
-    if (remote.ok || !remote.missing) {
-      return { ok: false, via: "openclaw", detail: remote.ok ? "OpenClaw delete did not remove the file." : remote.detail };
-    }
-  }
-  const local = await deleteSandboxFile(input.sandboxRoot, relativePath);
-  return { ok: local.ok, via: "local", detail: local.detail };
-}
-
-async function renameThroughTurn(
-  input: ChatTurnInput,
-  openclawDrove: boolean,
-  fromPath: string,
-  toPath: string,
-): Promise<{ ok: boolean; via: "openclaw" | "local"; detail: string }> {
-  if (openclawDrove && input.openclawRename) {
-    const remote = await input.openclawRename(fromPath, toPath);
-    if (remote.ok && (await fileGone(input.sandboxRoot, fromPath)) && (await fileExists(input.sandboxRoot, toPath))) {
-      return { ok: true, via: "openclaw", detail: remote.detail };
-    }
-    if (remote.ok || !remote.missing) {
-      return { ok: false, via: "openclaw", detail: remote.ok ? "OpenClaw rename did not move the file." : remote.detail };
     }
   }
   const local = await renameSandboxFile(input.sandboxRoot, fromPath, toPath);

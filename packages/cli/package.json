@@ -17,6 +17,7 @@
     "@opencodingpartner/bundle": "workspace:*",
     "@opencodingpartner/gateway": "workspace:*",
     "@opencodingpartner/policy": "workspace:*",
+    "@opencodingpartner/product": "workspace:*",
     "@opencodingpartner/workers": "workspace:*"
   },
   "devDependencies": {

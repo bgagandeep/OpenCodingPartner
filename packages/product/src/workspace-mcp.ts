@@ -1,0 +1,423 @@
+import { createHash } from "node:crypto";
+import { chmod, lstat, mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import {
+  applyUnifiedDiff,
+  appendSandboxFile,
+  copySandboxFile,
+  deleteSandboxFile,
+  globSandbox,
+  grepSandbox,
+  listSandboxDir,
+  mkdirSandboxDir,
+  renameSandboxFile,
+  readSandboxText,
+  rmdirSandboxDir,
+  securityGate,
+  writeSandboxFile,
+} from "@opencodingpartner/workers";
+import {
+  captureComputerScreen,
+  computerKeyboard,
+  computerMouse,
+  computerOpenBrowser,
+  type KeyboardActionInput,
+  type MouseActionInput,
+} from "./computer-desktop.js";
+
+type RpcId = string | number;
+interface RpcMessage { id?: RpcId; method?: string; params?: Record<string, unknown>; }
+
+const DIRECT_TOOLS = [
+  { name: "workspace_list", description: "List names in a workspace directory. Secret metadata folders are omitted.", inputSchema: { type: "object", properties: { path: { type: "string", description: "Relative directory; defaults to the workspace root." } } } },
+  { name: "workspace_read", description: "Read a non-secret text file from the assigned workspace.", inputSchema: { type: "object", properties: { path: { type: "string" } }, required: ["path"] } },
+  { name: "workspace_grep", description: "Search safe text files for a short phrase or simple regular expression.", inputSchema: { type: "object", properties: { query: { type: "string" }, path: { type: "string", description: "Optional relative directory." } }, required: ["query"] } },
+  { name: "workspace_glob", description: "Find workspace files with a relative glob such as src/**/*.ts.", inputSchema: { type: "object", properties: { pattern: { type: "string" } }, required: ["pattern"] } },
+  { name: "workspace_write", description: "Create one new text file in the assigned workspace. Existing files must be changed with workspace_patch.", inputSchema: { type: "object", properties: { path: { type: "string" }, content: { type: "string" } }, required: ["path", "content"] } },
+  { name: "workspace_patch", description: "Apply a unified diff to an existing text file in the assigned workspace.", inputSchema: { type: "object", properties: { path: { type: "string" }, diff: { type: "string" } }, required: ["path", "diff"] } },
+  { name: "workspace_append", description: "Append text to an existing workspace file.", inputSchema: { type: "object", properties: { path: { type: "string" }, content: { type: "string" } }, required: ["path", "content"] } },
+  { name: "workspace_delete", description: "Delete one text file in the workspace. Directories and protected evidence folders cannot be deleted.", inputSchema: { type: "object", properties: { path: { type: "string" } }, required: ["path"] } },
+  { name: "workspace_rename", description: "Rename one workspace file without overwriting an existing target.", inputSchema: { type: "object", properties: { from: { type: "string" }, to: { type: "string" } }, required: ["from", "to"] } },
+  { name: "workspace_copy", description: "Copy one workspace file without overwriting an existing target.", inputSchema: { type: "object", properties: { from: { type: "string" }, to: { type: "string" } }, required: ["from", "to"] } },
+  { name: "workspace_mkdir", description: "Create a directory in the workspace.", inputSchema: { type: "object", properties: { path: { type: "string" } }, required: ["path"] } },
+  { name: "workspace_rmdir", description: "Remove one empty directory in the workspace.", inputSchema: { type: "object", properties: { path: { type: "string" } }, required: ["path"] } },
+  { name: "memory_search", description: "Search persistent workspace memory for facts, conventions, and past decisions.", inputSchema: { type: "object", properties: { query: { type: "string", description: "Keyword or phrase to search for; empty returns recent memories." } } } },
+  { name: "memory_remember", description: "Save a concise non-secret fact, convention, or architectural decision to persistent workspace memory.", inputSchema: { type: "object", properties: { fact: { type: "string" } }, required: ["fact"] } },
+  { name: "memory_forget", description: "Remove entries matching a phrase from persistent workspace memory.", inputSchema: { type: "object", properties: { query: { type: "string" } }, required: ["query"] } },
+  { name: "history_search", description: "Search previous local task transcripts and agent reports for this workspace.", inputSchema: { type: "object", properties: { query: { type: "string" }, limit: { type: "number" } }, required: ["query"] } },
+  { name: "history_read", description: "Read recent local task exchanges or a specific task report for this workspace.", inputSchema: { type: "object", properties: { taskId: { type: "string" }, limit: { type: "number" } } } },
+  { name: "computer_screen", description: "Boot or attach to the bot's virtual computer display, capture a live PNG screenshot to gtm/last-frame.png, and return screen dimensions, cursor coordinates, and active window title.", inputSchema: { type: "object", properties: {} } },
+  { name: "computer_mouse", description: "Control the mouse on the bot's virtual computer display (move, click, double_click, right_click, middle_click, down, up, drag, scroll, position).", inputSchema: { type: "object", properties: { action: { type: "string", enum: ["move", "click", "double_click", "right_click", "middle_click", "down", "up", "drag", "scroll", "position"] }, x: { type: "number" }, y: { type: "number" }, fromX: { type: "number" }, fromY: { type: "number" }, button: { type: "string", enum: ["left", "middle", "right"] }, direction: { type: "string", enum: ["up", "down", "left", "right"] }, amount: { type: "number" } }, required: ["action"] } },
+  { name: "computer_keyboard", description: "Control the keyboard on the bot's virtual computer display (type text or press keys/hotkeys such as Return, Tab, Escape, BackSpace, ctrl+l, ctrl+c).", inputSchema: { type: "object", properties: { action: { type: "string", enum: ["type", "key", "hotkey"] }, text: { type: "string" }, key: { type: "string" } }, required: ["action"] } },
+  { name: "computer_browser", description: "Open a URL in Google Chrome inside the bot's virtual computer display and capture a screenshot.", inputSchema: { type: "object", properties: { url: { type: "string" } }, required: ["url"] } },
+];
+
+const DISCOVERY_TOOLS = [
+  { name: "tool_search", description: "Search available workspace, memory, and history tools by keyword.", inputSchema: { type: "object", properties: { query: { type: "string" } }, required: ["query"] } },
+  { name: "tool_describe", description: "Return JSON schemas and usage guidance for up to 10 tool names.", inputSchema: { type: "object", properties: { names: { type: "array", items: { type: "string" } } }, required: ["names"] } },
+  { name: "tool_call", description: "Invoke a built-in workspace, memory, or history tool by name and arguments.", inputSchema: { type: "object", properties: { name: { type: "string" }, arguments: { type: "object" } }, required: ["name"] } },
+];
+
+const TOOLS = [...DIRECT_TOOLS, ...DISCOVERY_TOOLS];
+const DISCOVERY_NAMES = new Set(DISCOVERY_TOOLS.map((t) => t.name));
+const MAX_FILE_BYTES = 500_000;
+
+function resolveDataDir(env: NodeJS.ProcessEnv = process.env): string {
+  if (env.OCP_DATA_DIR) return path.resolve(env.OCP_DATA_DIR);
+  const xdgDataHome = env.XDG_DATA_HOME && path.isAbsolute(env.XDG_DATA_HOME)
+    ? env.XDG_DATA_HOME
+    : path.join(homedir(), ".local", "share");
+  return path.join(xdgDataHome, "opencodingpartner");
+}
+
+function workspaceMemoryFilePath(root: string): string {
+  const hash = createHash("sha256").update(root).digest("hex").slice(0, 16);
+  return path.join(resolveDataDir(), "memories", hash, "MEMORY.md");
+}
+
+/** MCP stdio bridge that exposes the existing guarded coding tools to an ACP session. */
+export async function runWorkspaceMcp(workspace: string): Promise<void> {
+  const root = await realpath(path.resolve(workspace));
+  let buffer = "";
+  for await (const chunk of process.stdin) {
+    buffer += chunk.toString();
+    if (buffer.length > 1_000_000 && !buffer.includes("\n")) {
+      buffer = "";
+      continue;
+    }
+    for (;;) {
+      const newline = buffer.indexOf("\n");
+      if (newline < 0) break;
+      const line = buffer.slice(0, newline);
+      buffer = buffer.slice(newline + 1);
+      if (!line.trim()) continue;
+      let message: RpcMessage;
+      try { message = JSON.parse(line) as RpcMessage; } catch { continue; }
+      if (message.method?.startsWith("notifications/")) continue;
+      if (message.id === undefined || !message.method) continue;
+      try {
+        const result = await handleMcpRequest(root, message.method, message.params ?? {});
+        process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id: message.id, result })}\n`);
+      } catch (error) {
+        process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id: message.id, error: { code: -32000, message: error instanceof Error ? error.message : "Workspace tool failed." } })}\n`);
+      }
+    }
+  }
+}
+
+export async function readWorkspaceFile(workspace: string, relativePath: string): Promise<{ ok: true; content: string } | { ok: false; error: string }> {
+  let root: string;
+  try { root = await realpath(path.resolve(workspace)); }
+  catch { return { ok: false, error: "workspace directory is unavailable" }; }
+  try { await assertSafeWorkspacePath(root, relativePath, false); }
+  catch (error) { return { ok: false, error: error instanceof Error ? error.message : "workspace path refused" }; }
+  const info = await stat(path.resolve(root, relativePath)).catch(() => undefined);
+  if (info && info.size > MAX_FILE_BYTES) return { ok: false, error: "file is larger than the 500 KB workspace-tool limit" };
+  const result = await readSandboxText(root, relativePath);
+  return result.ok ? { ok: true, content: result.detail } : { ok: false, error: result.detail };
+}
+
+async function handleMcpRequest(root: string, method: string, params: Record<string, unknown>): Promise<unknown> {
+  if (method === "initialize") {
+    return { protocolVersion: typeof params.protocolVersion === "string" ? params.protocolVersion : "2024-11-05", capabilities: { tools: { listChanged: false } }, serverInfo: { name: "opencodingpartner-workspace", version: "0.1.0" } };
+  }
+  if (method === "ping") return {};
+  if (method === "tools/list") return { tools: TOOLS };
+  if (method !== "tools/call") throw new Error(`Unsupported MCP method: ${method}`);
+  const name = typeof params.name === "string" ? params.name : "";
+  const args = params.arguments && typeof params.arguments === "object" && !Array.isArray(params.arguments) ? params.arguments as Record<string, unknown> : {};
+  return executeToolCall(root, name, args, false);
+}
+
+async function executeToolCall(root: string, name: string, args: Record<string, unknown>, viaDiscovery: boolean): Promise<unknown> {
+  if (name === "tool_search") {
+    if (viaDiscovery) return mcpToolResult({ ok: false, detail: "A discovery tool cannot call another discovery tool." });
+    const query = (typeof args.query === "string" ? args.query : "").trim().toLowerCase();
+    const scored = DIRECT_TOOLS
+      .map((tool) => {
+        const hay = `${tool.name} ${tool.description}`.toLowerCase();
+        const score = !query ? 1 : tool.name.toLowerCase() === query ? 3 : tool.name.toLowerCase().includes(query) ? 2 : hay.includes(query) ? 1 : 0;
+        return { tool, score };
+      })
+      .filter((entry) => entry.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 10)
+      .map((entry) => ({ name: entry.tool.name, description: entry.tool.description }));
+    return mcpToolResult({ ok: true, detail: JSON.stringify(scored, null, 2) });
+  }
+  if (name === "tool_describe") {
+    if (viaDiscovery) return mcpToolResult({ ok: false, detail: "A discovery tool cannot call another discovery tool." });
+    const rawNames = Array.isArray(args.names)
+      ? args.names
+      : typeof args.name === "string"
+        ? [args.name]
+        : [];
+    const names = rawNames.filter((n): n is string => typeof n === "string").slice(0, 10);
+    const described = DIRECT_TOOLS.filter((tool) => names.includes(tool.name));
+    return mcpToolResult({ ok: true, detail: JSON.stringify(described, null, 2) });
+  }
+  if (name === "tool_call") {
+    if (viaDiscovery) return mcpToolResult({ ok: false, detail: "A discovery tool cannot call another discovery tool." });
+    const targetName = typeof args.name === "string" ? args.name : "";
+    if (DISCOVERY_NAMES.has(targetName)) {
+      return mcpToolResult({ ok: false, detail: "A discovery tool cannot call another discovery tool." });
+    }
+    const targetArgs = args.arguments && typeof args.arguments === "object" && !Array.isArray(args.arguments) ? args.arguments as Record<string, unknown> : {};
+    return executeToolCall(root, targetName, targetArgs, true);
+  }
+  if (name === "memory_search") {
+    const query = (typeof args.query === "string" ? args.query : "").trim().toLowerCase();
+    const memFile = workspaceMemoryFilePath(root);
+    const content = await readFile(memFile, "utf8").catch(() => "");
+    const lines = content.split(/\r?\n/).filter((line) => line.trim().startsWith("- "));
+    const matches = query ? lines.filter((line) => line.toLowerCase().includes(query)) : lines;
+    return mcpToolResult({ ok: true, detail: matches.slice(-25).join("\n") || "No matching workspace memories." });
+  }
+  if (name === "memory_remember") {
+    const rawFact = typeof args.fact === "string" ? args.fact : typeof args.note === "string" ? args.note : "";
+    const section = typeof args.section === "string" ? args.section.replace(/[\r\n]+/g, " ").trim() : "";
+    const factBody = rawFact.replace(/[\r\n]+/g, " ").trim();
+    const fact = section && factBody ? `[${section}] ${factBody}` : factBody;
+    if (!fact || fact.length > 2_000) return mcpToolResult({ ok: false, detail: "fact must be 1 to 2,000 characters" });
+    const gate = securityGate({ relativePath: "MEMORY.md", content: fact, sandboxRoot: root });
+    if (!gate.allow) return mcpToolResult({ ok: false, detail: `blocked (${gate.reasons.join(", ")})` });
+    const memFile = workspaceMemoryFilePath(root);
+    await mkdir(path.dirname(memFile), { recursive: true, mode: 0o700 });
+    await chmod(path.dirname(memFile), 0o700).catch(() => undefined);
+    const existing = await readFile(memFile, "utf8").catch(() => "# Workspace Memory\n\n");
+    const entry = `- [${new Date().toISOString().slice(0, 10)}] ${fact}\n`;
+    await writeFile(memFile, `${existing}${entry}`, { encoding: "utf8", mode: 0o600 });
+    await chmod(memFile, 0o600).catch(() => undefined);
+    return mcpToolResult({ ok: true, detail: "remembered" });
+  }
+  if (name === "memory_forget") {
+    const rawQuery = typeof args.query === "string" ? args.query : typeof args.match === "string" ? args.match : "";
+    const query = rawQuery.trim().toLowerCase();
+    if (!query) return mcpToolResult({ ok: false, detail: "query is required" });
+    const memFile = workspaceMemoryFilePath(root);
+    const existing = await readFile(memFile, "utf8").catch(() => "");
+    if (!existing) return mcpToolResult({ ok: true, detail: "removed 0 entries" });
+    const lines = existing.split(/\r?\n/);
+    let removed = 0;
+    const kept = lines.filter((line) => {
+      if (line.trim().startsWith("- ") && line.toLowerCase().includes(query)) {
+        removed += 1;
+        return false;
+      }
+      return true;
+    });
+    await writeFile(memFile, kept.join("\n"), { encoding: "utf8", mode: 0o600 });
+    return mcpToolResult({ ok: true, detail: `removed ${removed} entries` });
+  }
+  if (name === "history_search" || name === "history_read") {
+    const stateFile = path.join(resolveDataDir(), "state.json");
+    let parsed: { bots?: Array<{ id: string; name: string; workspace: string }>; tasks?: Array<{ id: string; botId: string; status: string; createdAt: string; prompt: string; result?: string; error?: string }> } = {};
+    try {
+      parsed = JSON.parse(await readFile(stateFile, "utf8")) as typeof parsed;
+    } catch {
+      return mcpToolResult({ ok: true, detail: "No local task history available." });
+    }
+    const workspaceBotIds = new Set(
+      (parsed.bots ?? []).filter((b) => path.resolve(b.workspace) === root).map((b) => b.id),
+    );
+    const botNames = new Map((parsed.bots ?? []).map((b) => [b.id, b.name]));
+    const workspaceTasks = (parsed.tasks ?? [])
+      .filter((t) => workspaceBotIds.has(t.botId))
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+
+    if (name === "history_search") {
+      const query = (typeof args.query === "string" ? args.query : "").trim().toLowerCase();
+      const limit = Math.min(Math.max(Number(args.limit) || 5, 1), 10);
+      const hits = workspaceTasks
+        .filter((t) => `${t.prompt}\n${t.result ?? ""}\n${t.error ?? ""}`.toLowerCase().includes(query))
+        .slice(0, limit)
+        .map((t) => ({
+          taskId: t.id,
+          bot: botNames.get(t.botId) ?? t.botId,
+          status: t.status,
+          createdAt: t.createdAt,
+          promptExcerpt: t.prompt.slice(0, 200),
+          resultExcerpt: (t.result ?? t.error ?? "").slice(0, 400),
+        }));
+      return mcpToolResult({ ok: true, detail: JSON.stringify(hits, null, 2).slice(0, 8_000) });
+    }
+
+    const taskId = typeof args.taskId === "string" ? args.taskId.trim() : "";
+    const limit = Math.min(Math.max(Number(args.limit) || 5, 1), 10);
+    const selected = taskId ? workspaceTasks.filter((t) => t.id === taskId) : workspaceTasks.slice(0, limit);
+    const records = selected.map((t) => ({
+      taskId: t.id,
+      bot: botNames.get(t.botId) ?? t.botId,
+      status: t.status,
+      createdAt: t.createdAt,
+      prompt: t.prompt.slice(0, 2_000),
+      result: (t.result ?? "").slice(0, 4_000),
+      error: t.error,
+    }));
+    return mcpToolResult({ ok: true, detail: JSON.stringify(records, null, 2).slice(0, 16_000) });
+  }
+
+  if (name === "computer_screen") {
+    const res = await captureComputerScreen(root);
+    return mcpToolResult({ ok: res.ok, detail: JSON.stringify(res, null, 2) });
+  }
+  if (name === "computer_mouse") {
+    const action = (typeof args.action === "string" ? args.action : "position") as MouseActionInput["action"];
+    const res = await computerMouse(root, {
+      action,
+      x: typeof args.x === "number" ? args.x : undefined,
+      y: typeof args.y === "number" ? args.y : undefined,
+      fromX: typeof args.fromX === "number" ? args.fromX : undefined,
+      fromY: typeof args.fromY === "number" ? args.fromY : undefined,
+      button: typeof args.button === "string" ? (args.button as MouseActionInput["button"]) : undefined,
+      direction: typeof args.direction === "string" ? (args.direction as MouseActionInput["direction"]) : undefined,
+      amount: typeof args.amount === "number" ? args.amount : undefined,
+      actor: "partner",
+    });
+    return mcpToolResult({ ok: res.ok, detail: JSON.stringify(res, null, 2) });
+  }
+  if (name === "computer_keyboard") {
+    const action = (typeof args.action === "string" ? args.action : "type") as KeyboardActionInput["action"];
+    const res = await computerKeyboard(root, {
+      action,
+      text: typeof args.text === "string" ? args.text : undefined,
+      key: typeof args.key === "string" ? args.key : undefined,
+      actor: "partner",
+    });
+    return mcpToolResult({ ok: res.ok, detail: JSON.stringify(res, null, 2) });
+  }
+  if (name === "computer_browser") {
+    const url = typeof args.url === "string" ? args.url : "";
+    const res = await computerOpenBrowser(root, url, "partner");
+    return mcpToolResult({ ok: res.ok, detail: JSON.stringify(res, null, 2) });
+  }
+
+  const pathArg = typeof args.path === "string" ? args.path : "";
+  let result: { ok: boolean; detail: string };
+  if (name === "workspace_list") {
+    if (pathArg) await assertSafeWorkspacePath(root, pathArg, true);
+    result = await listSandboxDir(root, pathArg || ".");
+  } else if (name === "workspace_read") {
+    await assertSafeWorkspacePath(root, pathArg, false);
+    const info = await stat(path.resolve(root, pathArg)).catch(() => undefined);
+    result = info && info.size > MAX_FILE_BYTES
+      ? { ok: false, detail: "file is larger than the 500 KB workspace-tool limit" }
+      : await readSandboxText(root, pathArg);
+  } else if (name === "workspace_grep") {
+    const searchPath = typeof args.path === "string" && args.path ? args.path : ".";
+    await assertSafeWorkspacePath(root, searchPath, true);
+    result = await grepSandbox(root, typeof args.query === "string" ? args.query : "", searchPath);
+  } else if (name === "workspace_glob") {
+    result = await globSandbox(root, typeof args.pattern === "string" ? args.pattern : "");
+  } else if (name === "workspace_write") {
+    const content = typeof args.content === "string" ? args.content : "";
+    await assertSafeWorkspacePath(root, pathArg, false);
+    const gate = securityGate({ relativePath: pathArg, content, sandboxRoot: root });
+    if (content.length > MAX_FILE_BYTES) result = { ok: false, detail: "file is larger than the 500 KB workspace-tool limit" };
+    else if (!gate.allow) result = { ok: false, detail: `blocked (${gate.reasons.join(", ")})` };
+    else {
+      const target = path.resolve(root, pathArg);
+      try { await lstat(target); result = { ok: false, detail: "file already exists; use workspace_patch" }; }
+      catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        await mkdir(path.dirname(target), { recursive: true });
+        await writeSandboxFile(root, pathArg, content);
+        result = { ok: true, detail: "created" };
+      }
+    }
+  } else if (name === "workspace_patch") {
+    const diff = typeof args.diff === "string" ? args.diff : "";
+    await assertSafeWorkspacePath(root, pathArg, false);
+    if (diff.length > MAX_FILE_BYTES) return mcpToolResult({ ok: false, detail: "patch is larger than the 500 KB workspace-tool limit" });
+    const target = path.resolve(root, pathArg);
+    let source: string;
+    try { source = await readFile(target, "utf8"); }
+    catch { result = { ok: false, detail: "file missing or unreadable" }; return mcpToolResult(result); }
+    const sourceGate = securityGate({ relativePath: pathArg, content: source, sandboxRoot: root });
+    const updated = applyUnifiedDiff(source, diff);
+    if (!sourceGate.allow) result = { ok: false, detail: `blocked (${sourceGate.reasons.join(", ")})` };
+    else if (updated === null) result = { ok: false, detail: "patch context did not match" };
+    else {
+      const nextGate = securityGate({ relativePath: pathArg, content: updated, sandboxRoot: root });
+      if (!nextGate.allow) result = { ok: false, detail: `blocked (${nextGate.reasons.join(", ")})` };
+      else {
+        await writeFile(target, updated, "utf8");
+        result = { ok: true, detail: "patched" };
+      }
+    }
+  } else if (name === "workspace_append") {
+    const content = typeof args.content === "string" ? args.content : "";
+    await assertSafeWorkspacePath(root, pathArg, false);
+    const info = await stat(path.resolve(root, pathArg)).catch(() => undefined);
+    result = content.length > MAX_FILE_BYTES || (info !== undefined && info.size + content.length > MAX_FILE_BYTES)
+      ? { ok: false, detail: "appended text is larger than the 500 KB workspace-tool limit" }
+      : await appendSandboxFile(root, pathArg, content);
+  } else if (name === "workspace_delete") {
+    await assertSafeWorkspacePath(root, pathArg, false);
+    const info = await stat(path.resolve(root, pathArg)).catch(() => undefined);
+    result = info && info.size > MAX_FILE_BYTES
+      ? { ok: false, detail: "file is larger than the 500 KB workspace-tool limit" }
+      : await deleteSandboxFile(root, pathArg);
+  } else if (name === "workspace_rename" || name === "workspace_copy") {
+    const from = typeof args.from === "string" ? args.from : "";
+    const to = typeof args.to === "string" ? args.to : "";
+    await assertSafeWorkspacePath(root, from, false);
+    await assertSafeWorkspacePath(root, to, false);
+    const info = await stat(path.resolve(root, from)).catch(() => undefined);
+    result = info && info.size > MAX_FILE_BYTES
+      ? { ok: false, detail: "source is larger than the 500 KB workspace-tool limit" }
+      : name === "workspace_copy" ? await copySandboxFile(root, from, to) : await renameSandboxFile(root, from, to);
+  } else if (name === "workspace_mkdir") {
+    await assertSafeWorkspacePath(root, pathArg, false);
+    result = await mkdirSandboxDir(root, pathArg);
+  } else if (name === "workspace_rmdir") {
+    await assertSafeWorkspacePath(root, pathArg, true);
+    result = await rmdirSandboxDir(root, pathArg);
+  } else throw new Error(`Unknown workspace tool: ${name}`);
+  return mcpToolResult(result);
+}
+
+function mcpToolResult(result: { ok: boolean; detail: string }) {
+  return { content: [{ type: "text", text: result.detail }], isError: !result.ok };
+}
+
+async function assertSafeWorkspacePath(root: string, relative: string, directory: boolean): Promise<void> {
+  if (!relative || relative.includes("\0") || path.isAbsolute(relative) || path.win32.isAbsolute(relative)) throw new Error("Workspace path must be relative.");
+  const normalized = relative.replaceAll("\\", "/");
+  const parts = normalized.split("/").filter(Boolean);
+  if (parts.some((part) => part === ".ocp" || part === "gtm" || part === "..")) throw new Error("Workspace path is outside the available coding files.");
+  const target = path.resolve(root, relative);
+  const relativeTarget = path.relative(root, target);
+  if (path.isAbsolute(relativeTarget) || relativeTarget === ".." || relativeTarget.startsWith(`..${path.sep}`)) throw new Error("Workspace path left the assigned directory.");
+  let current = root;
+  for (const part of relativeTarget.split(path.sep).filter(Boolean)) {
+    current = path.join(current, part);
+    try {
+      const info = await lstat(current);
+      if (info.isSymbolicLink()) throw new Error("Symbolic links are not available through workspace tools.");
+      if (current !== target && !info.isDirectory()) throw new Error("A parent path is not a directory.");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") break;
+      throw error;
+    }
+  }
+  if (directory) {
+    try { if (!(await lstat(target)).isDirectory()) throw new Error("Workspace path is not a directory."); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+  }
+}
+
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  const workspace = process.argv[2];
+  if (!workspace) {
+    process.stderr.write("Workspace MCP server requires a workspace path.\n");
+    process.exitCode = 2;
+  } else {
+    runWorkspaceMcp(workspace).catch((error: unknown) => {
+      process.stderr.write(`${error instanceof Error ? error.message : "Workspace MCP server failed."}\n`);
+      process.exitCode = 1;
+    });
+  }
+}

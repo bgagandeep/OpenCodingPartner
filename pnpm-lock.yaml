@@ -43,6 +43,9 @@ importers:
       '@opencodingpartner/policy':
         specifier: workspace:*
         version: link:../policy
+      '@opencodingpartner/product':
+        specifier: workspace:*
+        version: link:../product
       '@opencodingpartner/workers':
         specifier: workspace:*
         version: link:../workers
@@ -81,6 +84,16 @@ importers:
       '@opencodingpartner/mesh':
         specifier: workspace:*
         version: link:../mesh
+    devDependencies:
+      '@types/node':
+        specifier: ^22.14.0
+        version: 22.20.4
+
+  packages/product:
+    dependencies:
+      '@opencodingpartner/workers':
+        specifier: workspace:*
+        version: link:../workers
     devDependencies:
       '@types/node':
         specifier: ^22.14.0

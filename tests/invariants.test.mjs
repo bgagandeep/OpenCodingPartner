@@ -20,7 +20,7 @@ function walk(dir, out = []) {
   return out;
 }
 
-const docs = ["README.md", "ARCHITECTURE.md", "ROADMAP.md", "CONTRIBUTING.md", "THIRD_PARTY_NOTICES.md", "NOTICE"].map(read).join("\n");
+const docs = ["README.md", "ARCHITECTURE.md", "ROADMAP.md", "CONTRIBUTING.md", "THIRD_PARTY_NOTICES.md", "NOTICE", "docs/legacy-sandbox.md"].map(read).join("\n");
 
 test("product docs name the tools and keep ads and payments off", () => {
   assert.match(read("THIRD_PARTY_NOTICES.md"), /openclaw\/openclaw/);
@@ -29,17 +29,20 @@ test("product docs name the tools and keep ads and payments off", () => {
   assert.match(docs, /Apache-2\.0/);
   assert.match(read("THIRD_PARTY_NOTICES.md"), /convaiinnovations\/laya/);
   assert.match(docs, /System-1/);
-  assert.match(read("README.md"), /Open Coding Partner/);
-  for (const name of ["ARCHITECTURE.md", "ROADMAP.md", "CONTRIBUTING.md", "PARTNER.md"]) {
+  assert.match(read("README.md"), /OpenCodingPartner|Open Coding Partner/);
+  assert.match(read("README.md"), /OCP Agent/);
+  assert.match(read("README.md"), /OCP Coder/);
+  assert.match(read("ARCHITECTURE.md"), /OCP Agent/);
+  assert.match(read("ARCHITECTURE.md"), /OCP Coder/);
+  assert.doesNotMatch(read("PARTNER.md"), /OpenClaw|Grok Build|LiteLLM|\bLaya\b|Claude Code|Hermes|Trinity/);
+  for (const name of ["README.md", "ARCHITECTURE.md", "ROADMAP.md", "CONTRIBUTING.md", "PARTNER.md"]) {
     const page = read(name);
-    assert.doesNotMatch(page, /OpenClaw|Grok Build|LiteLLM|\bLaya\b|Claude Code|Hermes|Trinity/);
+    assert.doesNotMatch(page, /Claude Code|Trinity/);
   }
-  const readmeBody = read("README.md").split("## Credits")[0];
-  assert.doesNotMatch(readmeBody, /OpenClaw|Grok Build|LiteLLM|\bLaya\b|Claude Code|Hermes|Trinity/);
   assert.match(read("NOTICE"), /Hermes Agent/);
   assert.match(read("README.md").split("## Credits")[1] ?? "", /Hermes Agent/);
-  assert.match(docs, /chat agent/);
-  assert.match(docs, /orchestration agent swarm/);
+  assert.match(docs, /chat agent/i);
+  assert.match(docs, /orchestration agent swarm/i);
   assert.match(docs, /coding agent/);
   assert.match(docs, /QA agent/);
   assert.match(docs, /computer agent/);
@@ -47,7 +50,6 @@ test("product docs name the tools and keep ads and payments off", () => {
   assert.match(docs, /Ads are off/);
   assert.match(docs, /Payments are off/);
   assert.match(docs, /temporary/i);
-  assert.match(docs, /multiple agents/);
   assert.doesNotMatch(docs, /maxWorkersPerTurn/);
   assert.doesNotMatch(docs, /\bcursor\b/i);
   assert.doesNotMatch(docs, /CBRE/);

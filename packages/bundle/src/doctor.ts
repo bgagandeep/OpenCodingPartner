@@ -14,6 +14,7 @@ export interface DoctorDeps {
   fleetLine?: string;
   approveLine?: string;
   decisionLine?: string;
+  packagingLine?: string;
   frameLine?: string;
   dockerLine?: string;
   reviewLine?: string;
@@ -24,6 +25,7 @@ export interface DoctorDeps {
   controlLine?: string;
   statusLine?: string;
   mountLine?: string;
+  priorLine?: string;
   checkLine?: string;
   qaLine?: string;
   routineLine?: string;
@@ -45,8 +47,8 @@ export async function runDoctor(deps: DoctorDeps): Promise<DoctorReport> {
   lines.push(await gatewayLine(deps));
   lines.push(await pluginLine(deps));
   lines.push(playwrightLine(deps.playwrightPresent === true));
-  lines.push(slackLine(deps.env));
-  lines.push(telegramLine(deps.env));
+  lines.push(await slackLine(deps));
+  lines.push(await telegramLine(deps));
   lines.push(discordLine(deps.env));
   lines.push(deps.fleetLine ?? "yellow Fleet: no partners. This check does not start containers. No telemetry is sent.");
   lines.push(deps.approveLine ?? "green Approvals: none pending. This check does not decide a card.");
@@ -61,12 +63,14 @@ export async function runDoctor(deps: DoctorDeps): Promise<DoctorReport> {
   lines.push(deps.controlLine ?? "green Computer control: partner. This check does not take or return the browser.");
   lines.push(deps.statusLine ?? "green Computer status: idle. This check does not start the browser. Live stream is not in this build.");
   lines.push(deps.mountLine ?? "green Shared mount: no partners. This check does not copy files.");
+  lines.push(deps.priorLine ?? "green Prior turns: none. This check does not print the turns.");
   lines.push(deps.checkLine ?? "green Last check: none. This check does not run a command and does not print its output.");
   lines.push(deps.qaLine ?? "green Last QA: none. This check does not review files and does not print the QA summary.");
   lines.push(deps.routineLine ?? "green Routines: none. This check does not run a routine and does not print its message.");
   lines.push(deps.writeLine ?? "green Last write: none. This check does not write a file and does not print a path.");
   lines.push(deps.swarmLine ?? "green Swarm: none. This check does not apply a manifest and does not start containers.");
   lines.push(deps.acpLine ?? "green Advanced ACP: off. No backend is installed. The local swarm still runs. This check does not start one.");
+  lines.push(deps.packagingLine ?? "green Billing: inert. Seats: 1 design only. Credits: 0 design only. No charge is made. Ads are off.");
   lines.push("Prove-it: pnpm exec ocp chat --sandbox .sandbox \"Use the coding worker to create hello.txt with content:");
   lines.push("hello");
   lines.push("\"");
@@ -157,7 +161,8 @@ function discordLine(env: NodeJS.ProcessEnv): string {
   return `yellow Discord: not in this build.${token} The offline turn can still run. This check does not post a message.`;
 }
 
-function telegramLine(env: NodeJS.ProcessEnv): string {
+async function telegramLine(deps: DoctorDeps): Promise<string> {
+  const env = deps.env;
   const missing = [env.TELEGRAM_BOT_TOKEN ? "" : "TELEGRAM_BOT_TOKEN", env.TELEGRAM_WEBHOOK_SECRET ? "" : "TELEGRAM_WEBHOOK_SECRET"].filter((name) => name.length > 0);
   if (missing.length > 0) return `yellow Telegram: missing ${missing.join(", ")}. The offline channel path still runs.`;
   const token = env.TELEGRAM_BOT_TOKEN ?? "";

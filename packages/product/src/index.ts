@@ -91,13 +91,23 @@ export interface TaskApproval {
   createdAt: string;
 }
 
+export interface ProductProject {
+  id: string;
+  name: string;
+  workspace: string;
+  description?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 interface ProductState {
   schemaVersion: 1;
+  projects?: ProductProject[];
   bots: BotDefinition[];
   tasks: ProductTask[];
 }
 
-const EMPTY_STATE: ProductState = { schemaVersion: 1, bots: [], tasks: [] };
+const EMPTY_STATE: ProductState = { schemaVersion: 1, projects: [], bots: [], tasks: [] };
 
 export function productDataDir(env: NodeJS.ProcessEnv = process.env): string {
   if (env.OCP_DATA_DIR) return path.resolve(env.OCP_DATA_DIR);
@@ -240,13 +250,107 @@ export function missingProviderKey(bot: BotDefinition, env: NodeJS.ProcessEnv = 
   return keyEnv;
 }
 
-export async function listBots(root = productDataDir()): Promise<BotDefinition[]> {
-  return (await readState(root)).bots.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+export async function listProjects(root = productDataDir()): Promise<ProductProject[]> {
+  const state = await readState(root);
+  const byWorkspace = new Map<string, ProductProject>();
+  for (const project of state.projects ?? []) {
+    byWorkspace.set(project.workspace, project);
+  }
+  for (const bot of state.bots) {
+    if (!byWorkspace.has(bot.workspace)) {
+      byWorkspace.set(bot.workspace, {
+        id: `proj-${Buffer.from(bot.workspace).toString("base64url").slice(0, 16)}`,
+        name: path.basename(bot.workspace) || bot.workspace,
+        workspace: bot.workspace,
+        createdAt: bot.createdAt,
+        updatedAt: bot.updatedAt,
+      });
+    }
+  }
+  return [...byWorkspace.values()].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
 }
 
-export async function findBot(id: string, root = productDataDir()): Promise<BotDefinition | undefined> {
+export async function createProject(
+  input: { name?: string; workspace: string; description?: string; ensureDirectory?: boolean },
+  root = productDataDir(),
+): Promise<ProductProject> {
+  const targetPath = path.resolve(input.workspace.trim());
+  if (input.ensureDirectory) {
+    await mkdir(targetPath, { recursive: true });
+  }
+  const resolvedWorkspace = await canonicalWorkspacePath(targetPath);
+  const now = new Date().toISOString();
+  const projectName = (input.name?.trim() || path.basename(resolvedWorkspace) || "Project").slice(0, 100);
+  let result: ProductProject | undefined;
+  await mutateState(root, (state) => {
+    if (!state.projects) state.projects = [];
+    const existing = state.projects.find((p) => p.workspace === resolvedWorkspace);
+    if (existing) {
+      if (input.name?.trim()) existing.name = projectName;
+      if (input.description !== undefined) existing.description = input.description.trim() || undefined;
+      existing.updatedAt = now;
+      result = existing;
+      return;
+    }
+    const created: ProductProject = {
+      id: randomUUID(),
+      name: projectName,
+      workspace: resolvedWorkspace,
+      description: input.description?.trim() || undefined,
+      createdAt: now,
+      updatedAt: now,
+    };
+    state.projects.push(created);
+    result = created;
+  });
+  return result!;
+}
+
+export async function deleteProject(
+  idOrWorkspace: string,
+  options: { deleteBots?: boolean } = {},
+  root = productDataDir(),
+): Promise<void> {
+  const resolvedCandidate = await canonicalWorkspacePath(idOrWorkspace).catch(() => idOrWorkspace);
+  await mutateState(root, (state) => {
+    recoverAbandonedTaskRecords(state);
+    if (!state.projects) state.projects = [];
+    const project = state.projects.find((p) => p.id === idOrWorkspace || p.workspace === resolvedCandidate);
+    const targetWorkspace = project?.workspace ?? resolvedCandidate;
+    const projectBots = state.bots.filter((b) => b.workspace === targetWorkspace);
+    const hasActiveTask = state.tasks.some(
+      (task) =>
+        projectBots.some((b) => b.id === task.botId || b.id === task.reviewerBotId) &&
+        ["queued", "running", "awaiting-approval"].includes(task.status),
+    );
+    if (hasActiveTask) {
+      throw new Error("A project with active bot tasks cannot be removed.");
+    }
+    if (options.deleteBots) {
+      state.bots = state.bots.filter((b) => b.workspace !== targetWorkspace);
+    }
+    state.projects = state.projects.filter((p) => p.id !== idOrWorkspace && p.workspace !== targetWorkspace);
+  });
+}
+
+export async function listBots(root = productDataDir(), workspace?: string): Promise<BotDefinition[]> {
+  const bots = (await readState(root)).bots.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  if (!workspace) return bots;
+  const resolved = await canonicalWorkspacePath(workspace);
+  return bots.filter((bot) => bot.workspace === resolved);
+}
+
+export async function findBot(id: string, root = productDataDir(), workspace?: string): Promise<BotDefinition | undefined> {
   const bots = (await readState(root)).bots;
-  return bots.find((bot) => bot.id === id) ?? bots.find((bot) => bot.name.toLocaleLowerCase() === id.trim().toLocaleLowerCase());
+  const byId = bots.find((bot) => bot.id === id);
+  if (byId) return byId;
+  const lowered = id.trim().toLocaleLowerCase();
+  if (workspace) {
+    const resolved = await canonicalWorkspacePath(workspace);
+    const inWorkspace = bots.find((bot) => bot.workspace === resolved && bot.name.toLocaleLowerCase() === lowered);
+    if (inWorkspace) return inWorkspace;
+  }
+  return bots.find((bot) => bot.name.toLocaleLowerCase() === lowered);
 }
 
 /** Ensure a Lead Orchestrator bot (or a full starter engineering team) exists for the workspace. */
@@ -256,7 +360,8 @@ export async function bootstrapFleet(
   root = productDataDir(),
 ): Promise<{ created: BotDefinition[]; bots: BotDefinition[] }> {
   const resolvedWorkspace = await canonicalWorkspacePath(workspace);
-  const existing = await listBots(root);
+  await createProject({ workspace: resolvedWorkspace }, root).catch(() => undefined);
+  const existing = await listBots(root, resolvedWorkspace);
   const created: BotDefinition[] = [];
   const specs: Array<{
     name: string;
@@ -324,7 +429,7 @@ export async function bootstrapFleet(
     );
     created.push(bot);
   }
-  return { created, bots: await listBots(root) };
+  return { created, bots: await listBots(root, resolvedWorkspace) };
 }
 
 export async function findTask(id: string, root = productDataDir()): Promise<ProductTask | undefined> {
@@ -524,8 +629,24 @@ export async function createBot(
     updatedAt: now,
   };
   await mutateState(root, (state) => {
-    if (state.bots.some((existing) => existing.name.toLocaleLowerCase() === bot.name.toLocaleLowerCase())) {
-      throw new Error(`A bot named "${bot.name}" already exists.`);
+    if (
+      state.bots.some(
+        (existing) =>
+          existing.workspace === bot.workspace &&
+          existing.name.toLocaleLowerCase() === bot.name.toLocaleLowerCase(),
+      )
+    ) {
+      throw new Error(`A bot named "${bot.name}" already exists in this project workspace.`);
+    }
+    if (!state.projects) state.projects = [];
+    if (!state.projects.some((p) => p.workspace === bot.workspace)) {
+      state.projects.push({
+        id: randomUUID(),
+        name: path.basename(bot.workspace) || bot.workspace,
+        workspace: bot.workspace,
+        createdAt: now,
+        updatedAt: now,
+      });
     }
     state.bots.push(bot);
   });
@@ -544,6 +665,7 @@ export async function updateBot(
     if (!bot) throw new Error(`Unknown bot: ${id}`);
     const normalizedUpdate = { ...update };
     if (update.workspace) normalizedUpdate.workspace = await canonicalWorkspacePath(update.workspace);
+    const targetWorkspace = normalizedUpdate.workspace ?? bot.workspace;
     const runtime = normalizedUpdate.runtime ?? bot.runtime;
     const agentRuntime = isOcpAgentRuntime(runtime);
     const isolation = normalizedUpdate.isolation ?? bot.isolation ?? "docker";
@@ -556,8 +678,16 @@ export async function updateBot(
     if (state.tasks.some((task) => (task.botId === id || task.reviewerBotId === id) && ["queued", "running", "awaiting-approval"].includes(task.status))) {
       throw new Error("A bot cannot be reconfigured while one of its tasks is active.");
     }
-    if (normalizedUpdate.name && state.bots.some((item) => item.id !== id && item.name.toLocaleLowerCase() === normalizedUpdate.name?.toLocaleLowerCase())) {
-      throw new Error(`A bot named "${normalizedUpdate.name}" already exists.`);
+    const targetName = normalizedUpdate.name ?? bot.name;
+    if (
+      state.bots.some(
+        (item) =>
+          item.id !== id &&
+          item.workspace === targetWorkspace &&
+          item.name.toLocaleLowerCase() === targetName.toLocaleLowerCase(),
+      )
+    ) {
+      throw new Error(`A bot named "${targetName}" already exists in this project workspace.`);
     }
     const runtimeChanged = Object.prototype.hasOwnProperty.call(normalizedUpdate, "runtime")
       && isOcpAgentRuntime(bot.runtime) !== agentRuntime;

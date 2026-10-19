@@ -996,6 +996,30 @@ test("Lead Orchestrator bot creates other bots, manages the fleet, delegates wor
     assert.equal(savedSettings.ok, true);
     assert.equal(savedSettings.openrouterConfigured, true);
     assert.equal(savedSettings.defaultModel, "qwen/qwen-2.5-coder-32b-instruct");
+
+    // 7. Verify each project/product has its own isolated bot group (including same bot names across projects)
+    const secondWorkspace = path.join(root, "second-product");
+    const createProjRes = await fetch(`${app.url}/api/projects`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-ocp-token": token },
+      body: JSON.stringify({
+        name: "Second Product",
+        workspace: secondWorkspace,
+        description: "Isolated product with its own bot fleet",
+        mode: "team",
+      }),
+    });
+    assert.equal(createProjRes.status, 201);
+    const projData = (await createProjRes.json()) as {
+      ok: boolean;
+      project: { id: string; name: string; workspace: string };
+      bots: Array<{ id: string; name: string; role: string; workspace: string }>;
+    };
+    assert.equal(projData.ok, true);
+    assert.equal(projData.project.name, "Second Product");
+    assert.equal(projData.bots.length, 5);
+    assert.equal((await listBots(dataDir, workspace)).length, 4);
+    assert.equal((await listBots(dataDir, secondWorkspace)).length, 5);
   } finally {
     await app.close();
     await rm(root, { recursive: true, force: true });

@@ -319,7 +319,11 @@ async function executeToolCall(root: string, name: string, args: Record<string, 
 
   const dataDir = resolveDataDir();
   if (name === "bot_list") {
-    const [bots, tasks] = await Promise.all([listBots(dataDir), listTasks(dataDir)]);
+    const allProjects = Boolean(args.allProjects);
+    const [bots, tasks] = await Promise.all([
+      listBots(dataDir, allProjects ? undefined : root),
+      listTasks(dataDir),
+    ]);
     const summary = bots.map((b) => ({
       id: b.id,
       name: b.name,
@@ -332,7 +336,7 @@ async function executeToolCall(root: string, name: string, args: Record<string, 
       workspace: b.workspace,
       activeTasks: tasks.filter((t) => t.botId === b.id && ["queued", "running", "awaiting-approval"].includes(t.status)).length,
     }));
-    return mcpToolResult({ ok: true, detail: JSON.stringify({ ok: true, count: summary.length, bots: summary }, null, 2) });
+    return mcpToolResult({ ok: true, detail: JSON.stringify({ ok: true, workspace: root, count: summary.length, bots: summary }, null, 2) });
   }
   if (name === "swarm_setup") {
     try {
@@ -394,7 +398,7 @@ async function executeToolCall(root: string, name: string, args: Record<string, 
   }
   if (name === "bot_update") {
     const targetRef = typeof args.bot === "string" ? args.bot.trim() : typeof args.id === "string" ? args.id.trim() : "";
-    const existing = targetRef ? await findBot(targetRef, dataDir) : undefined;
+    const existing = targetRef ? await findBot(targetRef, dataDir, root) : undefined;
     if (!existing) return mcpToolResult({ ok: false, detail: `Bot not found: ${targetRef}` });
     const patch: Parameters<typeof updateBot>[1] = {};
     if (typeof args.name === "string" && args.name.trim()) patch.name = args.name.trim();
@@ -416,7 +420,7 @@ async function executeToolCall(root: string, name: string, args: Record<string, 
   }
   if (name === "bot_delete") {
     const targetRef = typeof args.bot === "string" ? args.bot.trim() : typeof args.id === "string" ? args.id.trim() : typeof args.name === "string" ? args.name.trim() : "";
-    const existing = targetRef ? await findBot(targetRef, dataDir) : undefined;
+    const existing = targetRef ? await findBot(targetRef, dataDir, root) : undefined;
     if (!existing) return mcpToolResult({ ok: false, detail: `Bot not found: ${targetRef}` });
     try {
       await deleteBot(existing.id, dataDir);
@@ -432,9 +436,9 @@ async function executeToolCall(root: string, name: string, args: Record<string, 
     if (!targetRef || !delegatedPrompt) {
       return mcpToolResult({ ok: false, detail: "Both 'bot' and 'prompt' are required for bot_delegate." });
     }
-    const targetBot = await findBot(targetRef, dataDir);
+    const targetBot = await findBot(targetRef, dataDir, root);
     if (!targetBot) return mcpToolResult({ ok: false, detail: `Target bot not found: ${targetRef}` });
-    const reviewerBot = reviewerRef ? await findBot(reviewerRef, dataDir) : undefined;
+    const reviewerBot = reviewerRef ? await findBot(reviewerRef, dataDir, root) : undefined;
     try {
       const primaryRun = await runBotSession(targetBot, `${targetBot.instructions}\n\nDelegated task:\n${delegatedPrompt}`, {
         dataDir,

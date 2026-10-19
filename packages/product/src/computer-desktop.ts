@@ -94,6 +94,10 @@ function isProcessAlive(pid: number | undefined): boolean {
   }
 }
 
+function isNativeMacDesktop(): boolean {
+  return process.platform === "darwin" && !process.env.NODE_TEST_CONTEXT && process.env.OCP_COMPUTER_HEADLESS !== "1";
+}
+
 export async function readDesktopState(workspaceRoot: string): Promise<ComputerDesktopState> {
   const root = path.resolve(workspaceRoot);
   let state: Partial<ComputerDesktopState> = {};
@@ -116,8 +120,12 @@ export async function readDesktopState(workspaceRoot: string): Promise<ComputerD
       state = {};
     }
   }
+  const validDisplay =
+    typeof state.display === "string" && (state.display.startsWith(":") || state.display.startsWith("macos:"))
+      ? state.display
+      : defaultDisplayForWorkspace(root);
   return {
-    display: typeof state.display === "string" && state.display.startsWith(":") ? state.display : defaultDisplayForWorkspace(root),
+    display: validDisplay,
     xvncPid: typeof state.xvncPid === "number" && isProcessAlive(state.xvncPid) ? state.xvncPid : undefined,
     chromePid: typeof state.chromePid === "number" && isProcessAlive(state.chromePid) ? state.chromePid : undefined,
     width: typeof state.width === "number" && state.width >= 320 ? state.width : DEFAULT_WIDTH,
@@ -233,6 +241,30 @@ export async function ensureComputerDisplay(workspaceRoot: string): Promise<Comp
     }
   }
 
+  // 4. Native macOS Quartz / AppKit desktop support when running on a Mac
+  if (isNativeMacDesktop() && (await hasBinary("osascript"))) {
+    state.display = "macos:0";
+    try {
+      const { stdout } = await execFileAsync(
+        "osascript",
+        [
+          "-l",
+          "JavaScript",
+          "-e",
+          'ObjC.import("AppKit"); const f = $.NSScreen.mainScreen.frame; JSON.stringify({ w: Math.round(f.size.width), h: Math.round(f.size.height) });',
+        ],
+        { timeout: 2_500 },
+      );
+      const parsed = JSON.parse(stdout.trim()) as { w?: number; h?: number };
+      if (parsed.w && parsed.w >= 320) state.width = parsed.w;
+      if (parsed.h && parsed.h >= 240) state.height = parsed.h;
+    } catch {
+      // Keep default 1280x800 if NSScreen query fails
+    }
+    if (state.control !== "human") state.status = "live";
+    return writeDesktopState(root, state);
+  }
+
   return writeDesktopState(root, state);
 }
 
@@ -240,6 +272,27 @@ export async function getCursorAndWindow(display: string): Promise<{
   cursor?: { x: number; y: number };
   windowTitle?: string;
 }> {
+  if (display.startsWith("macos:") && isNativeMacDesktop() && (await hasBinary("osascript"))) {
+    try {
+      const { stdout } = await execFileAsync(
+        "osascript",
+        [
+          "-l",
+          "JavaScript",
+          "-e",
+          'ObjC.import("AppKit"); const f = $.NSScreen.mainScreen.frame; const p = $.NSEvent.mouseLocation; const app = Application("System Events").processes.whose({ frontmost: true })[0]; let title = ""; try { title = app.name(); } catch {} JSON.stringify({ x: Math.round(p.x), y: Math.round(f.size.height - p.y), title });',
+        ],
+        { timeout: 2_500 },
+      );
+      const parsed = JSON.parse(stdout.trim()) as { x?: number; y?: number; title?: string };
+      return {
+        cursor: typeof parsed.x === "number" && typeof parsed.y === "number" ? { x: parsed.x, y: parsed.y } : undefined,
+        windowTitle: parsed.title || undefined,
+      };
+    } catch {
+      return {};
+    }
+  }
   if (!(await hasBinary("xdotool"))) return {};
   let cursor: { x: number; y: number } | undefined;
   let windowTitle: string | undefined;
@@ -275,7 +328,15 @@ export async function captureComputerScreen(workspaceRoot: string, note = "Captu
   await mkdir(path.dirname(framePath), { recursive: true });
 
   let captured = false;
-  if (state.status === "live" && (await hasBinary("ffmpeg"))) {
+  if (state.status === "live" && state.display.startsWith("macos:") && (await hasBinary("screencapture"))) {
+    try {
+      await execFileAsync("screencapture", ["-x", "-C", framePath], { timeout: 5_000 });
+      const info = await stat(framePath).catch(() => undefined);
+      if (info && info.size > 0) captured = true;
+    } catch {
+      captured = false;
+    }
+  } else if (state.status === "live" && (await hasBinary("ffmpeg"))) {
     try {
       await execFileAsync(
         "ffmpeg",
@@ -364,6 +425,14 @@ function buttonCode(button?: "left" | "middle" | "right"): string {
   return "1";
 }
 
+async function runMacMouseEvent(script: string): Promise<void> {
+  await execFileAsync(
+    "osascript",
+    ["-l", "JavaScript", "-e", `ObjC.import("Quartz"); ${script}`],
+    { timeout: 4_000 },
+  );
+}
+
 export async function computerMouse(workspaceRoot: string, input: MouseActionInput): Promise<ComputerActionResult> {
   const root = path.resolve(workspaceRoot);
   const state = await ensureComputerDisplay(root);
@@ -390,7 +459,8 @@ export async function computerMouse(workspaceRoot: string, input: MouseActionInp
   const x = input.x !== undefined ? clampX(input.x) : undefined;
   const y = input.y !== undefined ? clampY(input.y) : undefined;
   const env = { ...process.env, DISPLAY: state.display };
-  const xdotoolReady = state.status === "live" && (await hasBinary("xdotool"));
+  const macReady = state.status === "live" && state.display.startsWith("macos:") && (await hasBinary("osascript"));
+  const xdotoolReady = state.status === "live" && !state.display.startsWith("macos:") && (await hasBinary("xdotool"));
 
   try {
     if (input.action === "position") {
@@ -399,13 +469,29 @@ export async function computerMouse(workspaceRoot: string, input: MouseActionInp
     if (input.action === "move") {
       const tx = clampX(x);
       const ty = clampY(y);
-      if (xdotoolReady) {
+      if (macReady) {
+        await runMacMouseEvent(
+          `const e = $.CGEventCreateMouseEvent(null, $.kCGEventMouseMoved, {x: ${tx}, y: ${ty}}, $.kCGMouseButtonLeft); $.CGEventPost($.kCGHIDEventTap, e);`,
+        );
+      } else if (xdotoolReady) {
         await execFileAsync("xdotool", ["mousemove", "--sync", String(tx), String(ty)], { env, timeout: 4_000 });
       }
       return captureComputerScreen(root, `Moved mouse to (${tx}, ${ty})`);
     }
     if (input.action === "click" || input.action === "double_click" || input.action === "right_click" || input.action === "middle_click") {
-      if (xdotoolReady) {
+      if (macReady) {
+        const tx = clampX(x);
+        const ty = clampY(y);
+        const isRight = input.action === "right_click" || input.button === "right";
+        const downType = isRight ? "$.kCGEventRightMouseDown" : "$.kCGEventLeftMouseDown";
+        const upType = isRight ? "$.kCGEventRightMouseUp" : "$.kCGEventLeftMouseUp";
+        const btnConst = isRight ? "$.kCGMouseButtonRight" : "$.kCGMouseButtonLeft";
+        const clicks = input.action === "double_click" ? 2 : 1;
+        await runMacMouseEvent(
+          `for (let i = 1; i <= ${clicks}; i++) { const d = $.CGEventCreateMouseEvent(null, ${downType}, {x: ${tx}, y: ${ty}}, ${btnConst}); $.CGEventSetIntegerValueField(d, $.kCGMouseEventClickState, i); $.CGEventPost($.kCGHIDEventTap, d); const u = $.CGEventCreateMouseEvent(null, ${upType}, {x: ${tx}, y: ${ty}}, ${btnConst}); $.CGEventSetIntegerValueField(u, $.kCGMouseEventClickState, i); $.CGEventPost($.kCGHIDEventTap, u); }`,
+        );
+        await new Promise((r) => setTimeout(r, 150));
+      } else if (xdotoolReady) {
         const args: string[] = [];
         if (x !== undefined && y !== undefined) {
           args.push("mousemove", "--sync", String(x), String(y));
@@ -430,7 +516,14 @@ export async function computerMouse(workspaceRoot: string, input: MouseActionInp
       );
     }
     if (input.action === "down" || input.action === "up") {
-      if (xdotoolReady) {
+      if (macReady) {
+        const tx = clampX(x);
+        const ty = clampY(y);
+        const evType = input.action === "down" ? "$.kCGEventLeftMouseDown" : "$.kCGEventLeftMouseUp";
+        await runMacMouseEvent(
+          `const e = $.CGEventCreateMouseEvent(null, ${evType}, {x: ${tx}, y: ${ty}}, $.kCGMouseButtonLeft); $.CGEventPost($.kCGHIDEventTap, e);`,
+        );
+      } else if (xdotoolReady) {
         const args: string[] = [];
         if (x !== undefined && y !== undefined) {
           args.push("mousemove", "--sync", String(x), String(y));
@@ -445,7 +538,12 @@ export async function computerMouse(workspaceRoot: string, input: MouseActionInp
       const sy = clampY(input.fromY ?? 100);
       const ex = clampX(x ?? 300);
       const ey = clampY(y ?? 300);
-      if (xdotoolReady) {
+      if (macReady) {
+        await runMacMouseEvent(
+          `const d = $.CGEventCreateMouseEvent(null, $.kCGEventLeftMouseDown, {x: ${sx}, y: ${sy}}, $.kCGMouseButtonLeft); $.CGEventPost($.kCGHIDEventTap, d); const m = $.CGEventCreateMouseEvent(null, $.kCGEventLeftMouseDragged, {x: ${ex}, y: ${ey}}, $.kCGMouseButtonLeft); $.CGEventPost($.kCGHIDEventTap, m); const u = $.CGEventCreateMouseEvent(null, $.kCGEventLeftMouseUp, {x: ${ex}, y: ${ey}}, $.kCGMouseButtonLeft); $.CGEventPost($.kCGHIDEventTap, u);`,
+        );
+        await new Promise((r) => setTimeout(r, 150));
+      } else if (xdotoolReady) {
         await execFileAsync(
           "xdotool",
           ["mousemove", "--sync", String(sx), String(sy), "mousedown", "1", "mousemove", "--sync", String(ex), String(ey), "mouseup", "1"],
@@ -458,7 +556,14 @@ export async function computerMouse(workspaceRoot: string, input: MouseActionInp
     if (input.action === "scroll") {
       const dir = input.direction ?? "down";
       const clicks = Math.max(1, Math.min(20, Math.round(Number(input.amount) || 4)));
-      if (xdotoolReady) {
+      if (macReady) {
+        const dy = dir === "up" ? clicks * 10 : dir === "down" ? -clicks * 10 : 0;
+        const dx = dir === "left" ? clicks * 10 : dir === "right" ? -clicks * 10 : 0;
+        await runMacMouseEvent(
+          `const s = $.CGEventCreateScrollWheelEvent(null, $.kCGScrollEventUnitPixel, 2, ${dy}, ${dx}); $.CGEventPost($.kCGHIDEventTap, s);`,
+        );
+        await new Promise((r) => setTimeout(r, 150));
+      } else if (xdotoolReady) {
         const args: string[] = [];
         if (x !== undefined && y !== undefined) {
           args.push("mousemove", "--sync", String(x), String(y));
@@ -484,7 +589,7 @@ export async function computerMouse(workspaceRoot: string, input: MouseActionInp
     const captured = await captureComputerScreen(root, `Mouse ${input.action} completed with fallback`);
     return {
       ...captured,
-      detail: `${captured.detail} (${error instanceof Error ? error.message : "xdotool warning"})`,
+      detail: `${captured.detail} (${error instanceof Error ? error.message : "mouse warning"})`,
     };
   }
 }
@@ -557,7 +662,8 @@ export async function computerKeyboard(workspaceRoot: string, input: KeyboardAct
   }
 
   const env = { ...process.env, DISPLAY: state.display };
-  const xdotoolReady = state.status === "live" && (await hasBinary("xdotool"));
+  const macReady = state.status === "live" && state.display.startsWith("macos:") && (await hasBinary("osascript"));
+  const xdotoolReady = state.status === "live" && !state.display.startsWith("macos:") && (await hasBinary("xdotool"));
   try {
     if (input.action === "type") {
       const text = typeof input.text === "string" ? input.text : "";
@@ -573,7 +679,14 @@ export async function computerKeyboard(workspaceRoot: string, input: KeyboardAct
           status: state.status,
         };
       }
-      if (xdotoolReady) {
+      if (macReady) {
+        await execFileAsync(
+          "osascript",
+          ["-l", "JavaScript", "-e", `Application("System Events").keystroke(${JSON.stringify(text)});`],
+          { timeout: 10_000 },
+        );
+        await new Promise((r) => setTimeout(r, 150));
+      } else if (xdotoolReady) {
         await execFileAsync("xdotool", ["type", "--clearmodifiers", "--delay", "12", "--", text], {
           env,
           timeout: 15_000,
@@ -597,7 +710,37 @@ export async function computerKeyboard(workspaceRoot: string, input: KeyboardAct
         status: state.status,
       };
     }
-    if (xdotoolReady) {
+    if (macReady) {
+      const macKeyCodes: Record<string, number> = {
+        Return: 36,
+        Tab: 48,
+        Escape: 53,
+        BackSpace: 51,
+        Delete: 117,
+        space: 49,
+        Up: 126,
+        Down: 125,
+        Left: 123,
+        Right: 124,
+      };
+      const parts = normalized.split("+");
+      const mainKey = parts[parts.length - 1] ?? normalized;
+      const modifiers: string[] = [];
+      for (const mod of parts.slice(0, -1)) {
+        if (mod === "ctrl") modifiers.push("control down");
+        else if (mod === "alt") modifiers.push("option down");
+        else if (mod === "shift") modifiers.push("shift down");
+        else if (mod === "super") modifiers.push("command down");
+      }
+      const modClause = modifiers.length > 0 ? ` using {${modifiers.join(", ")}}` : "";
+      const keyCode = macKeyCodes[mainKey];
+      const appleScript =
+        keyCode !== undefined
+          ? `tell application "System Events" to key code ${keyCode}${modClause}`
+          : `tell application "System Events" to keystroke ${JSON.stringify(mainKey)}${modClause}`;
+      await execFileAsync("osascript", ["-e", appleScript], { timeout: 5_000 });
+      await new Promise((r) => setTimeout(r, 150));
+    } else if (xdotoolReady) {
       await execFileAsync("xdotool", ["key", "--clearmodifiers", "--", normalized], {
         env,
         timeout: 5_000,
@@ -609,7 +752,7 @@ export async function computerKeyboard(workspaceRoot: string, input: KeyboardAct
     const captured = await captureComputerScreen(root, `Keyboard ${input.action} completed with fallback`);
     return {
       ...captured,
-      detail: `${captured.detail} (${error instanceof Error ? error.message : "xdotool warning"})`,
+      detail: `${captured.detail} (${error instanceof Error ? error.message : "keyboard warning"})`,
     };
   }
 }
@@ -666,13 +809,19 @@ export async function computerOpenBrowser(
     }
   }
 
-  const chromeBin = (await hasBinary("google-chrome"))
-    ? "google-chrome"
-    : (await hasBinary("chromium"))
-      ? "chromium"
-      : (await hasBinary("chromium-browser"))
-        ? "chromium-browser"
-        : undefined;
+  const macChromeApp = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+  const hasMacChrome = await stat(macChromeApp)
+    .then((s) => s.isFile())
+    .catch(() => false);
+  const chromeBin = hasMacChrome
+    ? macChromeApp
+    : (await hasBinary("google-chrome"))
+      ? "google-chrome"
+      : (await hasBinary("chromium"))
+        ? "chromium"
+        : (await hasBinary("chromium-browser"))
+          ? "chromium-browser"
+          : undefined;
 
   if (state.status === "live" && chromeBin) {
     try {
@@ -690,7 +839,7 @@ export async function computerOpenBrowser(
           parsed.toString(),
         ],
         {
-          env: { ...process.env, DISPLAY: state.display },
+          env: state.display.startsWith("macos:") ? process.env : { ...process.env, DISPLAY: state.display },
           detached: true,
           stdio: "ignore",
         },
@@ -702,8 +851,18 @@ export async function computerOpenBrowser(
       state.chromePid = child.pid;
       state.lastUrl = parsed.toString();
       await writeDesktopState(root, state);
-      // Give Chrome a moment to render on the virtual display before capturing the frame
+      // Give Chrome a moment to render before capturing the frame
       await new Promise((r) => setTimeout(r, 1_500));
+    } catch {
+      state.lastUrl = parsed.toString();
+      await writeDesktopState(root, state);
+    }
+  } else if (state.status === "live" && state.display.startsWith("macos:") && (await hasBinary("open"))) {
+    try {
+      await execFileAsync("open", [parsed.toString()], { timeout: 4_000 });
+      state.lastUrl = parsed.toString();
+      await writeDesktopState(root, state);
+      await new Promise((r) => setTimeout(r, 1_000));
     } catch {
       state.lastUrl = parsed.toString();
       await writeDesktopState(root, state);

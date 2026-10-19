@@ -19,7 +19,8 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the full architecture and [ROADMAP.md
   - Configure any **OCP Agent** or **OCP Coder** bot with `openrouter` or `litellm` (including local Ollama, vLLM, or self-hosted proxies).
   - OpenCodingPartner generates isolated per-bot runtime profiles (`hermes-profiles/<bot-id>` and `coder-profiles/<bot-id>`) with telemetry, feedback, and trace uploads disabled, routing requests directly to your chosen provider.
 - **Dedicated Virtual Computer Desktop (Mouse, Keyboard, Browser & Human Takeover)**
-  - Each workspace can boot an isolated `1280x800` virtual X11 computer display (`Xvnc` + `xdotool` + Google Chrome + `ffmpeg` live frame capture).
+  - **Linux**: Boots an isolated `1280x800` virtual X11 computer display per workspace (`Xvnc` + `xdotool` + Google Chrome + `ffmpeg` live frame capture).
+  - **macOS**: Uses built-in macOS Quartz (`CGEvent`), `System Events`, `screencapture`, and Chrome/`open` (`macos:0`) with zero external packages required.
   - Bots can inspect the screen (`computer_screen`), move/click/drag/scroll the mouse (`computer_mouse`), type text or press key combinations (`computer_keyboard`), and open pages in Chrome (`computer_browser`).
   - From the Web Dashboard, humans can watch the live screen, click directly on the canvas to send mouse clicks, type text or keys, or click **Take over mouse & keyboard** to pause bot input while logging in or interacting manually, then **Return control to bot**.
 - **Guarded Workspace MCP Server (`opencodingpartner-workspace`)**
@@ -45,8 +46,9 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the full architecture and [ROADMAP.md
 - **External Runtime CLIs** (OpenCodingPartner includes a built-in native ACP runtime out of the box, so these are optional):
   - **Hermes Agent (`hermes`)**: Optional external runtime for `ocp-agent` ([installation guide](https://hermes-agent.nousresearch.com/docs/getting-started/installation/)).
   - **Grok CLI (`grok`)**: Optional external Rust ACP harness for `ocp-coder`.
-- **Virtual Computer Desktop Packages (Linux)**:
-  - `tigervnc-standalone-server` (`Xvnc`), `xdotool`, `ffmpeg`, and `google-chrome` (or `chromium`) enable the isolated virtual desktop, mouse/keyboard automation, and live screen streaming.
+- **Computer Desktop Support**:
+  - **macOS**: Built-in out of the box (`screencapture`, `osascript` Quartz/System Events, and Chrome/`open`). Grant **Screen Recording** and **Accessibility** permissions to your terminal in *System Settings → Privacy & Security* when using live desktop control.
+  - **Linux**: Install `tigervnc-standalone-server` (`Xvnc`), `xdotool`, `ffmpeg`, and `google-chrome` (or `chromium`) for isolated virtual X11 displays.
 
 ---
 
@@ -55,7 +57,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the full architecture and [ROADMAP.md
 Clone the repository, install dependencies, and build the TypeScript workspace:
 
 ```bash
-git clone https://github.com/your-org/OpenCodingPartner.git
+git clone https://github.com/bgagandeep/OpenCodingPartner.git
 cd OpenCodingPartner
 corepack pnpm install
 corepack pnpm build

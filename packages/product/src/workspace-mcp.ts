@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto";
 import { chmod, lstat, mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -26,6 +25,28 @@ import {
   type KeyboardActionInput,
   type MouseActionInput,
 } from "./computer-desktop.js";
+import {
+  bootstrapFleet,
+  createBot,
+  defaultBotInstructions,
+  deleteBot,
+  findBot,
+  listBots,
+  listTasks,
+  productDataDir,
+  runBotSession,
+  updateBot,
+  updateBotSession,
+  validBotNetworkMode,
+  validBotProvider,
+  validBotRole,
+  validBotRuntime,
+  type BotIsolation,
+  type BotNetworkMode,
+  type BotProvider,
+  type BotRole,
+  type BotRuntime,
+} from "./index.js";
 
 type RpcId = string | number;
 interface RpcMessage { id?: RpcId; method?: string; params?: Record<string, unknown>; }
@@ -52,12 +73,18 @@ const DIRECT_TOOLS = [
   { name: "computer_mouse", description: "Control the mouse on the bot's virtual computer display (move, click, double_click, right_click, middle_click, down, up, drag, scroll, position).", inputSchema: { type: "object", properties: { action: { type: "string", enum: ["move", "click", "double_click", "right_click", "middle_click", "down", "up", "drag", "scroll", "position"] }, x: { type: "number" }, y: { type: "number" }, fromX: { type: "number" }, fromY: { type: "number" }, button: { type: "string", enum: ["left", "middle", "right"] }, direction: { type: "string", enum: ["up", "down", "left", "right"] }, amount: { type: "number" } }, required: ["action"] } },
   { name: "computer_keyboard", description: "Control the keyboard on the bot's virtual computer display (type text or press keys/hotkeys such as Return, Tab, Escape, BackSpace, ctrl+l, ctrl+c).", inputSchema: { type: "object", properties: { action: { type: "string", enum: ["type", "key", "hotkey"] }, text: { type: "string" }, key: { type: "string" } }, required: ["action"] } },
   { name: "computer_browser", description: "Open a URL in Google Chrome inside the bot's virtual computer display and capture a screenshot.", inputSchema: { type: "object", properties: { url: { type: "string" } }, required: ["url"] } },
+  { name: "bot_list", description: "List all bots in the OpenCodingPartner fleet along with their roles, runtimes, models, workspaces, and active task counts.", inputSchema: { type: "object", properties: {} } },
+  { name: "bot_create", description: "Create a new persistent bot teammate with a specific name, role, runtime, model/provider, and operating instructions.", inputSchema: { type: "object", properties: { name: { type: "string", description: "Unique bot name (e.g. Linus, Grace, Sentinel)." }, role: { type: "string", enum: ["general", "coding", "qa", "security", "research", "computer"] }, runtime: { type: "string", enum: ["ocp-agent", "ocp-coder"] }, isolation: { type: "string", enum: ["docker", "host"] }, network: { type: "string", enum: ["disabled", "enabled"] }, provider: { type: "string", enum: ["openrouter", "litellm"] }, model: { type: "string" }, endpoint: { type: "string" }, apiKeyEnv: { type: "string" }, workspace: { type: "string" }, instructions: { type: "string" } }, required: ["name"] } },
+  { name: "bot_update", description: "Update an existing bot's role, runtime, model/provider, isolation, or instructions by bot ID or name.", inputSchema: { type: "object", properties: { bot: { type: "string", description: "Target bot ID or name." }, name: { type: "string", description: "Optional new name for the bot." }, role: { type: "string", enum: ["general", "coding", "qa", "security", "research", "computer"] }, runtime: { type: "string", enum: ["ocp-agent", "ocp-coder"] }, isolation: { type: "string", enum: ["docker", "host"] }, network: { type: "string", enum: ["disabled", "enabled"] }, provider: { type: "string", enum: ["openrouter", "litellm"] }, model: { type: "string" }, endpoint: { type: "string" }, apiKeyEnv: { type: "string" }, instructions: { type: "string" } }, required: ["bot"] } },
+  { name: "bot_delete", description: "Delete an inactive bot from the fleet by ID or name.", inputSchema: { type: "object", properties: { bot: { type: "string", description: "Bot ID or name to delete." } }, required: ["bot"] } },
+  { name: "bot_delegate", description: "Delegate a task to another bot in the fleet (by ID or name), optionally chaining a QA or security reviewer bot, and return the teammate's response.", inputSchema: { type: "object", properties: { bot: { type: "string", description: "Target bot ID or name (e.g. Linus, Grace)." }, prompt: { type: "string", description: "Task instructions for the delegated bot." }, reviewer: { type: "string", description: "Optional QA or security reviewer bot ID or name." } }, required: ["bot", "prompt"] } },
+  { name: "swarm_setup", description: "Provision a complete multi-agent engineering team (Ada Lead Orchestrator, Linus OCP Coder, Grace QA Reviewer, Sentinel Security Auditor, Atlas Computer Specialist) in the current workspace.", inputSchema: { type: "object", properties: {} } },
 ];
 
 const DISCOVERY_TOOLS = [
-  { name: "tool_search", description: "Search available workspace, memory, and history tools by keyword.", inputSchema: { type: "object", properties: { query: { type: "string" } }, required: ["query"] } },
+  { name: "tool_search", description: "Search available workspace, memory, history, computer, and bot-management tools by keyword.", inputSchema: { type: "object", properties: { query: { type: "string" } }, required: ["query"] } },
   { name: "tool_describe", description: "Return JSON schemas and usage guidance for up to 10 tool names.", inputSchema: { type: "object", properties: { names: { type: "array", items: { type: "string" } } }, required: ["names"] } },
-  { name: "tool_call", description: "Invoke a built-in workspace, memory, or history tool by name and arguments.", inputSchema: { type: "object", properties: { name: { type: "string" }, arguments: { type: "object" } }, required: ["name"] } },
+  { name: "tool_call", description: "Invoke a built-in workspace, memory, history, computer, or bot-management tool by name and arguments.", inputSchema: { type: "object", properties: { name: { type: "string" }, arguments: { type: "object" } }, required: ["name"] } },
 ];
 
 const TOOLS = [...DIRECT_TOOLS, ...DISCOVERY_TOOLS];
@@ -65,11 +92,7 @@ const DISCOVERY_NAMES = new Set(DISCOVERY_TOOLS.map((t) => t.name));
 const MAX_FILE_BYTES = 500_000;
 
 function resolveDataDir(env: NodeJS.ProcessEnv = process.env): string {
-  if (env.OCP_DATA_DIR) return path.resolve(env.OCP_DATA_DIR);
-  const xdgDataHome = env.XDG_DATA_HOME && path.isAbsolute(env.XDG_DATA_HOME)
-    ? env.XDG_DATA_HOME
-    : path.join(homedir(), ".local", "share");
-  return path.join(xdgDataHome, "opencodingpartner");
+  return productDataDir(env);
 }
 
 function workspaceMemoryFilePath(root: string): string {
@@ -292,6 +315,163 @@ async function executeToolCall(root: string, name: string, args: Record<string, 
     const url = typeof args.url === "string" ? args.url : "";
     const res = await computerOpenBrowser(root, url, "partner");
     return mcpToolResult({ ok: res.ok, detail: JSON.stringify(res, null, 2) });
+  }
+
+  const dataDir = resolveDataDir();
+  if (name === "bot_list") {
+    const [bots, tasks] = await Promise.all([listBots(dataDir), listTasks(dataDir)]);
+    const summary = bots.map((b) => ({
+      id: b.id,
+      name: b.name,
+      role: b.role,
+      runtime: b.runtime,
+      isolation: b.isolation,
+      network: b.network,
+      provider: b.provider ?? "default",
+      model: b.model ?? "default",
+      workspace: b.workspace,
+      activeTasks: tasks.filter((t) => t.botId === b.id && ["queued", "running", "awaiting-approval"].includes(t.status)).length,
+    }));
+    return mcpToolResult({ ok: true, detail: JSON.stringify({ ok: true, count: summary.length, bots: summary }, null, 2) });
+  }
+  if (name === "swarm_setup") {
+    try {
+      const res = await bootstrapFleet(root, "team", dataDir);
+      return mcpToolResult({
+        ok: true,
+        detail: JSON.stringify(
+          {
+            ok: true,
+            created: res.created.map((b) => ({ id: b.id, name: b.name, role: b.role, runtime: b.runtime })),
+            bots: res.bots.map((b) => ({ id: b.id, name: b.name, role: b.role, runtime: b.runtime })),
+          },
+          null,
+          2,
+        ),
+      });
+    } catch (error) {
+      return mcpToolResult({ ok: false, detail: error instanceof Error ? error.message : "Failed to set up swarm." });
+    }
+  }
+  if (name === "bot_create") {
+    const botName = typeof args.name === "string" ? args.name.trim() : "";
+    if (!botName) return mcpToolResult({ ok: false, detail: "Bot name is required." });
+    const rawRole = typeof args.role === "string" ? args.role.trim().toLowerCase() : "general";
+    const role: BotRole = validBotRole(rawRole) ? rawRole : "general";
+    const rawRuntime = typeof args.runtime === "string" ? args.runtime.trim().toLowerCase() : role === "coding" ? "ocp-coder" : "ocp-agent";
+    const runtime: BotRuntime = validBotRuntime(rawRuntime) ? rawRuntime : "ocp-agent";
+    const isolation: BotIsolation = args.isolation === "docker" ? "docker" : "host";
+    const network: BotNetworkMode = validBotNetworkMode(String(args.network ?? "disabled")) ? (args.network as BotNetworkMode) : "disabled";
+    const provider: BotProvider | undefined = typeof args.provider === "string" && validBotProvider(args.provider) ? args.provider : undefined;
+    const model = typeof args.model === "string" && args.model.trim() ? args.model.trim() : undefined;
+    const endpoint = typeof args.endpoint === "string" && args.endpoint.trim() ? args.endpoint.trim() : undefined;
+    const apiKeyEnv = typeof args.apiKeyEnv === "string" && args.apiKeyEnv.trim() ? args.apiKeyEnv.trim() : undefined;
+    const targetWorkspace = typeof args.workspace === "string" && args.workspace.trim() ? path.resolve(args.workspace.trim()) : root;
+    const instructions = typeof args.instructions === "string" && args.instructions.trim()
+      ? args.instructions.trim()
+      : defaultBotInstructions(role);
+    try {
+      const bot = await createBot(
+        {
+          name: botName,
+          role,
+          runtime,
+          isolation,
+          network,
+          provider,
+          model,
+          endpoint,
+          apiKeyEnv,
+          workspace: targetWorkspace,
+          instructions,
+        },
+        dataDir,
+      );
+      return mcpToolResult({ ok: true, detail: JSON.stringify({ ok: true, bot }, null, 2) });
+    } catch (error) {
+      return mcpToolResult({ ok: false, detail: error instanceof Error ? error.message : "Could not create bot." });
+    }
+  }
+  if (name === "bot_update") {
+    const targetRef = typeof args.bot === "string" ? args.bot.trim() : typeof args.id === "string" ? args.id.trim() : "";
+    const existing = targetRef ? await findBot(targetRef, dataDir) : undefined;
+    if (!existing) return mcpToolResult({ ok: false, detail: `Bot not found: ${targetRef}` });
+    const patch: Parameters<typeof updateBot>[1] = {};
+    if (typeof args.name === "string" && args.name.trim()) patch.name = args.name.trim();
+    if (typeof args.role === "string" && validBotRole(args.role)) patch.role = args.role;
+    if (typeof args.runtime === "string" && validBotRuntime(args.runtime)) patch.runtime = args.runtime;
+    if (args.isolation === "docker" || args.isolation === "host") patch.isolation = args.isolation;
+    if (typeof args.network === "string" && validBotNetworkMode(args.network)) patch.network = args.network;
+    if (typeof args.provider === "string") patch.provider = validBotProvider(args.provider) ? args.provider : undefined;
+    if (typeof args.model === "string") patch.model = args.model.trim() || undefined;
+    if (typeof args.endpoint === "string") patch.endpoint = args.endpoint.trim() || undefined;
+    if (typeof args.apiKeyEnv === "string") patch.apiKeyEnv = args.apiKeyEnv.trim() || undefined;
+    if (typeof args.instructions === "string" && args.instructions.trim()) patch.instructions = args.instructions.trim();
+    try {
+      const bot = await updateBot(existing.id, patch, dataDir);
+      return mcpToolResult({ ok: true, detail: JSON.stringify({ ok: true, bot }, null, 2) });
+    } catch (error) {
+      return mcpToolResult({ ok: false, detail: error instanceof Error ? error.message : "Could not update bot." });
+    }
+  }
+  if (name === "bot_delete") {
+    const targetRef = typeof args.bot === "string" ? args.bot.trim() : typeof args.id === "string" ? args.id.trim() : typeof args.name === "string" ? args.name.trim() : "";
+    const existing = targetRef ? await findBot(targetRef, dataDir) : undefined;
+    if (!existing) return mcpToolResult({ ok: false, detail: `Bot not found: ${targetRef}` });
+    try {
+      await deleteBot(existing.id, dataDir);
+      return mcpToolResult({ ok: true, detail: JSON.stringify({ ok: true, deleted: existing.name, id: existing.id }, null, 2) });
+    } catch (error) {
+      return mcpToolResult({ ok: false, detail: error instanceof Error ? error.message : "Could not delete bot." });
+    }
+  }
+  if (name === "bot_delegate") {
+    const targetRef = typeof args.bot === "string" ? args.bot.trim() : typeof args.botId === "string" ? args.botId.trim() : "";
+    const delegatedPrompt = typeof args.prompt === "string" ? args.prompt.trim() : "";
+    const reviewerRef = typeof args.reviewer === "string" ? args.reviewer.trim() : typeof args.reviewerBotId === "string" ? args.reviewerBotId.trim() : "";
+    if (!targetRef || !delegatedPrompt) {
+      return mcpToolResult({ ok: false, detail: "Both 'bot' and 'prompt' are required for bot_delegate." });
+    }
+    const targetBot = await findBot(targetRef, dataDir);
+    if (!targetBot) return mcpToolResult({ ok: false, detail: `Target bot not found: ${targetRef}` });
+    const reviewerBot = reviewerRef ? await findBot(reviewerRef, dataDir) : undefined;
+    try {
+      const primaryRun = await runBotSession(targetBot, `${targetBot.instructions}\n\nDelegated task:\n${delegatedPrompt}`, {
+        dataDir,
+        onSessionReady: (sessionId) => updateBotSession(targetBot.id, sessionId, dataDir),
+        onPermissionRequest: async (req) => req.options.find((o) => o.kind === "allow_once")?.optionId,
+      });
+      let reviewResult: string | undefined;
+      if (reviewerBot) {
+        const reviewRun = await runBotSession(
+          reviewerBot,
+          `${reviewerBot.instructions}\n\nReview the work completed by ${targetBot.name} for request:\n${delegatedPrompt}\n\nImplementation report:\n${primaryRun.result}`,
+          {
+            dataDir,
+            onSessionReady: (sessionId) => updateBotSession(reviewerBot.id, sessionId, dataDir),
+            onPermissionRequest: async (req) => req.options.find((o) => o.kind === "allow_once")?.optionId,
+          },
+        );
+        reviewResult = reviewRun.result;
+      }
+      return mcpToolResult({
+        ok: true,
+        detail: JSON.stringify(
+          {
+            ok: true,
+            bot: targetBot.name,
+            role: targetBot.role,
+            sessionId: primaryRun.sessionId,
+            result: primaryRun.result,
+            ...(reviewerBot ? { reviewer: reviewerBot.name, review: reviewResult } : {}),
+          },
+          null,
+          2,
+        ),
+      });
+    } catch (error) {
+      return mcpToolResult({ ok: false, detail: error instanceof Error ? error.message : "Delegated bot execution failed." });
+    }
   }
 
   const pathArg = typeof args.path === "string" ? args.path : "";

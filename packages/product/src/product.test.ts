@@ -893,4 +893,114 @@ test("workspace MCP server supports persistent memory, bounded task history reca
   }
 });
 
+test("Lead Orchestrator bot creates other bots, manages the fleet, delegates work, and /api/bootstrap + /api/settings work end-to-end", async () => {
+  const root = await makeTempDir("ocp-swarm-lead-");
+  const workspace = path.join(root, "workspace");
+  const dataDir = path.join(root, "data");
+  await mkdir(workspace, { recursive: true });
+  await mkdir(dataDir, { recursive: true });
+  await writeFile(path.join(workspace, "README.md"), "# Demo Repo\nHello from OpenCodingPartner Swarm!\n", "utf8");
+
+  const app = await startProductApp({
+    root: dataDir,
+    port: 0,
+    env: {
+      ...process.env,
+      PATH: path.dirname(process.execPath),
+      OCP_DATA_DIR: dataDir,
+      OCP_DISABLE_LOCAL_OLLAMA: "1",
+    },
+  });
+
+  try {
+    const htmlRes = await fetch(app.url);
+    const token = /script-src 'nonce-([a-f0-9]+)'/.exec(htmlRes.headers.get("content-security-policy") ?? "")?.[1] ?? "";
+    assert.ok(token);
+
+    // 1. Bootstrap Lead Orchestrator bot (Ada) via /api/bootstrap
+    const bootRes = await fetch(`${app.url}/api/bootstrap`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-ocp-token": token },
+      body: JSON.stringify({ mode: "lead", workspace }),
+    });
+    assert.equal(bootRes.status, 200);
+    const bootData = (await bootRes.json()) as {
+      ok: boolean;
+      created: Array<{ id: string; name: string; role: string }>;
+      bots: Array<{ id: string; name: string; role: string }>;
+    };
+    assert.equal(bootData.ok, true);
+    assert.equal(bootData.bots.length, 1);
+    assert.equal(bootData.bots[0]?.name, "Ada");
+    const ada = (await findBot("Ada", dataDir))!;
+    assert.ok(ada);
+
+    const runEnv = {
+      PATH: path.dirname(process.execPath),
+      OCP_DATA_DIR: dataDir,
+      OCP_DISABLE_LOCAL_OLLAMA: "1",
+    };
+
+    // 2. Ask Ada (Lead Bot) in natural language to create two specialist bots: Linus (coding) and Grace (qa)
+    const createTurn = await runBotSession(ada, "Create a coding bot named Linus and a QA bot named Grace", {
+      dataDir,
+      env: runEnv,
+    });
+    assert.match(createTurn.result, /Linus/);
+    assert.match(createTurn.result, /Grace/);
+
+    const botsAfterCreate = await listBots(dataDir);
+    assert.equal(botsAfterCreate.some((b) => b.name === "Linus" && b.role === "coding"), true);
+    assert.equal(botsAfterCreate.some((b) => b.name === "Grace" && b.role === "qa"), true);
+
+    // 3. Ask Ada to spin up the rest of the full starter team
+    const swarmTurn = await runBotSession(ada, "Spin up a full team of bots", {
+      dataDir,
+      env: runEnv,
+    });
+    assert.match(swarmTurn.result, /Sentinel/);
+    assert.match(swarmTurn.result, /Atlas/);
+    assert.equal((await listBots(dataDir)).length, 5);
+
+    // 4. Ask Ada to delegate a task to Linus to read README.md
+    const delegateTurn = await runBotSession(ada, "Ask Linus to read README.md", {
+      dataDir,
+      env: runEnv,
+    });
+    assert.match(delegateTurn.result, /Delegated to \*\*Linus\*\*/);
+    assert.match(delegateTurn.result, /Hello from OpenCodingPartner Swarm!/);
+
+    // 5. Ask Ada to delete bot Sentinel and list remaining bots
+    const deleteTurn = await runBotSession(ada, "Delete bot Sentinel", {
+      dataDir,
+      env: runEnv,
+    });
+    assert.match(deleteTurn.result, /Deleted bot \*\*Sentinel\*\*/);
+    assert.equal((await listBots(dataDir)).length, 4);
+
+    // 6. Verify /api/settings saves and applies provider keys without server restart
+    const saveSettingsRes = await fetch(`${app.url}/api/settings`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-ocp-token": token },
+      body: JSON.stringify({
+        openrouterApiKey: "sk-or-v1-test-ui-saved-key",
+        defaultModel: "qwen/qwen-2.5-coder-32b-instruct",
+      }),
+    });
+    assert.equal(saveSettingsRes.status, 200);
+    const savedSettings = (await saveSettingsRes.json()) as {
+      ok: boolean;
+      openrouterConfigured: boolean;
+      defaultModel: string;
+    };
+    assert.equal(savedSettings.ok, true);
+    assert.equal(savedSettings.openrouterConfigured, true);
+    assert.equal(savedSettings.defaultModel, "qwen/qwen-2.5-coder-32b-instruct");
+  } finally {
+    await app.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+
 

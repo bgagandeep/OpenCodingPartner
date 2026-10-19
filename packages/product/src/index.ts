@@ -136,6 +136,83 @@ export function validBotNetworkMode(value: string): value is BotNetworkMode {
   return value === "disabled" || value === "enabled";
 }
 
+export interface ProviderSettings {
+  openrouterApiKey?: string;
+  litellmApiKey?: string;
+  litellmBaseUrl?: string;
+  openaiApiKey?: string;
+  defaultModel?: string;
+  updatedAt?: string;
+}
+
+export async function readProviderSettings(root = productDataDir()): Promise<ProviderSettings> {
+  try {
+    const raw = await readFile(path.join(root, "settings.json"), "utf8");
+    const parsed = JSON.parse(raw) as ProviderSettings;
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+export async function saveProviderSettings(
+  input: Partial<ProviderSettings>,
+  root = productDataDir(),
+): Promise<ProviderSettings> {
+  await mkdir(root, { recursive: true, mode: 0o700 });
+  await chmod(root, 0o700).catch(() => undefined);
+  const current = await readProviderSettings(root);
+  const next: ProviderSettings = { ...current, updatedAt: new Date().toISOString() };
+  const assign = (key: keyof Omit<ProviderSettings, "updatedAt">) => {
+    if (!Object.prototype.hasOwnProperty.call(input, key)) return;
+    const val = typeof input[key] === "string" ? input[key]!.trim() : "";
+    if (val) next[key] = val;
+    else delete next[key];
+  };
+  assign("openrouterApiKey");
+  assign("litellmApiKey");
+  assign("litellmBaseUrl");
+  assign("openaiApiKey");
+  assign("defaultModel");
+  const target = path.join(root, "settings.json");
+  await writeFile(target, `${JSON.stringify(next, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+  await chmod(target, 0o600).catch(() => undefined);
+  return next;
+}
+
+export function applyProviderSettingsToEnv(
+  settings: ProviderSettings,
+  baseEnv: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
+  const merged: NodeJS.ProcessEnv = { ...baseEnv };
+  if (settings.openrouterApiKey && !merged.OPENROUTER_API_KEY) {
+    merged.OPENROUTER_API_KEY = settings.openrouterApiKey;
+  }
+  if (settings.litellmApiKey && !merged.LITELLM_API_KEY) {
+    merged.LITELLM_API_KEY = settings.litellmApiKey;
+  }
+  if (settings.litellmBaseUrl && !merged.LITELLM_BASE_URL) {
+    merged.LITELLM_BASE_URL = settings.litellmBaseUrl;
+  }
+  if (settings.openaiApiKey && !merged.OPENAI_API_KEY) {
+    merged.OPENAI_API_KEY = settings.openaiApiKey;
+  }
+  if (settings.defaultModel && !merged.OCP_DEFAULT_MODEL) {
+    merged.OCP_DEFAULT_MODEL = settings.defaultModel;
+  }
+  return merged;
+}
+
+/** Operating instructions for the Lead Orchestrator bot that can create, configure, and coordinate other bots. */
+export function leadBotInstructions(): string {
+  return [
+    "You are Ada, the Lead Orchestrator and Bot Manager for this workspace.",
+    "You can create new specialist bots (`bot_create` or `swarm_setup`), inspect and manage all bots (`bot_list`, `bot_update`, `bot_delete`), and delegate coding, QA, security, research, or computer-use work to other bots (`bot_delegate`).",
+    "When the user asks to build a team, create a bot, manage bots, or coordinate multi-agent work, use the bot management tools directly and report the updated roster and results clearly.",
+    defaultBotInstructions("general"),
+  ].join("\n\n");
+}
+
 /** Default operating guidance for a role when the user leaves instructions blank. */
 export function defaultBotInstructions(role: BotRole): string {
   const shared = "Work only in the assigned workspace. Inspect the relevant context before acting, make your work easy to review, and report what you changed, what you verified, and anything still uncertain. Never claim an action or check you did not perform.";
@@ -168,7 +245,86 @@ export async function listBots(root = productDataDir()): Promise<BotDefinition[]
 }
 
 export async function findBot(id: string, root = productDataDir()): Promise<BotDefinition | undefined> {
-  return (await readState(root)).bots.find((bot) => bot.id === id);
+  const bots = (await readState(root)).bots;
+  return bots.find((bot) => bot.id === id) ?? bots.find((bot) => bot.name.toLocaleLowerCase() === id.trim().toLocaleLowerCase());
+}
+
+/** Ensure a Lead Orchestrator bot (or a full starter engineering team) exists for the workspace. */
+export async function bootstrapFleet(
+  workspace: string,
+  mode: "lead" | "team" = "lead",
+  root = productDataDir(),
+): Promise<{ created: BotDefinition[]; bots: BotDefinition[] }> {
+  const resolvedWorkspace = await canonicalWorkspacePath(workspace);
+  const existing = await listBots(root);
+  const created: BotDefinition[] = [];
+  const specs: Array<{
+    name: string;
+    role: BotRole;
+    runtime: BotRuntime;
+    isolation?: BotIsolation;
+    instructions: string;
+  }> = [
+    {
+      name: "Ada",
+      role: "general",
+      runtime: "ocp-agent",
+      isolation: "host",
+      instructions: leadBotInstructions(),
+    },
+  ];
+  if (mode === "team") {
+    specs.push(
+      {
+        name: "Linus",
+        role: "coding",
+        runtime: "ocp-coder",
+        instructions: defaultBotInstructions("coding"),
+      },
+      {
+        name: "Grace",
+        role: "qa",
+        runtime: "ocp-agent",
+        isolation: "host",
+        instructions: defaultBotInstructions("qa"),
+      },
+      {
+        name: "Sentinel",
+        role: "security",
+        runtime: "ocp-agent",
+        isolation: "host",
+        instructions: defaultBotInstructions("security"),
+      },
+      {
+        name: "Atlas",
+        role: "computer",
+        runtime: "ocp-agent",
+        isolation: "host",
+        instructions: defaultBotInstructions("computer"),
+      },
+    );
+  }
+  for (const spec of specs) {
+    if (existing.some((b) => b.name.toLocaleLowerCase() === spec.name.toLocaleLowerCase())) {
+      continue;
+    }
+    if (mode === "lead" && existing.length > 0) {
+      break;
+    }
+    const bot = await createBot(
+      {
+        name: spec.name,
+        role: spec.role,
+        runtime: spec.runtime,
+        isolation: spec.isolation,
+        workspace: resolvedWorkspace,
+        instructions: spec.instructions,
+      },
+      root,
+    );
+    created.push(bot);
+  }
+  return { created, bots: await listBots(root) };
 }
 
 export async function findTask(id: string, root = productDataDir()): Promise<ProductTask | undefined> {
@@ -774,12 +930,14 @@ export async function runBotSession(
 ): Promise<{ sessionId: string; result: string; permissionDenied: boolean }> {
   const onUpdate = options.onUpdate ?? (() => undefined);
   const env = options.env ?? process.env;
+  const dataRoot = options.dataDir ?? productDataDir(env);
+  const persistedSettings = await readProviderSettings(dataRoot);
+  const effectiveEnv = applyProviderSettingsToEnv(persistedSettings, env);
   const agentRuntime = isOcpAgentRuntime(bot.runtime);
-  const resolved = resolveRuntimeCommand(agentRuntime, env);
+  const resolved = resolveRuntimeCommand(agentRuntime, effectiveEnv);
   const command = resolved.command;
   const args = resolved.args;
-  const runtimeEnv = { ...env };
-  const dataRoot = options.dataDir ?? productDataDir(env);
+  const runtimeEnv: NodeJS.ProcessEnv = { ...effectiveEnv, OCP_DATA_DIR: dataRoot };
   if (agentRuntime) {
     if ((bot.isolation ?? "docker") === "docker") {
       runtimeEnv.TERMINAL_ENV = "docker";
@@ -966,7 +1124,7 @@ export async function runBotSession(
       env: [{ name: "OCP_DATA_DIR", value: dataRoot }],
     }] : [];
     const toolGuidance = (agentRuntime || resolved.fallback)
-      ? "For project files, use the OpenCodingPartner workspace tools for bounded reads, creation, patches, workspace memory (memory_search / memory_remember), local task history recall (history_search / history_read), and virtual computer control (computer_screen, computer_mouse, computer_keyboard, computer_browser). Use the OCP Agent Docker terminal only for checks explicitly allowed by the user request.\n\n"
+      ? "For project files, fleet management, and computer use, use the OpenCodingPartner MCP tools: workspace tools (workspace_list, workspace_read, workspace_grep, workspace_glob, workspace_write, workspace_patch), bot & fleet management (bot_list, bot_create, bot_update, bot_delete, bot_delegate, swarm_setup), workspace memory (memory_search / memory_remember), local task history recall (history_search / history_read), and virtual computer control (computer_screen, computer_mouse, computer_keyboard, computer_browser). Use the OCP Agent Docker terminal only for checks explicitly allowed by the user request.\n\n"
       : "";
     const canLoadSession = agentCapabilities.loadSession === true;
     if (bot.runtimeSessionId && !canLoadSession) {

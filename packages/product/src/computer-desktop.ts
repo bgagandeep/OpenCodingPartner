@@ -1,10 +1,30 @@
 import { execFile, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { constants as fsConstants } from "node:fs";
+import { access, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
+const binaryCache = new Map<string, boolean>();
+
+async function hasBinary(name: string): Promise<boolean> {
+  const pathEnv = process.env.PATH ?? "";
+  const cacheKey = `${name}::${pathEnv}`;
+  const cached = binaryCache.get(cacheKey);
+  if (cached !== undefined) return cached;
+  for (const dir of pathEnv.split(path.delimiter).filter(Boolean)) {
+    try {
+      await access(path.join(dir, name), fsConstants.X_OK);
+      binaryCache.set(cacheKey, true);
+      return true;
+    } catch {
+      // Keep searching PATH
+    }
+  }
+  binaryCache.set(cacheKey, false);
+  return false;
+}
 
 export interface ComputerDesktopState {
   display: string;
@@ -127,6 +147,7 @@ export async function writeDesktopState(workspaceRoot: string, state: ComputerDe
 }
 
 async function displayResponds(display: string): Promise<{ ok: boolean; width?: number; height?: number }> {
+  if (!(await hasBinary("xdotool"))) return { ok: false };
   try {
     const { stdout } = await execFileAsync("xdotool", ["getdisplaygeometry"], {
       env: { ...process.env, DISPLAY: display },
@@ -155,41 +176,48 @@ export async function ensureComputerDisplay(workspaceRoot: string): Promise<Comp
     return writeDesktopState(root, state);
   }
 
-  // 2. Try starting an isolated Xvnc display for this workspace
-  try {
-    const child = spawn(
-      "Xvnc",
-      [
-        state.display,
-        "-geometry",
-        `${state.width}x${state.height}`,
-        "-depth",
-        "24",
-        "-SecurityTypes",
-        "None",
-        "-localhost",
-        "yes",
-        "-AlwaysShared",
-      ],
-      {
-        detached: true,
-        stdio: "ignore",
-      },
-    );
-    child.unref();
-    state.xvncPid = child.pid;
-    for (let i = 0; i < 12; i += 1) {
-      await new Promise((r) => setTimeout(r, 120));
-      const check = await displayResponds(state.display);
-      if (check.ok) {
-        state.width = check.width ?? state.width;
-        state.height = check.height ?? state.height;
-        if (state.control !== "human") state.status = "live";
-        return writeDesktopState(root, state);
+  // 2. Try starting an isolated Xvnc display for this workspace when Xvnc is available
+  if (await hasBinary("Xvnc")) {
+    try {
+      let spawnFailed = false;
+      const child = spawn(
+        "Xvnc",
+        [
+          state.display,
+          "-geometry",
+          `${state.width}x${state.height}`,
+          "-depth",
+          "24",
+          "-SecurityTypes",
+          "None",
+          "-localhost",
+          "yes",
+          "-AlwaysShared",
+        ],
+        {
+          detached: true,
+          stdio: "ignore",
+        },
+      );
+      child.on("error", () => {
+        spawnFailed = true;
+      });
+      child.unref();
+      state.xvncPid = child.pid;
+      for (let i = 0; i < 12 && !spawnFailed; i += 1) {
+        await new Promise((r) => setTimeout(r, 120));
+        if (spawnFailed) break;
+        const check = await displayResponds(state.display);
+        if (check.ok) {
+          state.width = check.width ?? state.width;
+          state.height = check.height ?? state.height;
+          if (state.control !== "human") state.status = "live";
+          return writeDesktopState(root, state);
+        }
       }
+    } catch {
+      // Xvnc binary not available; fall back to host DISPLAY if available
     }
-  } catch {
-    // Xvnc binary not available; fall back to host DISPLAY if available
   }
 
   // 3. Fallback to process.env.DISPLAY (e.g. :0) if available
@@ -212,6 +240,7 @@ export async function getCursorAndWindow(display: string): Promise<{
   cursor?: { x: number; y: number };
   windowTitle?: string;
 }> {
+  if (!(await hasBinary("xdotool"))) return {};
   let cursor: { x: number; y: number } | undefined;
   let windowTitle: string | undefined;
   try {
@@ -246,37 +275,39 @@ export async function captureComputerScreen(workspaceRoot: string, note = "Captu
   await mkdir(path.dirname(framePath), { recursive: true });
 
   let captured = false;
-  try {
-    await execFileAsync(
-      "ffmpeg",
-      [
-        "-nostdin",
-        "-loglevel",
-        "error",
-        "-y",
-        "-f",
-        "x11grab",
-        "-video_size",
-        `${state.width}x${state.height}`,
-        "-i",
-        state.display,
-        "-frames:v",
-        "1",
-        framePath,
-      ],
-      { timeout: 6_000 },
-    );
-    const info = await stat(framePath).catch(() => undefined);
-    if (info && info.size > 0) captured = true;
-  } catch {
-    captured = false;
+  if (state.status === "live" && (await hasBinary("ffmpeg"))) {
+    try {
+      await execFileAsync(
+        "ffmpeg",
+        [
+          "-nostdin",
+          "-loglevel",
+          "error",
+          "-y",
+          "-f",
+          "x11grab",
+          "-video_size",
+          `${state.width}x${state.height}`,
+          "-i",
+          state.display,
+          "-frames:v",
+          "1",
+          framePath,
+        ],
+        { timeout: 6_000 },
+      );
+      const info = await stat(framePath).catch(() => undefined);
+      if (info && info.size > 0) captured = true;
+    } catch {
+      captured = false;
+    }
   }
 
   if (!captured) {
     await writeFile(framePath, FALLBACK_PNG);
   }
 
-  const { cursor, windowTitle } = await getCursorAndWindow(state.display);
+  const { cursor, windowTitle } = state.status === "live" ? await getCursorAndWindow(state.display) : {};
   const info = await stat(framePath).catch(() => undefined);
   await writeFile(
     path.join(root, LAST_RUN_REL),
@@ -359,6 +390,7 @@ export async function computerMouse(workspaceRoot: string, input: MouseActionInp
   const x = input.x !== undefined ? clampX(input.x) : undefined;
   const y = input.y !== undefined ? clampY(input.y) : undefined;
   const env = { ...process.env, DISPLAY: state.display };
+  const xdotoolReady = state.status === "live" && (await hasBinary("xdotool"));
 
   try {
     if (input.action === "position") {
@@ -367,39 +399,45 @@ export async function computerMouse(workspaceRoot: string, input: MouseActionInp
     if (input.action === "move") {
       const tx = clampX(x);
       const ty = clampY(y);
-      await execFileAsync("xdotool", ["mousemove", "--sync", String(tx), String(ty)], { env, timeout: 4_000 });
+      if (xdotoolReady) {
+        await execFileAsync("xdotool", ["mousemove", "--sync", String(tx), String(ty)], { env, timeout: 4_000 });
+      }
       return captureComputerScreen(root, `Moved mouse to (${tx}, ${ty})`);
     }
     if (input.action === "click" || input.action === "double_click" || input.action === "right_click" || input.action === "middle_click") {
-      const args: string[] = [];
-      if (x !== undefined && y !== undefined) {
-        args.push("mousemove", "--sync", String(x), String(y));
+      if (xdotoolReady) {
+        const args: string[] = [];
+        if (x !== undefined && y !== undefined) {
+          args.push("mousemove", "--sync", String(x), String(y));
+        }
+        const btn =
+          input.action === "right_click"
+            ? "3"
+            : input.action === "middle_click"
+              ? "2"
+              : buttonCode(input.button);
+        if (input.action === "double_click") {
+          args.push("click", "--repeat", "2", "--delay", "80", btn);
+        } else {
+          args.push("click", btn);
+        }
+        await execFileAsync("xdotool", args, { env, timeout: 4_000 });
+        await new Promise((r) => setTimeout(r, 150));
       }
-      const btn =
-        input.action === "right_click"
-          ? "3"
-          : input.action === "middle_click"
-            ? "2"
-            : buttonCode(input.button);
-      if (input.action === "double_click") {
-        args.push("click", "--repeat", "2", "--delay", "80", btn);
-      } else {
-        args.push("click", btn);
-      }
-      await execFileAsync("xdotool", args, { env, timeout: 4_000 });
-      await new Promise((r) => setTimeout(r, 150));
       return captureComputerScreen(
         root,
         `Executed ${input.action}${x !== undefined && y !== undefined ? ` at (${x}, ${y})` : ""}`,
       );
     }
     if (input.action === "down" || input.action === "up") {
-      const args: string[] = [];
-      if (x !== undefined && y !== undefined) {
-        args.push("mousemove", "--sync", String(x), String(y));
+      if (xdotoolReady) {
+        const args: string[] = [];
+        if (x !== undefined && y !== undefined) {
+          args.push("mousemove", "--sync", String(x), String(y));
+        }
+        args.push(input.action === "down" ? "mousedown" : "mouseup", buttonCode(input.button));
+        await execFileAsync("xdotool", args, { env, timeout: 4_000 });
       }
-      args.push(input.action === "down" ? "mousedown" : "mouseup", buttonCode(input.button));
-      await execFileAsync("xdotool", args, { env, timeout: 4_000 });
       return captureComputerScreen(root, `Mouse button ${input.action}`);
     }
     if (input.action === "drag") {
@@ -407,25 +445,29 @@ export async function computerMouse(workspaceRoot: string, input: MouseActionInp
       const sy = clampY(input.fromY ?? 100);
       const ex = clampX(x ?? 300);
       const ey = clampY(y ?? 300);
-      await execFileAsync(
-        "xdotool",
-        ["mousemove", "--sync", String(sx), String(sy), "mousedown", "1", "mousemove", "--sync", String(ex), String(ey), "mouseup", "1"],
-        { env, timeout: 5_000 },
-      );
-      await new Promise((r) => setTimeout(r, 150));
+      if (xdotoolReady) {
+        await execFileAsync(
+          "xdotool",
+          ["mousemove", "--sync", String(sx), String(sy), "mousedown", "1", "mousemove", "--sync", String(ex), String(ey), "mouseup", "1"],
+          { env, timeout: 5_000 },
+        );
+        await new Promise((r) => setTimeout(r, 150));
+      }
       return captureComputerScreen(root, `Dragged mouse from (${sx}, ${sy}) to (${ex}, ${ey})`);
     }
     if (input.action === "scroll") {
-      const args: string[] = [];
-      if (x !== undefined && y !== undefined) {
-        args.push("mousemove", "--sync", String(x), String(y));
-      }
       const dir = input.direction ?? "down";
-      const scrollBtn = dir === "up" ? "4" : dir === "left" ? "6" : dir === "right" ? "7" : "5";
       const clicks = Math.max(1, Math.min(20, Math.round(Number(input.amount) || 4)));
-      args.push("click", "--repeat", String(clicks), "--delay", "40", scrollBtn);
-      await execFileAsync("xdotool", args, { env, timeout: 4_000 });
-      await new Promise((r) => setTimeout(r, 150));
+      if (xdotoolReady) {
+        const args: string[] = [];
+        if (x !== undefined && y !== undefined) {
+          args.push("mousemove", "--sync", String(x), String(y));
+        }
+        const scrollBtn = dir === "up" ? "4" : dir === "left" ? "6" : dir === "right" ? "7" : "5";
+        args.push("click", "--repeat", String(clicks), "--delay", "40", scrollBtn);
+        await execFileAsync("xdotool", args, { env, timeout: 4_000 });
+        await new Promise((r) => setTimeout(r, 150));
+      }
       return captureComputerScreen(root, `Scrolled ${dir} (${clicks} ticks)`);
     }
     return {
@@ -515,6 +557,7 @@ export async function computerKeyboard(workspaceRoot: string, input: KeyboardAct
   }
 
   const env = { ...process.env, DISPLAY: state.display };
+  const xdotoolReady = state.status === "live" && (await hasBinary("xdotool"));
   try {
     if (input.action === "type") {
       const text = typeof input.text === "string" ? input.text : "";
@@ -530,11 +573,13 @@ export async function computerKeyboard(workspaceRoot: string, input: KeyboardAct
           status: state.status,
         };
       }
-      await execFileAsync("xdotool", ["type", "--clearmodifiers", "--delay", "12", "--", text], {
-        env,
-        timeout: 15_000,
-      });
-      await new Promise((r) => setTimeout(r, 150));
+      if (xdotoolReady) {
+        await execFileAsync("xdotool", ["type", "--clearmodifiers", "--delay", "12", "--", text], {
+          env,
+          timeout: 15_000,
+        });
+        await new Promise((r) => setTimeout(r, 150));
+      }
       return captureComputerScreen(root, `Typed ${text.length} character(s)`);
     }
 
@@ -552,11 +597,13 @@ export async function computerKeyboard(workspaceRoot: string, input: KeyboardAct
         status: state.status,
       };
     }
-    await execFileAsync("xdotool", ["key", "--clearmodifiers", "--", normalized], {
-      env,
-      timeout: 5_000,
-    });
-    await new Promise((r) => setTimeout(r, 150));
+    if (xdotoolReady) {
+      await execFileAsync("xdotool", ["key", "--clearmodifiers", "--", normalized], {
+        env,
+        timeout: 5_000,
+      });
+      await new Promise((r) => setTimeout(r, 150));
+    }
     return captureComputerScreen(root, `Pressed key ${normalized}`);
   } catch (error) {
     const captured = await captureComputerScreen(root, `Keyboard ${input.action} completed with fallback`);
@@ -619,33 +666,49 @@ export async function computerOpenBrowser(
     }
   }
 
-  try {
-    const child = spawn(
-      "google-chrome",
-      [
-        "--no-sandbox",
-        "--no-first-run",
-        "--no-default-browser-check",
-        "--disable-dev-shm-usage",
-        "--disable-gpu",
-        `--user-data-dir=${profileDir}`,
-        `--window-size=${state.width},${state.height}`,
-        "--window-position=0,0",
-        parsed.toString(),
-      ],
-      {
-        env: { ...process.env, DISPLAY: state.display },
-        detached: true,
-        stdio: "ignore",
-      },
-    );
-    child.unref();
-    state.chromePid = child.pid;
-    state.lastUrl = parsed.toString();
-    await writeDesktopState(root, state);
-    // Give Chrome a moment to render on the virtual display before capturing the frame
-    await new Promise((r) => setTimeout(r, 1_500));
-  } catch {
+  const chromeBin = (await hasBinary("google-chrome"))
+    ? "google-chrome"
+    : (await hasBinary("chromium"))
+      ? "chromium"
+      : (await hasBinary("chromium-browser"))
+        ? "chromium-browser"
+        : undefined;
+
+  if (state.status === "live" && chromeBin) {
+    try {
+      const child = spawn(
+        chromeBin,
+        [
+          "--no-sandbox",
+          "--no-first-run",
+          "--no-default-browser-check",
+          "--disable-dev-shm-usage",
+          "--disable-gpu",
+          `--user-data-dir=${profileDir}`,
+          `--window-size=${state.width},${state.height}`,
+          "--window-position=0,0",
+          parsed.toString(),
+        ],
+        {
+          env: { ...process.env, DISPLAY: state.display },
+          detached: true,
+          stdio: "ignore",
+        },
+      );
+      child.on("error", () => {
+        // Ignore async spawn errors when browser binary is unavailable
+      });
+      child.unref();
+      state.chromePid = child.pid;
+      state.lastUrl = parsed.toString();
+      await writeDesktopState(root, state);
+      // Give Chrome a moment to render on the virtual display before capturing the frame
+      await new Promise((r) => setTimeout(r, 1_500));
+    } catch {
+      state.lastUrl = parsed.toString();
+      await writeDesktopState(root, state);
+    }
+  } else {
     state.lastUrl = parsed.toString();
     await writeDesktopState(root, state);
   }

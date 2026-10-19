@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createInterface } from "node:readline";
@@ -33,6 +33,10 @@ import {
 import { startProductApp } from "./server.js";
 
 const distDir = path.dirname(fileURLToPath(import.meta.url));
+
+async function makeTempDir(prefix: string): Promise<string> {
+  return realpath(await mkdtemp(path.join(tmpdir(), prefix)));
+}
 
 async function createMockAcpScript(dir: string, filename = "mock-acp.mjs"): Promise<string> {
   const scriptPath = path.join(dir, filename);
@@ -194,7 +198,7 @@ rl.on("line", (line) => {
 }
 
 test("OCP Agent and OCP Coder runtime helpers, bot CRUD, and task workspace/reviewer validation", async () => {
-  const root = await mkdtemp(path.join(tmpdir(), "ocp-product-crud-"));
+  const root = await makeTempDir("ocp-product-crud-");
   const workspaceA = path.join(root, "ws-a");
   const workspaceB = path.join(root, "ws-b");
   await mkdir(workspaceA, { recursive: true });
@@ -290,7 +294,7 @@ test("OCP Agent and OCP Coder runtime helpers, bot CRUD, and task workspace/revi
 });
 
 test("runBotSession handles ACP session new/load/reset, model selection, permissions, and secret redaction", async () => {
-  const root = await mkdtemp(path.join(tmpdir(), "ocp-product-acp-"));
+  const root = await makeTempDir("ocp-product-acp-");
   const workspace = path.join(root, "workspace");
   await mkdir(workspace, { recursive: true });
   const mockBin = await createMockAcpScript(root);
@@ -413,26 +417,32 @@ test("runBotSession handles ACP session new/load/reset, model selection, permiss
 });
 
 test("workspace MCP server exposes guarded workspace tools and blocks secrets/escapes", async () => {
-  const workspace = await mkdtemp(path.join(tmpdir(), "ocp-mcp-ws-"));
+  const workspace = await makeTempDir("ocp-mcp-ws-");
   const mcpServerPath = path.join(distDir, "workspace-mcp.js");
   const child = spawn(process.execPath, [mcpServerPath, workspace], {
     stdio: ["pipe", "pipe", "pipe"],
   });
   const rl = createInterface({ input: child.stdout });
-  const pending = new Map<number, (msg: Record<string, unknown>) => void>();
+  const pending = new Map<number, { resolve: (msg: Record<string, unknown>) => void; reject: (err: Error) => void }>();
   rl.on("line", (line) => {
     if (!line.trim()) return;
     const msg = JSON.parse(line) as Record<string, unknown>;
     if (typeof msg.id === "number") {
-      pending.get(msg.id)?.(msg);
+      pending.get(msg.id)?.resolve(msg);
       pending.delete(msg.id);
     }
+  });
+  child.on("exit", (code, signal) => {
+    for (const waiter of pending.values()) {
+      waiter.reject(new Error(`workspace-mcp exited (${code ?? signal ?? "unknown"})`));
+    }
+    pending.clear();
   });
   let seq = 0;
   function rpc(method: string, params: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
     const id = ++seq;
-    return new Promise((resolve) => {
-      pending.set(id, resolve);
+    return new Promise((resolve, reject) => {
+      pending.set(id, { resolve, reject });
       child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`);
     });
   }
@@ -478,13 +488,14 @@ test("workspace MCP server exposes guarded workspace tools and blocks secrets/es
     });
     assert.ok(escapeWrite.error);
   } finally {
+    rl.close();
     child.kill();
     await rm(workspace, { recursive: true, force: true });
   }
 });
 
 test("backupProductData and restoreProductData preserve state, remap workspaces, and reset remapped sessions", async () => {
-  const root = await mkdtemp(path.join(tmpdir(), "ocp-backup-test-"));
+  const root = await makeTempDir("ocp-backup-test-");
   const dataDir = path.join(root, "data");
   const backupDir = path.join(root, "backup");
   const restoredDir = path.join(root, "restored");
@@ -541,7 +552,7 @@ test("backupProductData and restoreProductData preserve state, remap workspaces,
 });
 
 test("startProductApp serves OCP Agent and OCP Coder UI, health check, model-override validation, and task execution", async () => {
-  const root = await mkdtemp(path.join(tmpdir(), "ocp-server-test-"));
+  const root = await makeTempDir("ocp-server-test-");
   const workspace = path.join(root, "workspace");
   await mkdir(workspace, { recursive: true });
   const mockBin = await createMockAcpScript(root);
@@ -648,7 +659,7 @@ test("startProductApp serves OCP Agent and OCP Coder UI, health check, model-ove
 });
 
 test("OCP Coder OpenRouter/LiteLLM profile writes isolated GROK_HOME config.toml and resolveRuntimeCommand falls back to native ACP", async () => {
-  const root = await mkdtemp(path.join(tmpdir(), "ocp-coder-profile-"));
+  const root = await makeTempDir("ocp-coder-profile-");
   const workspace = path.join(root, "workspace");
   await mkdir(workspace, { recursive: true });
   const mockBin = await createMockAcpScript(root);
@@ -698,7 +709,7 @@ test("OCP Coder OpenRouter/LiteLLM profile writes isolated GROK_HOME config.toml
 });
 
 test("workspace MCP server supports persistent memory, bounded task history recall, and compact tool discovery", async () => {
-  const root = await mkdtemp(path.join(tmpdir(), "ocp-mcp-extended-"));
+  const root = await makeTempDir("ocp-mcp-extended-");
   const workspace = path.join(root, "ws");
   const dataDir = path.join(root, "data");
   await mkdir(workspace, { recursive: true });
@@ -732,25 +743,32 @@ test("workspace MCP server supports persistent memory, bounded task history reca
   );
 
   const mcpServerPath = path.join(distDir, "workspace-mcp.js");
+  // Spawn with PATH="" to also verify macOS / headless environments without Xvnc/xdotool/ffmpeg
   const child = spawn(process.execPath, [mcpServerPath, workspace], {
     stdio: ["pipe", "pipe", "pipe"],
-    env: { ...process.env, OCP_DATA_DIR: dataDir },
+    env: { ...process.env, OCP_DATA_DIR: dataDir, PATH: "" },
   });
   const rl = createInterface({ input: child.stdout });
-  const pending = new Map<number, (msg: Record<string, unknown>) => void>();
+  const pending = new Map<number, { resolve: (msg: Record<string, unknown>) => void; reject: (err: Error) => void }>();
   rl.on("line", (line) => {
     if (!line.trim()) return;
     const msg = JSON.parse(line) as Record<string, unknown>;
     if (typeof msg.id === "number") {
-      pending.get(msg.id)?.(msg);
+      pending.get(msg.id)?.resolve(msg);
       pending.delete(msg.id);
     }
+  });
+  child.on("exit", (code, signal) => {
+    for (const waiter of pending.values()) {
+      waiter.reject(new Error(`workspace-mcp exited (${code ?? signal ?? "unknown"})`));
+    }
+    pending.clear();
   });
   let seq = 0;
   function rpc(method: string, params: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
     const id = ++seq;
-    return new Promise((resolve) => {
-      pending.set(id, resolve);
+    return new Promise((resolve, reject) => {
+      pending.set(id, { resolve, reject });
       child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`);
     });
   }
@@ -868,6 +886,7 @@ test("workspace MCP server supports persistent memory, bounded task history reca
     ).result as { isError?: boolean; content: Array<{ text: string }> };
     assert.equal(Boolean(keyRes.isError), false);
   } finally {
+    rl.close();
     child.kill();
     await stopComputerDesktop(workspace).catch(() => undefined);
     await rm(root, { recursive: true, force: true });

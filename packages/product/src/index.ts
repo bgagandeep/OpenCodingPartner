@@ -219,6 +219,7 @@ export function leadBotInstructions(): string {
     "You are Ada, the Lead Orchestrator and Bot Manager for this workspace.",
     "You can create new specialist bots (`bot_create` or `swarm_setup`), inspect and manage all bots (`bot_list`, `bot_update`, `bot_delete`), and delegate coding, QA, security, research, or computer-use work to other bots (`bot_delegate`).",
     "When the user asks to build a team, create a bot, manage bots, or coordinate multi-agent work, use the bot management tools directly and report the updated roster and results clearly.",
+    "When the user asks to build, create, or code an application, game, or feature, do NOT stop at a research plan — immediately delegate the implementation to your coding bot (e.g. Linus) via `bot_delegate` with instructions to write the actual working files to disk using `workspace_write` or `workspace_patch`.",
     defaultBotInstructions("general"),
   ].join("\n\n");
 }
@@ -228,7 +229,7 @@ export function defaultBotInstructions(role: BotRole): string {
   const shared = "Work only in the assigned workspace. Inspect the relevant context before acting, make your work easy to review, and report what you changed, what you verified, and anything still uncertain. Never claim an action or check you did not perform.";
   const focus: Record<BotRole, string> = {
     general: "You are a practical AI teammate. Help with the user's request, clarify assumptions in your final report, and keep changes focused.",
-    coding: "You are OCP Coder, a coding teammate. First inspect the project conventions and relevant files, then make the smallest complete change that satisfies the request. Preserve unrelated user work and summarize changed files and verification.",
+    coding: "You are OCP Coder, a coding teammate. First inspect the project conventions and relevant files, then write complete, working code files to the workspace using `workspace_write` or `workspace_patch` (do not stop at an outline or plan). Preserve unrelated user work and summarize changed files and verification.",
     qa: "You are a QA agent. Review the requested behavior and identify concrete failures, regressions, and missing coverage. Reproduce findings when practical; prioritize actionable issues with severity and file or line references. Do not make product changes unless asked.",
     security: "You are a security review agent. Look for exploitable weaknesses in the requested scope, trace their impact, and report actionable findings with evidence and severity. Distinguish confirmed vulnerabilities from risks that need validation. Do not expose secrets in your report.",
     research: "You are a research agent. Gather evidence relevant to the request, separate source-backed facts from inference, and provide concise findings with links or precise source locations when available. Do not modify project files unless asked.",
@@ -247,6 +248,7 @@ export function missingProviderKey(bot: BotDefinition, env: NodeJS.ProcessEnv = 
   const keyEnv = bot.provider === "openrouter" ? "OPENROUTER_API_KEY" : bot.apiKeyEnv || "LITELLM_API_KEY";
   if (env[keyEnv]) return undefined;
   if (bot.provider === "litellm" && keyEnv === "LITELLM_API_KEY" && env.LITELLM_MASTER_KEY) return undefined;
+  if (env.LITELLM_BASE_URL) return undefined;
   return keyEnv;
 }
 
@@ -1090,17 +1092,23 @@ export async function runBotSession(
     if (bot.provider === "litellm" && keyEnv === "LITELLM_API_KEY" && !runtimeEnv.LITELLM_API_KEY && runtimeEnv.LITELLM_MASTER_KEY) {
       runtimeEnv.LITELLM_API_KEY = runtimeEnv.LITELLM_MASTER_KEY;
     }
-    const missingKey = missingProviderKey(bot, runtimeEnv);
-    if (missingKey) throw new Error(`Provider key is missing. Set ${missingKey} in the environment before running this bot.`);
-    if (agentRuntime) {
-      const profile = await configureHermesBot(bot, dataRoot);
-      runtimeEnv.HERMES_HOME = profile;
+    const hasExplicitKey = Boolean(runtimeEnv[keyEnv]);
+    if (!hasExplicitKey && runtimeEnv.LITELLM_BASE_URL) {
+      // Global Local GPU / LiteLLM endpoint is active and explicit per-bot key is unset: fall back to global brain
+      bot = { ...bot, provider: undefined, model: undefined };
     } else {
-      const profile = await configureCoderBot(bot, dataRoot);
-      runtimeEnv.GROK_HOME = profile;
-      runtimeEnv.HERMES_HOME = profile;
-      runtimeEnv.GROK_TELEMETRY_ENABLED = "0";
-      runtimeEnv.GROK_FEEDBACK_ENABLED = "0";
+      const missingKey = missingProviderKey(bot, runtimeEnv);
+      if (missingKey) throw new Error(`Provider key is missing. Set ${missingKey} in the environment before running this bot.`);
+      if (agentRuntime) {
+        const profile = await configureHermesBot(bot, dataRoot);
+        runtimeEnv.HERMES_HOME = profile;
+      } else {
+        const profile = await configureCoderBot(bot, dataRoot);
+        runtimeEnv.GROK_HOME = profile;
+        runtimeEnv.HERMES_HOME = profile;
+        runtimeEnv.GROK_TELEMETRY_ENABLED = "0";
+        runtimeEnv.GROK_FEEDBACK_ENABLED = "0";
+      }
     }
   }
   let closed: { code: number | null; signal: NodeJS.Signals | null } | undefined;

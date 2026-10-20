@@ -366,10 +366,16 @@ async function executeToolCall(root: string, name: string, args: Record<string, 
     const runtime: BotRuntime = validBotRuntime(rawRuntime) ? rawRuntime : "ocp-agent";
     const isolation: BotIsolation = args.isolation === "docker" ? "docker" : "host";
     const network: BotNetworkMode = validBotNetworkMode(String(args.network ?? "disabled")) ? (args.network as BotNetworkMode) : "disabled";
-    const provider: BotProvider | undefined = typeof args.provider === "string" && validBotProvider(args.provider) ? args.provider : undefined;
-    const model = typeof args.model === "string" && args.model.trim() ? args.model.trim() : undefined;
-    const endpoint = typeof args.endpoint === "string" && args.endpoint.trim() ? args.endpoint.trim() : undefined;
-    const apiKeyEnv = typeof args.apiKeyEnv === "string" && args.apiKeyEnv.trim() ? args.apiKeyEnv.trim() : undefined;
+    const rawProvider: BotProvider | undefined = typeof args.provider === "string" && validBotProvider(args.provider) ? args.provider : undefined;
+    const providerKeyAvailable = rawProvider === "openrouter"
+      ? Boolean(process.env.OPENROUTER_API_KEY)
+      : rawProvider === "litellm"
+        ? Boolean(process.env.LITELLM_API_KEY || process.env.LITELLM_MASTER_KEY)
+        : false;
+    const provider: BotProvider | undefined = providerKeyAvailable ? rawProvider : undefined;
+    const model = provider && typeof args.model === "string" && args.model.trim() ? args.model.trim() : undefined;
+    const endpoint = provider === "litellm" && typeof args.endpoint === "string" && args.endpoint.trim() ? args.endpoint.trim() : undefined;
+    const apiKeyEnv = provider === "litellm" && typeof args.apiKeyEnv === "string" && args.apiKeyEnv.trim() ? args.apiKeyEnv.trim() : undefined;
     const targetWorkspace = typeof args.workspace === "string" && args.workspace.trim() ? path.resolve(args.workspace.trim()) : root;
     const instructions = typeof args.instructions === "string" && args.instructions.trim()
       ? args.instructions.trim()
@@ -440,23 +446,30 @@ async function executeToolCall(root: string, name: string, args: Record<string, 
     if (!targetBot) return mcpToolResult({ ok: false, detail: `Target bot not found: ${targetRef}` });
     const reviewerBot = reviewerRef ? await findBot(reviewerRef, dataDir, root) : undefined;
     try {
-      const primaryRun = await runBotSession(targetBot, `${targetBot.instructions}\n\nDelegated task:\n${delegatedPrompt}`, {
+      const actionNote = targetBot.role === "coding"
+        ? "\n\nIMPORTANT: Write the actual working code files to the workspace using `workspace_write` or `workspace_patch` (do not stop at an outline or plan)."
+        : "";
+      const primaryRun = await runBotSession(targetBot, `${targetBot.instructions}\n\nDelegated task:\n${delegatedPrompt}${actionNote}`, {
         dataDir,
         onSessionReady: (sessionId) => updateBotSession(targetBot.id, sessionId, dataDir),
         onPermissionRequest: async (req) => req.options.find((o) => o.kind === "allow_once")?.optionId,
       });
       let reviewResult: string | undefined;
       if (reviewerBot) {
-        const reviewRun = await runBotSession(
-          reviewerBot,
-          `${reviewerBot.instructions}\n\nReview the work completed by ${targetBot.name} for request:\n${delegatedPrompt}\n\nImplementation report:\n${primaryRun.result}`,
-          {
-            dataDir,
-            onSessionReady: (sessionId) => updateBotSession(reviewerBot.id, sessionId, dataDir),
-            onPermissionRequest: async (req) => req.options.find((o) => o.kind === "allow_once")?.optionId,
-          },
-        );
-        reviewResult = reviewRun.result;
+        try {
+          const reviewRun = await runBotSession(
+            reviewerBot,
+            `${reviewerBot.instructions}\n\nReview the work completed by ${targetBot.name} for request:\n${delegatedPrompt}\n\nImplementation report:\n${primaryRun.result}`,
+            {
+              dataDir,
+              onSessionReady: (sessionId) => updateBotSession(reviewerBot.id, sessionId, dataDir),
+              onPermissionRequest: async (req) => req.options.find((o) => o.kind === "allow_once")?.optionId,
+            },
+          );
+          reviewResult = reviewRun.result;
+        } catch (reviewErr) {
+          reviewResult = `Reviewer note: ${reviewErr instanceof Error ? reviewErr.message : "review skipped"}`;
+        }
       }
       return mcpToolResult({
         ok: true,

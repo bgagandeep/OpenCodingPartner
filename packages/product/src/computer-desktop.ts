@@ -154,8 +154,50 @@ export async function writeDesktopState(workspaceRoot: string, state: ComputerDe
   return next;
 }
 
+const displayCheckCache = new Map<string, { ok: boolean; width?: number; height?: number; at: number }>();
+const deferredCaptures = new Map<string, NodeJS.Timeout>();
+
+function scheduleBackgroundCapture(workspaceRoot: string, note: string): void {
+  const existing = deferredCaptures.get(workspaceRoot);
+  if (existing) clearTimeout(existing);
+  const timer = setTimeout(() => {
+    deferredCaptures.delete(workspaceRoot);
+    void captureComputerScreen(workspaceRoot, note).catch(() => undefined);
+  }, 450);
+  timer.unref?.();
+  deferredCaptures.set(workspaceRoot, timer);
+}
+
+async function finishComputerAction(
+  workspaceRoot: string,
+  state: ComputerDesktopState,
+  note: string,
+  fast?: boolean,
+): Promise<ComputerActionResult> {
+  if (fast) {
+    scheduleBackgroundCapture(workspaceRoot, note);
+    return {
+      ok: true,
+      detail: `${note} on ${state.display} (${state.width}x${state.height}).`,
+      display: state.display,
+      width: state.width,
+      height: state.height,
+      screenshot: "gtm/last-frame.png",
+      control: state.control,
+      status: state.status,
+      frameMtimeMs: Date.now(),
+    };
+  }
+  return captureComputerScreen(workspaceRoot, note);
+}
+
 async function displayResponds(display: string): Promise<{ ok: boolean; width?: number; height?: number }> {
   if (!(await hasBinary("xdotool"))) return { ok: false };
+  const cacheKey = `${display}::${process.env.PATH ?? ""}`;
+  const cached = displayCheckCache.get(cacheKey);
+  if (cached && cached.ok && Date.now() - cached.at < 4_000) {
+    return { ok: true, width: cached.width, height: cached.height };
+  }
   try {
     const { stdout } = await execFileAsync("xdotool", ["getdisplaygeometry"], {
       env: { ...process.env, DISPLAY: display },
@@ -163,10 +205,14 @@ async function displayResponds(display: string): Promise<{ ok: boolean; width?: 
     });
     const parts = stdout.trim().split(/\s+/).map(Number);
     if (parts.length >= 2 && Number.isFinite(parts[0]) && Number.isFinite(parts[1])) {
-      return { ok: true, width: parts[0], height: parts[1] };
+      const res = { ok: true, width: parts[0], height: parts[1] };
+      displayCheckCache.set(cacheKey, { ...res, at: Date.now() });
+      return res;
     }
+    displayCheckCache.set(cacheKey, { ok: true, at: Date.now() });
     return { ok: true };
   } catch {
+    displayCheckCache.delete(cacheKey);
     return { ok: false };
   }
 }
@@ -418,6 +464,7 @@ export interface MouseActionInput {
   direction?: "up" | "down" | "left" | "right";
   amount?: number;
   actor?: "partner" | "human";
+  fast?: boolean;
 }
 
 function buttonCode(button?: "left" | "middle" | "right"): string {
@@ -510,11 +557,13 @@ export async function computerMouse(workspaceRoot: string, input: MouseActionInp
           args.push("click", btn);
         }
         await execFileAsync("xdotool", args, { env, timeout: 4_000 });
-        await new Promise((r) => setTimeout(r, 150));
+        if (!input.fast) await new Promise((r) => setTimeout(r, 150));
       }
-      return captureComputerScreen(
+      return finishComputerAction(
         root,
+        state,
         `Executed ${input.action}${x !== undefined && y !== undefined ? ` at (${x}, ${y})` : ""}`,
+        input.fast,
       );
     }
     if (input.action === "down" || input.action === "up") {
@@ -571,11 +620,11 @@ export async function computerMouse(workspaceRoot: string, input: MouseActionInp
           args.push("mousemove", "--sync", String(x), String(y));
         }
         const scrollBtn = dir === "up" ? "4" : dir === "left" ? "6" : dir === "right" ? "7" : "5";
-        args.push("click", "--repeat", String(clicks), "--delay", "40", scrollBtn);
+        args.push("click", "--repeat", String(clicks), "--delay", input.fast ? "10" : "40", scrollBtn);
         await execFileAsync("xdotool", args, { env, timeout: 4_000 });
-        await new Promise((r) => setTimeout(r, 150));
+        if (!input.fast) await new Promise((r) => setTimeout(r, 150));
       }
-      return captureComputerScreen(root, `Scrolled ${dir} (${clicks} ticks)`);
+      return finishComputerAction(root, state, `Scrolled ${dir} (${clicks} ticks)`, input.fast);
     }
     return {
       ok: false,
@@ -601,6 +650,7 @@ export interface KeyboardActionInput {
   text?: string;
   key?: string;
   actor?: "partner" | "human";
+  fast?: boolean;
 }
 
 function normalizeXdotoolKey(raw: string): string {
@@ -690,13 +740,13 @@ export async function computerKeyboard(workspaceRoot: string, input: KeyboardAct
         );
         await new Promise((r) => setTimeout(r, 150));
       } else if (xdotoolReady) {
-        await execFileAsync("xdotool", ["type", "--clearmodifiers", "--delay", "12", "--", text], {
+        await execFileAsync("xdotool", ["type", "--clearmodifiers", "--delay", input.fast ? "2" : "12", "--", text], {
           env,
           timeout: 15_000,
         });
-        await new Promise((r) => setTimeout(r, 150));
+        if (!input.fast) await new Promise((r) => setTimeout(r, 150));
       }
-      return captureComputerScreen(root, `Typed ${text.length} character(s)`);
+      return finishComputerAction(root, state, `Typed ${text.length} character(s)`, input.fast);
     }
 
     const rawKey = typeof input.key === "string" && input.key.trim() ? input.key : typeof input.text === "string" ? input.text : "";
@@ -748,9 +798,9 @@ export async function computerKeyboard(workspaceRoot: string, input: KeyboardAct
         env,
         timeout: 5_000,
       });
-      await new Promise((r) => setTimeout(r, 150));
+      if (!input.fast) await new Promise((r) => setTimeout(r, 150));
     }
-    return captureComputerScreen(root, `Pressed key ${normalized}`);
+    return finishComputerAction(root, state, `Pressed key ${normalized}`, input.fast);
   } catch (error) {
     const captured = await captureComputerScreen(root, `Keyboard ${input.action} completed with fallback`);
     return {

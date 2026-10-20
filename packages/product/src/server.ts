@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import path from "node:path";
 import { readFile, stat } from "node:fs/promises";
@@ -16,6 +16,7 @@ import {
   deleteBot,
   deleteProject,
   defaultBotInstructions,
+  ensureComputerDisplay,
   captureWorkspaceBaseline,
   collectWorkspaceChanges,
   createTask,
@@ -77,6 +78,7 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
   const token = randomBytes(32).toString("hex");
   const activeRuns = new Map<string, ActiveRun>();
   const approvalWaiters = new Map<string, ApprovalWaiter>();
+  const activeStreams = new Set<ChildProcess>();
   let boundPort = port;
   let closing = false;
 
@@ -159,6 +161,84 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
         "x-content-type-options": "nosniff",
       });
       response.end(bytes);
+      return;
+    }
+    const computerStreamMatch = /^\/api\/bots\/([^/]+)\/computer\/stream$/.exec(url.pathname);
+    if (request.method === "GET" && computerStreamMatch) {
+      const bot = await findBot(computerStreamMatch[1] ?? "", root);
+      if (!bot) {
+        sendJson(response, 404, { error: "Bot not found." });
+        return;
+      }
+      const state = await ensureComputerDisplay(bot.workspace);
+      const displayActive = (state.status === "live" || state.status === "held") && !state.display.startsWith("macos:");
+      if (!displayActive) {
+        const framePath = path.join(bot.workspace, "gtm", "last-frame.png");
+        let bytes = await readFile(framePath).catch(() => undefined);
+        if (!bytes) {
+          await captureComputerScreen(bot.workspace);
+          bytes = await readFile(framePath).catch(() => undefined);
+        }
+        if (!bytes) {
+          sendJson(response, 404, { error: "Computer screen frame unavailable." });
+          return;
+        }
+        response.writeHead(200, {
+          "content-type": "image/png",
+          "cache-control": "no-store",
+          "x-content-type-options": "nosniff",
+        });
+        response.end(bytes);
+        return;
+      }
+      response.writeHead(200, {
+        "content-type": "multipart/x-mixed-replace; boundary=ffmpeg",
+        "cache-control": "no-store, no-cache, must-revalidate, max-age=0",
+        "pragma": "no-cache",
+        "connection": "close",
+        "x-content-type-options": "nosniff",
+      });
+      const child = spawn(
+        "ffmpeg",
+        [
+          "-nostdin",
+          "-loglevel",
+          "quiet",
+          "-f",
+          "x11grab",
+          "-framerate",
+          "20",
+          "-video_size",
+          `${state.width}x${state.height}`,
+          "-i",
+          state.display,
+          "-f",
+          "mpjpeg",
+          "-q:v",
+          "5",
+          "-",
+        ],
+        { stdio: ["ignore", "pipe", "ignore"] },
+      );
+      activeStreams.add(child);
+      const cleanup = () => {
+        activeStreams.delete(child);
+        if (!child.killed) {
+          try {
+            child.kill("SIGTERM");
+          } catch {
+            // Ignore
+          }
+        }
+      };
+      request.on("close", cleanup);
+      response.on("close", cleanup);
+      child.on("error", cleanup);
+      child.on("close", () => {
+        activeStreams.delete(child);
+        if (!response.writableEnded) response.end();
+      });
+      child.stdout?.pipe(response);
       return;
     }
     if (request.method === "GET" && url.pathname === "/api/state") {
@@ -415,6 +495,7 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
           direction: typeof body.direction === "string" ? (body.direction as MouseActionInput["direction"]) : undefined,
           amount: typeof body.amount === "number" ? body.amount : undefined,
           actor: "human",
+          fast: body.fast === true,
         });
         sendJson(response, res.ok ? 200 : 400, res);
         return;
@@ -426,6 +507,7 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
           text: typeof body.text === "string" ? body.text : undefined,
           key: typeof body.key === "string" ? body.key : undefined,
           actor: "human",
+          fast: body.fast === true,
         });
         sendJson(response, res.ok ? 200 : 400, res);
         return;
@@ -694,6 +776,14 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
     url: `http://${displayHost}:${actualPort}`,
     close: async () => {
       closing = true;
+      for (const streamChild of activeStreams) {
+        try {
+          streamChild.kill("SIGTERM");
+        } catch {
+          // Ignore
+        }
+      }
+      activeStreams.clear();
       const serverClosed = new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
       const runs = [...activeRuns.values()];
       for (const run of runs) run.controller.abort();
@@ -1439,7 +1529,7 @@ function flushKeyBuffer(botId){
   keyBuffer='';
   const hud=document.querySelector('#stageTypingHud');
   if(hud)hud.classList.add('hidden');
-  enqueueCompAction(botId,{kind:'keyboard',action:'type',text},'Typed "'+text+'"');
+  enqueueCompAction(botId,{kind:'keyboard',action:'type',text,fast:true},'Typed "'+text+'"');
 }
 
 async function refreshComputer(capture){
@@ -1496,10 +1586,10 @@ function syncComputerDom(){
     lastFrameSrc=frameSrc;
     const pre=new Image();
     pre.onload=()=>{
-      const sImg=document.querySelector('#stageScreenImg');
-      if(sImg)sImg.src=frameSrc;
       const mImg=document.querySelector('#miniScreenImg');
       if(mImg)mImg.src=frameSrc;
+      const sImg=document.querySelector('#stageScreenImg');
+      if(sImg&&sImg.dataset.streamFailed==='1')sImg.src=frameSrc;
     };
     pre.src=frameSrc;
   }
@@ -1525,6 +1615,7 @@ function drawComputer(pBots){
   const m=computerMeta||{display:':50',width:1280,height:800,control:'partner',status:'live'};
   const held=m.control==='human';
   const frameSrc='/api/bots/'+encodeURIComponent(preferred.id)+'/computer/frame?t='+(m.frameMtimeMs||Date.now());
+  const streamSrc='/api/bots/'+encodeURIComponent(preferred.id)+'/computer/stream?t='+Date.now();
   lastFrameSrc=frameSrc;
   lastSyncedUrl=m.lastUrl||'';
 
@@ -1534,31 +1625,39 @@ function drawComputer(pBots){
   document.querySelector('#miniRefreshBtn')?.addEventListener('click',()=>refreshComputer(true));
   document.querySelector('#miniScreenImg')?.addEventListener('click',()=>setCenterView('computer'));
 
-  // 2. Large Full-Stage Interactive Virtual Computer (built once per bot; never destroyed on poll/typing)
-  stagePanel.innerHTML='<div class="comp-toolbar"><div class="row"><strong id="stageCompTitle">▣ Virtual Computer · '+esc(m.display||':50')+' ('+(m.width||1280)+'×'+(m.height||800)+')</strong><span id="stageCompPill" class="pill '+(held?'wait':'')+'">'+(held?'● You Have Control (Bots Paused)':'● Bot Control ('+esc(preferred.name)+')')+'</span></div><div class="row"><button type="button" id="stageReturnBtn" class="'+(held?'':'hidden')+'">✦ Return Control to Bot ('+esc(preferred.name)+')</button><button type="button" class="warn-btn '+(held?'hidden':'')+'" id="stageTakeoverBtn">⚡ Take Control (Log in / Use Mouse &amp; Keyboard)</button><button type="button" class="secondary" id="stageRefreshBtn">↻ Refresh Screen</button><button type="button" class="secondary" id="stageScrollUpBtn">↑ Scroll Up</button><button type="button" class="secondary" id="stageScrollDownBtn">↓ Scroll Down</button><button type="button" class="ghost" id="stageBackChatBtn">← Back to Chat</button></div></div>'
+  // 2. Large Full-Stage Interactive Virtual Computer (20 FPS live MJPEG stream)
+  stagePanel.innerHTML='<div class="comp-toolbar"><div class="row"><strong id="stageCompTitle">▣ Virtual Computer · '+esc(m.display||':50')+' ('+(m.width||1280)+'×'+(m.height||800)+')</strong><span class="pill"><span class="dot"></span> 20 FPS Live Stream</span><span id="stageCompPill" class="pill '+(held?'wait':'')+'">'+(held?'● You Have Control (Bots Paused)':'● Bot Control ('+esc(preferred.name)+')')+'</span></div><div class="row"><button type="button" id="stageReturnBtn" class="'+(held?'':'hidden')+'">✦ Return Control to Bot ('+esc(preferred.name)+')</button><button type="button" class="warn-btn '+(held?'hidden':'')+'" id="stageTakeoverBtn">⚡ Take Control (Log in / Use Mouse &amp; Keyboard)</button><button type="button" class="secondary" id="stageRefreshBtn">↻ Reconnect Stream</button><button type="button" class="secondary" id="stageScrollUpBtn">↑ Scroll Up</button><button type="button" class="secondary" id="stageScrollDownBtn">↓ Scroll Down</button><button type="button" class="ghost" id="stageBackChatBtn">← Back to Chat</button></div></div>'
     +'<div id="stageCompBanner" class="comp-banner '+(held?'human':'bot')+'"><div id="stageCompBannerText">'+(held?'<strong>⚡ Human Takeover Active:</strong> Click any field on the screen below and type directly on your keyboard (or use the text box below). Bots are paused while you hold control.':'<strong>✦ Bot Mode Active:</strong> <b>'+esc(preferred.name)+'</b> can operate this screen. Need to sign into Gmail or type a password? Click <b>⚡ Take Control</b> above.')+'</div><div class="row"><button type="button" class="chip" data-stage-url="https://mail.google.com">▸ Open Gmail</button><button type="button" class="chip" data-stage-url="https://www.google.com">▸ Google</button><button type="button" class="chip" data-stage-url="https://github.com">▸ GitHub</button></div></div>'
     +'<div class="row nowrap"><input id="stageUrlInput" placeholder="Enter website URL (e.g. https://mail.google.com)…" value="'+esc(m.lastUrl||'')+'"><button type="button" id="stageOpenUrlBtn">Go to Website</button><input id="stageTypeInput" placeholder="Or type/paste text here &amp; press Enter…"><button type="button" id="stageTypeBtn" class="secondary">Send Text</button><button type="button" class="secondary" data-stage-key="Return" title="Press Enter">Enter ↵</button><button type="button" class="secondary" data-stage-key="Tab" title="Press Tab">Tab ⇥</button><button type="button" class="secondary" data-stage-key="BackSpace" title="Press Backspace">⌫</button></div>'
-    +'<div class="screen-stage-wrap '+(held?'human-mode':'')+'" id="stageScreenWrap" tabindex="0" title="Click anywhere on the screen to focus and type directly with your keyboard"><img id="stageScreenImg" src="'+frameSrc+'" alt="Full size virtual computer screen"><div id="stageTypingHud" class="typing-hud hidden"></div></div>'
-    +'<div class="row spread"><div class="status" id="stageCompStatus">'+esc(m.detail||'Ready · Click the screen to interact directly.')+'</div><div class="row nowrap"><input id="stageBotPrompt" placeholder="Tell '+esc(preferred.name)+' what to do on this screen next…"><button type="button" id="stageAskBotBtn">Ask '+esc(preferred.name)+' ↵</button></div></div>';
+    +'<div class="screen-stage-wrap '+(held?'human-mode':'')+'" id="stageScreenWrap" tabindex="0" title="Click anywhere on the screen to focus and type directly with your keyboard"><img id="stageScreenImg" src="'+streamSrc+'" alt="Full size virtual computer screen"><div id="stageTypingHud" class="typing-hud hidden"></div></div>'
+    +'<div class="row spread"><div class="status" id="stageCompStatus">'+esc(m.detail||'Live 20 FPS stream active · Click the screen to interact directly.')+'</div><div class="row nowrap"><input id="stageBotPrompt" placeholder="Tell '+esc(preferred.name)+' what to do on this screen next…"><button type="button" id="stageAskBotBtn">Ask '+esc(preferred.name)+' ↵</button></div></div>';
+
+  const stageImg=document.querySelector('#stageScreenImg');
+  stageImg?.addEventListener('error',()=>{
+    stageImg.dataset.streamFailed='1';
+    stageImg.src='/api/bots/'+encodeURIComponent(preferred.id)+'/computer/frame?t='+Date.now();
+  });
 
   document.querySelector('#stageBackChatBtn')?.addEventListener('click',()=>setCenterView('chat'));
-  document.querySelector('#stageRefreshBtn')?.addEventListener('click',()=>refreshComputer(true));
+  document.querySelector('#stageRefreshBtn')?.addEventListener('click',()=>{
+    if(stageImg){delete stageImg.dataset.streamFailed;stageImg.src='/api/bots/'+encodeURIComponent(preferred.id)+'/computer/stream?t='+Date.now()}
+    refreshComputer(true);
+  });
   document.querySelector('#stageTakeoverBtn')?.addEventListener('click',()=>{enqueueCompAction(preferred.id,{kind:'takeover'},'Taking human control…');document.querySelector('#stageScreenWrap')?.focus()});
   document.querySelector('#stageReturnBtn')?.addEventListener('click',()=>enqueueCompAction(preferred.id,{kind:'return'},'Returning control to '+preferred.name+'…'));
-  document.querySelector('#stageScrollUpBtn')?.addEventListener('click',()=>enqueueCompAction(preferred.id,{kind:'mouse',action:'scroll',direction:'up',amount:5},'Scrolling up…'));
-  document.querySelector('#stageScrollDownBtn')?.addEventListener('click',()=>enqueueCompAction(preferred.id,{kind:'mouse',action:'scroll',direction:'down',amount:5},'Scrolling down…'));
+  document.querySelector('#stageScrollUpBtn')?.addEventListener('click',()=>enqueueCompAction(preferred.id,{kind:'mouse',action:'scroll',direction:'up',amount:5,fast:true},'Scrolling up…'));
+  document.querySelector('#stageScrollDownBtn')?.addEventListener('click',()=>enqueueCompAction(preferred.id,{kind:'mouse',action:'scroll',direction:'down',amount:5,fast:true},'Scrolling down…'));
 
   const openUrl=u=>{if(!u)return;lastSyncedUrl=u;enqueueCompAction(preferred.id,{kind:'browser',url:u},'Opening '+u+'…')};
   document.querySelector('#stageOpenUrlBtn')?.addEventListener('click',()=>openUrl(document.querySelector('#stageUrlInput').value.trim()));
   document.querySelector('#stageUrlInput')?.addEventListener('keydown',e=>{e.stopPropagation();if(e.key==='Enter'){e.preventDefault();openUrl(e.target.value.trim())}});
   document.querySelectorAll('[data-stage-url]').forEach(el=>el.addEventListener('click',()=>{const u=el.dataset.stageUrl;const inp=document.querySelector('#stageUrlInput');if(inp)inp.value=u;openUrl(u)}));
 
-  const sendType=()=>{const inp=document.querySelector('#stageTypeInput');const t=inp?.value;if(!t)return;inp.value='';enqueueCompAction(preferred.id,{kind:'keyboard',action:'type',text:t},'Typing "'+t+'"…')};
+  const sendType=()=>{const inp=document.querySelector('#stageTypeInput');const t=inp?.value;if(!t)return;inp.value='';enqueueCompAction(preferred.id,{kind:'keyboard',action:'type',text:t,fast:true},'Typed "'+t+'"')};
   document.querySelector('#stageTypeBtn')?.addEventListener('click',sendType);
   document.querySelector('#stageTypeInput')?.addEventListener('keydown',e=>{e.stopPropagation();if(e.key==='Enter'){e.preventDefault();sendType()}});
-  document.querySelectorAll('[data-stage-key]').forEach(el=>el.addEventListener('click',()=>{flushKeyBuffer(preferred.id);enqueueCompAction(preferred.id,{kind:'keyboard',action:'key',key:el.dataset.stageKey},'Pressed '+el.dataset.stageKey)}));
+  document.querySelectorAll('[data-stage-key]').forEach(el=>el.addEventListener('click',()=>{flushKeyBuffer(preferred.id);enqueueCompAction(preferred.id,{kind:'keyboard',action:'key',key:el.dataset.stageKey,fast:true},'Pressed '+el.dataset.stageKey)}));
 
-  const stageImg=document.querySelector('#stageScreenImg');
   const stageWrap=document.querySelector('#stageScreenWrap');
   stageImg?.addEventListener('click',e=>{
     flushKeyBuffer(preferred.id);
@@ -1568,7 +1667,7 @@ function drawComputer(pBots){
     const w=mNow.width||1280,h=mNow.height||800;
     const x=Math.round((e.clientX-rect.left)/rect.width*w);
     const y=Math.round((e.clientY-rect.top)/rect.height*h);
-    enqueueCompAction(preferred.id,{kind:'mouse',action:'click',x,y},'Clicked ('+x+', '+y+') — type directly on your keyboard now');
+    enqueueCompAction(preferred.id,{kind:'mouse',action:'click',x,y,fast:true},'Clicked ('+x+', '+y+') — type directly on your keyboard now');
   });
   stageImg?.addEventListener('dblclick',e=>{
     flushKeyBuffer(preferred.id);
@@ -1578,12 +1677,12 @@ function drawComputer(pBots){
     const w=mNow.width||1280,h=mNow.height||800;
     const x=Math.round((e.clientX-rect.left)/rect.width*w);
     const y=Math.round((e.clientY-rect.top)/rect.height*h);
-    enqueueCompAction(preferred.id,{kind:'mouse',action:'double_click',x,y},'Double-clicked ('+x+', '+y+')');
+    enqueueCompAction(preferred.id,{kind:'mouse',action:'double_click',x,y,fast:true},'Double-clicked ('+x+', '+y+')');
   });
   stageWrap?.addEventListener('wheel',e=>{
     e.preventDefault();
     const direction=e.deltaY<0?'up':'down';
-    enqueueCompAction(preferred.id,{kind:'mouse',action:'scroll',direction,amount:4},'Scrolling '+direction+'…');
+    enqueueCompAction(preferred.id,{kind:'mouse',action:'scroll',direction,amount:4,fast:true},'Scrolling '+direction+'…');
   },{passive:false});
   stageWrap?.addEventListener('keydown',e=>{
     if(['Shift','Control','Alt','Meta','CapsLock'].includes(e.key))return;
@@ -1593,7 +1692,7 @@ function drawComputer(pBots){
       const k=e.key.toLowerCase();
       if(['a','c','v','x','l','r','t','w','z'].includes(k)){
         flushKeyBuffer(preferred.id);
-        enqueueCompAction(preferred.id,{kind:'keyboard',action:'hotkey',key:'ctrl+'+k},'Pressed Ctrl+'+k.toUpperCase());
+        enqueueCompAction(preferred.id,{kind:'keyboard',action:'hotkey',key:'ctrl+'+k,fast:true},'Pressed Ctrl+'+k.toUpperCase());
         return;
       }
     }
@@ -1602,7 +1701,7 @@ function drawComputer(pBots){
       const hud=document.querySelector('#stageTypingHud');
       if(hud){hud.textContent='⌨ Typing: '+keyBuffer;hud.classList.toggle('hidden',!keyBuffer)}
       if(keyTimer)clearTimeout(keyTimer);
-      if(keyBuffer)keyTimer=setTimeout(()=>flushKeyBuffer(preferred.id),180);
+      if(keyBuffer)keyTimer=setTimeout(()=>flushKeyBuffer(preferred.id),35);
       return;
     }
     if(e.key.length===1&&!e.ctrlKey&&!e.metaKey){
@@ -1612,13 +1711,13 @@ function drawComputer(pBots){
       const statusEl=document.querySelector('#stageCompStatus');
       if(statusEl)statusEl.textContent='Typing: "'+keyBuffer+'"…';
       if(keyTimer)clearTimeout(keyTimer);
-      keyTimer=setTimeout(()=>flushKeyBuffer(preferred.id),180);
+      keyTimer=setTimeout(()=>flushKeyBuffer(preferred.id),35);
       return;
     }
     flushKeyBuffer(preferred.id);
     const keyMap={Enter:'Return',Backspace:'BackSpace',Tab:'Tab',Escape:'Escape',Delete:'Delete',ArrowUp:'Up',ArrowDown:'Down',ArrowLeft:'Left',ArrowRight:'Right',Home:'Home',End:'End',PageUp:'Page_Up',PageDown:'Page_Down',' ':'space'};
     const mapped=keyMap[e.key]||e.key;
-    enqueueCompAction(preferred.id,{kind:'keyboard',action:'key',key:mapped},'Pressed '+mapped);
+    enqueueCompAction(preferred.id,{kind:'keyboard',action:'key',key:mapped,fast:true},'Pressed '+mapped);
   });
 
   const askBotFromStage=async()=>{

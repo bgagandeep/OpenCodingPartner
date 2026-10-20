@@ -950,6 +950,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.45 ui-monospace,SFMo
 .screen-stage-wrap.human-mode{border-color:var(--warn)}
 .screen-stage-wrap img{display:block;width:100%;max-height:calc(100vh - 285px);object-fit:contain;cursor:crosshair;user-select:none}
 .click-dot{position:absolute;width:18px;height:18px;border:2px solid var(--warn);background:rgba(251,191,36,.3);border-radius:50%;transform:translate(-50%,-50%);pointer-events:none}
+.typing-hud{position:absolute;top:12px;left:12px;background:rgba(11,15,23,.92);border:1px solid var(--accent);color:var(--accent);padding:6px 12px;border-radius:8px;font:600 12.5px/1.3 ui-monospace,SFMono-Regular,Menlo,monospace;pointer-events:none;box-shadow:0 4px 14px rgba(0,0,0,.5)}
 .screen-wrap{position:relative;border:1px solid var(--line);border-radius:9px;overflow:hidden;background:#05080c;margin:8px 0}
 .screen-wrap img{display:block;width:100%;height:auto;cursor:crosshair}
 .proj-meta-card{background:#121a27;border:1px solid #223147;border-radius:9px;padding:9px 11px}
@@ -1138,7 +1139,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.45 ui-monospace,SFMo
   </aside>
 </main>
 
-<script nonce="${token}">const TOKEN='${token}',DEFAULT_WS='${escapeJs(process.cwd())}';let state={projects:[],bots:[],tasks:[]},activeWorkspace='',selected='',conversationBot='',computerBot='',computerMeta=null,bootstrapped=false,activeTab='detail',centerView='chat',lastClickPt=null;
+<script nonce="${token}">const TOKEN='${token}',DEFAULT_WS='${escapeJs(process.cwd())}';let state={projects:[],bots:[],tasks:[]},activeWorkspace='',selected='',conversationBot='',computerBot='',computerMeta=null,bootstrapped=false,activeTab='detail',centerView='chat',lastClickPt=null,renderedCompBot='',lastFrameSrc='',lastSyncedUrl='',lastSidebarSig='',lastChatSig='',lastDetailSig='',keyBuffer='',keyTimer=null,lastCompInteract=0,compQueue=Promise.resolve();
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const isAgentRuntime=r=>r==='ocp-agent'||r==='hermes';
 const runtimeLabel=r=>isAgentRuntime(r)?'OCP Agent':'OCP Coder';
@@ -1326,60 +1327,66 @@ function editBot(id){
 function draw(){
   const pSelect=document.querySelector('#projectSelect');
   const projects=state.projects?.length?state.projects:[{id:'default',name:DEFAULT_WS.split('/').pop()||'Project',workspace:DEFAULT_WS}];
-  pSelect.innerHTML=projects.map(p=>{
-    const count=state.bots.filter(b=>b.workspace===p.workspace).length;
-    return '<option value="'+esc(p.workspace)+'">'+esc(p.name)+' ('+count+' bots)</option>';
-  }).join('');
-  if(projects.some(p=>p.workspace===activeWorkspace))pSelect.value=activeWorkspace;
-  pSelect.onchange=()=>{
-    activeWorkspace=pSelect.value;
-    conversationBot='';
-    selected='';
-    computerBot='';
-    document.querySelector('#botForm').elements.workspace.value=activeWorkspace;
-    draw();
-  };
-
   const activeProj=projects.find(p=>p.workspace===activeWorkspace)||projects[0];
   const pBots=projectBots();
   const pTasks=projectTasks();
-  document.querySelector('#activeProjectCard').innerHTML='<strong>◈ '+esc(activeProj?.name||'Project')+'</strong><div class="meta-break">'+esc(activeWorkspace)+'</div>'+(activeProj?.description?'<div class="meta mt-sm">'+esc(activeProj.description)+'</div>':'');
+  const select=document.querySelector('#botSelect'),reviewerSelect=document.querySelector('#reviewerSelect'),chosenBot=select.value,chosenReviewer=reviewerSelect.value;
+  const sidebarSig=JSON.stringify([activeWorkspace,conversationBot,selected,chosenBot,projects.map(p=>[p.workspace,p.name]),pBots.map(b=>[b.id,b.name,b.role]),pTasks.map(t=>[t.id,t.botId,t.status,t.prompt])]);
 
-  const botsEl=document.querySelector('#bots'),select=document.querySelector('#botSelect'),reviewerSelect=document.querySelector('#reviewerSelect'),chosenBot=select.value,chosenReviewer=reviewerSelect.value;
-  document.querySelector('#channelTeamHq').classList.toggle('selected',!conversationBot);
-  document.querySelector('#allRoomBtn').classList.toggle('hidden',!conversationBot);
+  if(sidebarSig!==lastSidebarSig){
+    lastSidebarSig=sidebarSig;
+    pSelect.innerHTML=projects.map(p=>{
+      const count=state.bots.filter(b=>b.workspace===p.workspace).length;
+      return '<option value="'+esc(p.workspace)+'">'+esc(p.name)+' ('+count+' bots)</option>';
+    }).join('');
+    if(projects.some(p=>p.workspace===activeWorkspace))pSelect.value=activeWorkspace;
+    pSelect.onchange=()=>{
+      activeWorkspace=pSelect.value;
+      conversationBot='';
+      selected='';
+      computerBot='';
+      document.querySelector('#botForm').elements.workspace.value=activeWorkspace;
+      draw();
+    };
 
-  botsEl.innerHTML=pBots.length?pBots.map(b=>{
-    const activeTask=pTasks.find(t=>t.botId===b.id&&['queued','running','awaiting-approval'].includes(t.status));
-    const dotClass=activeTask?(activeTask.status==='awaiting-approval'?'wait':'busy'):'';
-    return '<div class="nav-item '+(conversationBot===b.id?'selected':'')+'" data-chat-bot="'+esc(b.id)+'"><div class="nav-main"><span class="dot '+dotClass+'"></span><span>'+roleIcon(b.role)+'</span><strong>'+esc(b.name)+'</strong><span class="pill role">'+esc(roleFriendly(b.role))+'</span></div><div class="nav-actions"><button type="button" class="ghost" title="Edit bot" data-edit="'+esc(b.id)+'">✎</button><button type="button" class="ghost" title="Delete bot" data-delete-bot="'+esc(b.id)+'">×</button></div></div>';
-  }).join(''):'<div class="meta">No bots in this project yet. Click <b>⚡ Spawn Team</b> above!</div>';
+    document.querySelector('#activeProjectCard').innerHTML='<strong>◈ '+esc(activeProj?.name||'Project')+'</strong><div class="meta-break">'+esc(activeWorkspace)+'</div>'+(activeProj?.description?'<div class="meta mt-sm">'+esc(activeProj.description)+'</div>':'');
 
-  select.innerHTML=pBots.map(b=>'<option value="'+esc(b.id)+'">'+roleIcon(b.role)+' '+esc(b.name)+' ('+esc(roleFriendly(b.role))+')</option>').join('');
-  if(conversationBot&&pBots.some(b=>b.id===conversationBot))select.value=conversationBot;
-  else if(pBots.some(b=>b.id===chosenBot))select.value=chosenBot;
+    const botsEl=document.querySelector('#bots');
+    document.querySelector('#channelTeamHq').classList.toggle('selected',!conversationBot);
+    document.querySelector('#allRoomBtn').classList.toggle('hidden',!conversationBot);
 
-  const primary=pBots.find(b=>b.id===select.value);
-  const reviewers=pBots.filter(b=>(b.role==='qa'||b.role==='security')&&b.id!==primary?.id);
-  reviewerSelect.innerHTML='<option value="">No automatic review</option>'+reviewers.map(b=>'<option value="'+esc(b.id)+'">'+esc(b.name)+' ('+esc(roleFriendly(b.role))+')</option>').join('');
-  if(reviewers.some(b=>b.id===chosenReviewer))reviewerSelect.value=chosenReviewer;
-  select.onchange=draw;
+    botsEl.innerHTML=pBots.length?pBots.map(b=>{
+      const activeTask=pTasks.find(t=>t.botId===b.id&&['queued','running','awaiting-approval'].includes(t.status));
+      const dotClass=activeTask?(activeTask.status==='awaiting-approval'?'wait':'busy'):'';
+      return '<div class="nav-item '+(conversationBot===b.id?'selected':'')+'" data-chat-bot="'+esc(b.id)+'"><div class="nav-main"><span class="dot '+dotClass+'"></span><span>'+roleIcon(b.role)+'</span><strong>'+esc(b.name)+'</strong><span class="pill role">'+esc(roleFriendly(b.role))+'</span></div><div class="nav-actions"><button type="button" class="ghost" title="Edit bot" data-edit="'+esc(b.id)+'">✎</button><button type="button" class="ghost" title="Delete bot" data-delete-bot="'+esc(b.id)+'">×</button></div></div>';
+    }).join(''):'<div class="meta">No bots in this project yet. Click <b>⚡ Spawn Team</b> above!</div>';
 
-  document.querySelectorAll('[data-edit]').forEach(el=>el.addEventListener('click',e=>{e.stopPropagation();editBot(el.dataset.edit)}));
-  document.querySelectorAll('[data-chat-bot]').forEach(el=>el.addEventListener('click',()=>{conversationBot=el.dataset.chatBot;select.value=conversationBot;if(state.bots.find(b=>b.id===conversationBot)?.role==='computer'){computerBot=conversationBot}draw()}));
-  document.querySelectorAll('[data-delete-bot]').forEach(el=>el.addEventListener('click',async e=>{
-    e.stopPropagation();
-    const bot=state.bots.find(item=>item.id===el.dataset.deleteBot);
-    if(!bot||!confirm('Remove '+bot.name+' from this project?'))return;
-    try{await api('/api/bots/'+encodeURIComponent(bot.id),{},'DELETE');if(conversationBot===bot.id)conversationBot='';await load()}catch(error){alert(error.message)}
-  }));
+    select.innerHTML=pBots.map(b=>'<option value="'+esc(b.id)+'">'+roleIcon(b.role)+' '+esc(b.name)+' ('+esc(roleFriendly(b.role))+')</option>').join('');
+    if(conversationBot&&pBots.some(b=>b.id===conversationBot))select.value=conversationBot;
+    else if(pBots.some(b=>b.id===chosenBot))select.value=chosenBot;
 
-  document.querySelector('#taskCount').textContent=String(pTasks.length);
-  document.querySelector('#tasks').innerHTML=pTasks.length?pTasks.map(t=>{
-    const b=state.bots.find(x=>x.id===t.botId);
-    return '<div class="nav-item '+(selected===t.id?'selected':'')+'" data-task="'+esc(t.id)+'"><div class="nav-main"><strong>'+esc(t.prompt.slice(0,55))+'</strong></div><span class="pill '+(t.status==='awaiting-approval'?'wait':'')+'">'+esc(b?.name||'')+' · '+esc(t.status)+'</span></div>';
-  }).join(''):'<div class="meta">No tasks in this project yet.</div>';
-  document.querySelectorAll('[data-task]').forEach(el=>el.addEventListener('click',()=>{selected=el.dataset.task;draw();drawDetail()}));
+    const primary=pBots.find(b=>b.id===select.value);
+    const reviewers=pBots.filter(b=>(b.role==='qa'||b.role==='security')&&b.id!==primary?.id);
+    reviewerSelect.innerHTML='<option value="">No automatic review</option>'+reviewers.map(b=>'<option value="'+esc(b.id)+'">'+esc(b.name)+' ('+esc(roleFriendly(b.role))+')</option>').join('');
+    if(reviewers.some(b=>b.id===chosenReviewer))reviewerSelect.value=chosenReviewer;
+    select.onchange=draw;
+
+    document.querySelectorAll('[data-edit]').forEach(el=>el.addEventListener('click',e=>{e.stopPropagation();editBot(el.dataset.edit)}));
+    document.querySelectorAll('[data-chat-bot]').forEach(el=>el.addEventListener('click',()=>{conversationBot=el.dataset.chatBot;select.value=conversationBot;if(state.bots.find(b=>b.id===conversationBot)?.role==='computer'){computerBot=conversationBot}draw()}));
+    document.querySelectorAll('[data-delete-bot]').forEach(el=>el.addEventListener('click',async e=>{
+      e.stopPropagation();
+      const bot=state.bots.find(item=>item.id===el.dataset.deleteBot);
+      if(!bot||!confirm('Remove '+bot.name+' from this project?'))return;
+      try{await api('/api/bots/'+encodeURIComponent(bot.id),{},'DELETE');if(conversationBot===bot.id)conversationBot='';await load()}catch(error){alert(error.message)}
+    }));
+
+    document.querySelector('#taskCount').textContent=String(pTasks.length);
+    document.querySelector('#tasks').innerHTML=pTasks.length?pTasks.map(t=>{
+      const b=state.bots.find(x=>x.id===t.botId);
+      return '<div class="nav-item '+(selected===t.id?'selected':'')+'" data-task="'+esc(t.id)+'"><div class="nav-main"><strong>'+esc(t.prompt.slice(0,55))+'</strong></div><span class="pill '+(t.status==='awaiting-approval'?'wait':'')+'">'+esc(b?.name||'')+' · '+esc(t.status)+'</span></div>';
+    }).join(''):'<div class="meta">No tasks in this project yet.</div>';
+    document.querySelectorAll('[data-task]').forEach(el=>el.addEventListener('click',()=>{selected=el.dataset.task;draw();drawDetail()}));
+  }
 
   drawChatFeed(activeProj,pBots,pTasks);
   drawComputer(pBots);
@@ -1391,6 +1398,9 @@ function drawChatFeed(activeProj,pBots,pTasks){
   document.querySelector('#activeRoomTitle').textContent=activeBot?(roleIcon(activeBot.role)+' '+activeBot.name+' · '+roleFriendly(activeBot.role)+' ('+runtimeLabel(activeBot.runtime)+')'):'# project-hq · '+(activeProj?.name||'Project');
   document.querySelector('#activeRoomSub').textContent=activeBot?('Direct 1-on-1 chat with '+activeBot.name+' in '+activeWorkspace):('All '+pBots.length+' bots in this project · Ask Ada (Team Lead) to create bots, delegate code, or use the Virtual Computer');
   const visibleTasks=(activeBot?pTasks.filter(t=>t.botId===activeBot.id||t.reviewerBotId===activeBot.id):pTasks).slice().sort((a,b)=>a.createdAt.localeCompare(b.createdAt));
+  const sig=JSON.stringify([activeWorkspace,conversationBot,selected,visibleTasks.map(t=>[t.id,t.status,t.result?.length,t.error,t.events?.length,t.pendingApproval?.id,t.workspaceChanges?.files?.length])]);
+  if(sig===lastChatSig)return;
+  lastChatSig=sig;
 
   const quickChips='<div class="welcome-box"><div class="row spread"><strong>✦ Welcome to '+esc(activeProj?.name||'Project')+' Studio</strong><span class="meta">Click any starter action below</span></div><div class="chips"><button type="button" class="chip" data-quick="Spin up a full team of bots for this project">⚡ 1. Create My Bot Team</button><button type="button" class="chip" data-quick="List all bots in this project and explain what each one does in simple terms">≡ 2. Meet the Bots</button><button type="button" class="chip" data-quick="@Atlas Open https://mail.google.com on the virtual computer browser and take a screenshot">▣ 3. Open Gmail on Virtual Computer</button><button type="button" class="chip" data-quick="Inspect this project repository and summarize what it does in plain English">◎ 4. Explain This Project</button></div></div>';
 
@@ -1407,12 +1417,92 @@ function drawChatFeed(activeProj,pBots,pTasks){
   document.querySelectorAll('[data-inline-deny]').forEach(el=>el.addEventListener('click',async e=>{e.stopPropagation();await api('/api/tasks/'+encodeURIComponent(el.dataset.inlineDeny)+'/approval',{requestId:el.dataset.req,approved:false});await load()}));
 }
 
+function enqueueCompAction(botId,payload,statusMsg){
+  lastCompInteract=Date.now();
+  const statusEl=document.querySelector('#stageCompStatus');
+  if(statusMsg&&statusEl)statusEl.textContent=statusMsg;
+  compQueue=compQueue.then(async()=>{
+    lastCompInteract=Date.now();
+    computerMeta=await api('/api/bots/'+encodeURIComponent(botId)+'/computer',payload);
+    lastCompInteract=Date.now();
+    syncComputerDom();
+  }).catch(err=>{
+    if(statusEl)statusEl.textContent=err.message;
+  });
+  return compQueue;
+}
+
+function flushKeyBuffer(botId){
+  if(keyTimer){clearTimeout(keyTimer);keyTimer=null}
+  if(!keyBuffer)return;
+  const text=keyBuffer;
+  keyBuffer='';
+  const hud=document.querySelector('#stageTypingHud');
+  if(hud)hud.classList.add('hidden');
+  enqueueCompAction(botId,{kind:'keyboard',action:'type',text},'Typed "'+text+'"');
+}
+
 async function refreshComputer(capture){
   const pBots=projectBots();
   const preferred=pBots.find(b=>b.role==='computer')||pBots[0];
   if((!computerBot||!pBots.some(b=>b.id===computerBot))&&preferred)computerBot=preferred.id;
   if(!computerBot)return;
+  if(!capture&&(keyBuffer.length>0||Date.now()-lastCompInteract<2000))return;
   try{computerMeta=await api('/api/bots/'+encodeURIComponent(computerBot)+'/computer'+(capture?'?refresh=1':''));drawComputer(pBots)}catch(e){computerMeta={detail:e.message};drawComputer(pBots)}
+}
+
+function syncComputerDom(){
+  const pBots=projectBots();
+  const preferred=pBots.find(item=>item.id===computerBot)||pBots.find(item=>item.role==='computer')||pBots[0];
+  if(!preferred)return;
+  const m=computerMeta||{display:':50',width:1280,height:800,control:'partner',status:'live'};
+  const held=m.control==='human';
+  const frameSrc='/api/bots/'+encodeURIComponent(preferred.id)+'/computer/frame?t='+(m.frameMtimeMs||Date.now());
+
+  const miniTitle=document.querySelector('#miniCompTitle');
+  if(miniTitle)miniTitle.textContent='▣ Virtual Computer ('+(m.display||':50')+')';
+  const miniPill=document.querySelector('#miniCompPill');
+  if(miniPill){miniPill.className='pill '+(held?'wait':'');miniPill.textContent=held?'● Human in Control':'● Bot in Control'}
+  const miniStatus=document.querySelector('#miniCompStatus');
+  if(miniStatus&&!keyBuffer)miniStatus.textContent=m.detail||'Click Open Full-Screen View for easy mouse & keyboard control.';
+
+  const stageTitle=document.querySelector('#stageCompTitle');
+  if(stageTitle)stageTitle.textContent='▣ Virtual Computer · '+(m.display||':50')+' ('+(m.width||1280)+'×'+(m.height||800)+')';
+  const stagePill=document.querySelector('#stageCompPill');
+  if(stagePill){stagePill.className='pill '+(held?'wait':'');stagePill.textContent=held?'● You Have Control (Bots Paused)':'● Bot Control ('+preferred.name+')'}
+  document.querySelector('#stageTakeoverBtn')?.classList.toggle('hidden',held);
+  document.querySelector('#stageReturnBtn')?.classList.toggle('hidden',!held);
+  const banner=document.querySelector('#stageCompBanner');
+  if(banner){
+    banner.className='comp-banner '+(held?'human':'bot');
+  }
+  const bannerText=document.querySelector('#stageCompBannerText');
+  if(bannerText){
+    bannerText.innerHTML=held
+      ?'<strong>⚡ Human Takeover Active:</strong> Click any field on the screen below and type directly on your keyboard (or use the text box below). Bots are paused while you hold control.'
+      :'<strong>✦ Bot Mode Active:</strong> <b>'+esc(preferred.name)+'</b> can operate this screen. Need to sign into Gmail or type a password? Click <b>⚡ Take Control</b> above.';
+  }
+  document.querySelector('#stageScreenWrap')?.classList.toggle('human-mode',held);
+
+  const urlInp=document.querySelector('#stageUrlInput');
+  if(urlInp&&document.activeElement!==urlInp&&m.lastUrl&&m.lastUrl!==lastSyncedUrl){
+    urlInp.value=m.lastUrl;
+    lastSyncedUrl=m.lastUrl;
+  }
+  const statusEl=document.querySelector('#stageCompStatus');
+  if(statusEl&&!keyBuffer&&m.detail)statusEl.textContent=m.detail;
+
+  if(frameSrc!==lastFrameSrc&&m.frameMtimeMs){
+    lastFrameSrc=frameSrc;
+    const pre=new Image();
+    pre.onload=()=>{
+      const sImg=document.querySelector('#stageScreenImg');
+      if(sImg)sImg.src=frameSrc;
+      const mImg=document.querySelector('#miniScreenImg');
+      if(mImg)mImg.src=frameSrc;
+    };
+    pre.src=frameSrc;
+  }
 }
 
 function drawComputer(pBots){
@@ -1420,94 +1510,115 @@ function drawComputer(pBots){
   const stagePanel=document.querySelector('#computerStagePanel');
   const preferred=pBots.find(item=>item.id===computerBot)||pBots.find(item=>item.role==='computer')||pBots[0];
   if(!preferred){
+    renderedCompBot='';
     const emptyMsg='<p class="sub">Click <b>⚡ Spawn Team</b> in the top bar first to create Atlas (your Computer Operator bot).</p>';
     miniPanel.innerHTML=emptyMsg;
     stagePanel.innerHTML=emptyMsg;
     return;
   }
   computerBot=preferred.id;
+  if(renderedCompBot===preferred.id&&document.querySelector('#stageScreenImg')){
+    syncComputerDom();
+    return;
+  }
+  renderedCompBot=preferred.id;
   const m=computerMeta||{display:':50',width:1280,height:800,control:'partner',status:'live'};
   const held=m.control==='human';
   const frameSrc='/api/bots/'+encodeURIComponent(preferred.id)+'/computer/frame?t='+(m.frameMtimeMs||Date.now());
+  lastFrameSrc=frameSrc;
+  lastSyncedUrl=m.lastUrl||'';
 
-  // 1. Mini sidebar preview
-  miniPanel.innerHTML='<div class="row spread mb-sm"><div><h2>▣ Virtual Computer ('+esc(m.display||':50')+')</h2><div class="meta">Operator: '+esc(preferred.name)+'</div></div><span class="pill '+(held?'wait':'')+'">'+(held?'● Human in Control':'● Bot in Control')+'</span></div><div class="row mb-sm"><button type="button" id="miniExpandBtn">▣ Open Full-Screen View</button><button type="button" id="miniRefreshBtn" class="secondary">↻</button></div><div class="screen-wrap"><img id="miniScreenImg" src="'+frameSrc+'" alt="Virtual computer mini preview"></div><div class="meta">'+esc(m.detail||'Click Open Full-Screen View for easy mouse & keyboard control.')+'</div>';
+  // 1. Mini sidebar preview (built once per bot)
+  miniPanel.innerHTML='<div class="row spread mb-sm"><div><h2 id="miniCompTitle">▣ Virtual Computer ('+esc(m.display||':50')+')</h2><div class="meta">Operator: '+esc(preferred.name)+'</div></div><span id="miniCompPill" class="pill '+(held?'wait':'')+'">'+(held?'● Human in Control':'● Bot in Control')+'</span></div><div class="row mb-sm"><button type="button" id="miniExpandBtn">▣ Open Full-Screen View</button><button type="button" id="miniRefreshBtn" class="secondary">↻</button></div><div class="screen-wrap"><img id="miniScreenImg" src="'+frameSrc+'" alt="Virtual computer mini preview"></div><div class="meta" id="miniCompStatus">'+esc(m.detail||'Click Open Full-Screen View for easy mouse & keyboard control.')+'</div>';
   document.querySelector('#miniExpandBtn')?.addEventListener('click',()=>setCenterView('computer'));
   document.querySelector('#miniRefreshBtn')?.addEventListener('click',()=>refreshComputer(true));
   document.querySelector('#miniScreenImg')?.addEventListener('click',()=>setCenterView('computer'));
 
-  // 2. Large Full-Stage Interactive Virtual Computer
-  const dotHtml=lastClickPt?'<div class="click-dot" id="stageClickDot"></div>':'';
-  stagePanel.innerHTML='<div class="comp-toolbar"><div class="row"><strong>▣ Virtual Computer · '+esc(m.display||':50')+' ('+(m.width||1280)+'×'+(m.height||800)+')</strong><span class="pill '+(held?'wait':'')+'">'+(held?'● You Have Control (Bots Paused)':'● Bot Control ('+esc(preferred.name)+')')+'</span></div><div class="row">'+(held?'<button type="button" id="stageReturnBtn">✦ Return Control to Bot ('+esc(preferred.name)+')</button>':'<button type="button" class="warn-btn" id="stageTakeoverBtn">⚡ Take Control (Log in / Use Mouse &amp; Keyboard)</button>')+'<button type="button" class="secondary" id="stageRefreshBtn">↻ Refresh Screen</button><button type="button" class="secondary" id="stageScrollUpBtn">↑ Scroll Up</button><button type="button" class="secondary" id="stageScrollDownBtn">↓ Scroll Down</button><button type="button" class="ghost" id="stageBackChatBtn">← Back to Chat</button></div></div>'
-    +'<div class="comp-banner '+(held?'human':'bot')+'"><div>'+(held?'<strong>⚡ Human Takeover Active:</strong> Click anywhere on the screen below and type directly on your keyboard (or use the URL/text boxes below). While you hold control, bots are blocked from touching the screen.':'<strong>✦ Bot Mode Active:</strong> <b>'+esc(preferred.name)+'</b> can operate this screen. Need to sign into Gmail or enter a password? Click <b>⚡ Take Control</b> above.')+'</div><div class="row"><button type="button" class="chip" data-stage-url="https://mail.google.com">▸ Open Gmail</button><button type="button" class="chip" data-stage-url="https://www.google.com">▸ Google</button><button type="button" class="chip" data-stage-url="https://github.com">▸ GitHub</button></div></div>'
-    +'<div class="row nowrap"><input id="stageUrlInput" placeholder="Enter website URL (e.g. https://mail.google.com)…" value="'+esc(m.lastUrl||'')+'"><button type="button" id="stageOpenUrlBtn">Go to Website</button><input id="stageTypeInput" placeholder="Or paste/type text here to send to screen…"><button type="button" id="stageTypeBtn" class="secondary">Send Text</button><button type="button" class="secondary" data-stage-key="Return" title="Press Enter">Enter ↵</button><button type="button" class="secondary" data-stage-key="Tab" title="Press Tab">Tab ⇥</button><button type="button" class="secondary" data-stage-key="BackSpace" title="Press Backspace">⌫</button></div>'
-    +'<div class="screen-stage-wrap '+(held?'human-mode':'')+'" id="stageScreenWrap" tabindex="0" title="Click anywhere on the screen to click at that spot and type directly with your keyboard"><img id="stageScreenImg" src="'+frameSrc+'" alt="Full size virtual computer screen">'+dotHtml+'</div>'
+  // 2. Large Full-Stage Interactive Virtual Computer (built once per bot; never destroyed on poll/typing)
+  stagePanel.innerHTML='<div class="comp-toolbar"><div class="row"><strong id="stageCompTitle">▣ Virtual Computer · '+esc(m.display||':50')+' ('+(m.width||1280)+'×'+(m.height||800)+')</strong><span id="stageCompPill" class="pill '+(held?'wait':'')+'">'+(held?'● You Have Control (Bots Paused)':'● Bot Control ('+esc(preferred.name)+')')+'</span></div><div class="row"><button type="button" id="stageReturnBtn" class="'+(held?'':'hidden')+'">✦ Return Control to Bot ('+esc(preferred.name)+')</button><button type="button" class="warn-btn '+(held?'hidden':'')+'" id="stageTakeoverBtn">⚡ Take Control (Log in / Use Mouse &amp; Keyboard)</button><button type="button" class="secondary" id="stageRefreshBtn">↻ Refresh Screen</button><button type="button" class="secondary" id="stageScrollUpBtn">↑ Scroll Up</button><button type="button" class="secondary" id="stageScrollDownBtn">↓ Scroll Down</button><button type="button" class="ghost" id="stageBackChatBtn">← Back to Chat</button></div></div>'
+    +'<div id="stageCompBanner" class="comp-banner '+(held?'human':'bot')+'"><div id="stageCompBannerText">'+(held?'<strong>⚡ Human Takeover Active:</strong> Click any field on the screen below and type directly on your keyboard (or use the text box below). Bots are paused while you hold control.':'<strong>✦ Bot Mode Active:</strong> <b>'+esc(preferred.name)+'</b> can operate this screen. Need to sign into Gmail or type a password? Click <b>⚡ Take Control</b> above.')+'</div><div class="row"><button type="button" class="chip" data-stage-url="https://mail.google.com">▸ Open Gmail</button><button type="button" class="chip" data-stage-url="https://www.google.com">▸ Google</button><button type="button" class="chip" data-stage-url="https://github.com">▸ GitHub</button></div></div>'
+    +'<div class="row nowrap"><input id="stageUrlInput" placeholder="Enter website URL (e.g. https://mail.google.com)…" value="'+esc(m.lastUrl||'')+'"><button type="button" id="stageOpenUrlBtn">Go to Website</button><input id="stageTypeInput" placeholder="Or type/paste text here &amp; press Enter…"><button type="button" id="stageTypeBtn" class="secondary">Send Text</button><button type="button" class="secondary" data-stage-key="Return" title="Press Enter">Enter ↵</button><button type="button" class="secondary" data-stage-key="Tab" title="Press Tab">Tab ⇥</button><button type="button" class="secondary" data-stage-key="BackSpace" title="Press Backspace">⌫</button></div>'
+    +'<div class="screen-stage-wrap '+(held?'human-mode':'')+'" id="stageScreenWrap" tabindex="0" title="Click anywhere on the screen to focus and type directly with your keyboard"><img id="stageScreenImg" src="'+frameSrc+'" alt="Full size virtual computer screen"><div id="stageTypingHud" class="typing-hud hidden"></div></div>'
     +'<div class="row spread"><div class="status" id="stageCompStatus">'+esc(m.detail||'Ready · Click the screen to interact directly.')+'</div><div class="row nowrap"><input id="stageBotPrompt" placeholder="Tell '+esc(preferred.name)+' what to do on this screen next…"><button type="button" id="stageAskBotBtn">Ask '+esc(preferred.name)+' ↵</button></div></div>';
 
-  const setStatus=txt=>{const el=document.querySelector('#stageCompStatus');if(el)el.textContent=txt};
   document.querySelector('#stageBackChatBtn')?.addEventListener('click',()=>setCenterView('chat'));
   document.querySelector('#stageRefreshBtn')?.addEventListener('click',()=>refreshComputer(true));
-  document.querySelector('#stageTakeoverBtn')?.addEventListener('click',async()=>{setStatus('Taking human control…');computerMeta=await api('/api/bots/'+encodeURIComponent(preferred.id)+'/computer',{kind:'takeover'});drawComputer(pBots);document.querySelector('#stageScreenWrap')?.focus()});
-  document.querySelector('#stageReturnBtn')?.addEventListener('click',async()=>{setStatus('Returning control to '+preferred.name+'…');computerMeta=await api('/api/bots/'+encodeURIComponent(preferred.id)+'/computer',{kind:'return'});drawComputer(pBots)});
-  document.querySelector('#stageScrollUpBtn')?.addEventListener('click',async()=>{computerMeta=await api('/api/bots/'+encodeURIComponent(preferred.id)+'/computer',{kind:'mouse',action:'scroll',direction:'up',amount:5});drawComputer(pBots)});
-  document.querySelector('#stageScrollDownBtn')?.addEventListener('click',async()=>{computerMeta=await api('/api/bots/'+encodeURIComponent(preferred.id)+'/computer',{kind:'mouse',action:'scroll',direction:'down',amount:5});drawComputer(pBots)});
+  document.querySelector('#stageTakeoverBtn')?.addEventListener('click',()=>{enqueueCompAction(preferred.id,{kind:'takeover'},'Taking human control…');document.querySelector('#stageScreenWrap')?.focus()});
+  document.querySelector('#stageReturnBtn')?.addEventListener('click',()=>enqueueCompAction(preferred.id,{kind:'return'},'Returning control to '+preferred.name+'…'));
+  document.querySelector('#stageScrollUpBtn')?.addEventListener('click',()=>enqueueCompAction(preferred.id,{kind:'mouse',action:'scroll',direction:'up',amount:5},'Scrolling up…'));
+  document.querySelector('#stageScrollDownBtn')?.addEventListener('click',()=>enqueueCompAction(preferred.id,{kind:'mouse',action:'scroll',direction:'down',amount:5},'Scrolling down…'));
 
-  const openUrl=async u=>{if(!u)return;setStatus('Opening '+u+'…');try{computerMeta=await api('/api/bots/'+encodeURIComponent(preferred.id)+'/computer',{kind:'browser',url:u});drawComputer(pBots)}catch(e){setStatus(e.message)}};
+  const openUrl=u=>{if(!u)return;lastSyncedUrl=u;enqueueCompAction(preferred.id,{kind:'browser',url:u},'Opening '+u+'…')};
   document.querySelector('#stageOpenUrlBtn')?.addEventListener('click',()=>openUrl(document.querySelector('#stageUrlInput').value.trim()));
-  document.querySelector('#stageUrlInput')?.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();openUrl(e.target.value.trim())}});
-  document.querySelectorAll('[data-stage-url]').forEach(el=>el.addEventListener('click',()=>openUrl(el.dataset.stageUrl)));
+  document.querySelector('#stageUrlInput')?.addEventListener('keydown',e=>{e.stopPropagation();if(e.key==='Enter'){e.preventDefault();openUrl(e.target.value.trim())}});
+  document.querySelectorAll('[data-stage-url]').forEach(el=>el.addEventListener('click',()=>{const u=el.dataset.stageUrl;const inp=document.querySelector('#stageUrlInput');if(inp)inp.value=u;openUrl(u)}));
 
-  const sendType=async()=>{const inp=document.querySelector('#stageTypeInput');const t=inp?.value;if(!t)return;inp.value='';setStatus('Typing text…');try{computerMeta=await api('/api/bots/'+encodeURIComponent(preferred.id)+'/computer',{kind:'keyboard',action:'type',text:t});drawComputer(pBots)}catch(e){setStatus(e.message)}};
+  const sendType=()=>{const inp=document.querySelector('#stageTypeInput');const t=inp?.value;if(!t)return;inp.value='';enqueueCompAction(preferred.id,{kind:'keyboard',action:'type',text:t},'Typing "'+t+'"…')};
   document.querySelector('#stageTypeBtn')?.addEventListener('click',sendType);
-  document.querySelector('#stageTypeInput')?.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();sendType()}});
-  document.querySelectorAll('[data-stage-key]').forEach(el=>el.addEventListener('click',async()=>{try{computerMeta=await api('/api/bots/'+encodeURIComponent(preferred.id)+'/computer',{kind:'keyboard',action:'key',key:el.dataset.stageKey});drawComputer(pBots)}catch(e){setStatus(e.message)}}));
+  document.querySelector('#stageTypeInput')?.addEventListener('keydown',e=>{e.stopPropagation();if(e.key==='Enter'){e.preventDefault();sendType()}});
+  document.querySelectorAll('[data-stage-key]').forEach(el=>el.addEventListener('click',()=>{flushKeyBuffer(preferred.id);enqueueCompAction(preferred.id,{kind:'keyboard',action:'key',key:el.dataset.stageKey},'Pressed '+el.dataset.stageKey)}));
 
   const stageImg=document.querySelector('#stageScreenImg');
   const stageWrap=document.querySelector('#stageScreenWrap');
-  stageImg?.addEventListener('click',async e=>{
+  stageImg?.addEventListener('click',e=>{
+    flushKeyBuffer(preferred.id);
     stageWrap?.focus();
     const rect=e.target.getBoundingClientRect();
-    const w=m.width||1280,h=m.height||800;
+    const mNow=computerMeta||{width:1280,height:800};
+    const w=mNow.width||1280,h=mNow.height||800;
     const x=Math.round((e.clientX-rect.left)/rect.width*w);
     const y=Math.round((e.clientY-rect.top)/rect.height*h);
-    lastClickPt={x,y};
-    setStatus('Clicking ('+x+', '+y+') — you can now type directly on your keyboard…');
-    try{computerMeta=await api('/api/bots/'+encodeURIComponent(preferred.id)+'/computer',{kind:'mouse',action:'click',x,y});drawComputer(pBots);document.querySelector('#stageScreenWrap')?.focus()}catch(err){setStatus(err.message)}
+    enqueueCompAction(preferred.id,{kind:'mouse',action:'click',x,y},'Clicked ('+x+', '+y+') — type directly on your keyboard now');
   });
-  stageImg?.addEventListener('dblclick',async e=>{
+  stageImg?.addEventListener('dblclick',e=>{
+    flushKeyBuffer(preferred.id);
+    stageWrap?.focus();
     const rect=e.target.getBoundingClientRect();
-    const w=m.width||1280,h=m.height||800;
+    const mNow=computerMeta||{width:1280,height:800};
+    const w=mNow.width||1280,h=mNow.height||800;
     const x=Math.round((e.clientX-rect.left)/rect.width*w);
     const y=Math.round((e.clientY-rect.top)/rect.height*h);
-    setStatus('Double-clicking ('+x+', '+y+')…');
-    try{computerMeta=await api('/api/bots/'+encodeURIComponent(preferred.id)+'/computer',{kind:'mouse',action:'double_click',x,y});drawComputer(pBots);document.querySelector('#stageScreenWrap')?.focus()}catch(err){setStatus(err.message)}
+    enqueueCompAction(preferred.id,{kind:'mouse',action:'double_click',x,y},'Double-clicked ('+x+', '+y+')');
   });
-  stageWrap?.addEventListener('wheel',async e=>{
+  stageWrap?.addEventListener('wheel',e=>{
     e.preventDefault();
     const direction=e.deltaY<0?'up':'down';
-    try{computerMeta=await api('/api/bots/'+encodeURIComponent(preferred.id)+'/computer',{kind:'mouse',action:'scroll',direction,amount:4});drawComputer(pBots)}catch{}
+    enqueueCompAction(preferred.id,{kind:'mouse',action:'scroll',direction,amount:4},'Scrolling '+direction+'…');
   },{passive:false});
-  stageWrap?.addEventListener('keydown',async e=>{
+  stageWrap?.addEventListener('keydown',e=>{
     if(['Shift','Control','Alt','Meta','CapsLock'].includes(e.key))return;
     e.preventDefault();
-    try{
-      if(e.ctrlKey||e.metaKey){
-        const k=e.key.toLowerCase();
-        if(['a','c','v','x','l','r','t','w','z'].includes(k)){
-          computerMeta=await api('/api/bots/'+encodeURIComponent(preferred.id)+'/computer',{kind:'keyboard',action:'hotkey',key:'ctrl+'+k});
-          drawComputer(pBots);document.querySelector('#stageScreenWrap')?.focus();return;
-        }
+    lastCompInteract=Date.now();
+    if(e.ctrlKey||e.metaKey){
+      const k=e.key.toLowerCase();
+      if(['a','c','v','x','l','r','t','w','z'].includes(k)){
+        flushKeyBuffer(preferred.id);
+        enqueueCompAction(preferred.id,{kind:'keyboard',action:'hotkey',key:'ctrl+'+k},'Pressed Ctrl+'+k.toUpperCase());
+        return;
       }
-      if(e.key.length===1&&!e.ctrlKey&&!e.metaKey){
-        computerMeta=await api('/api/bots/'+encodeURIComponent(preferred.id)+'/computer',{kind:'keyboard',action:'type',text:e.key});
-      }else{
-        const keyMap={Enter:'Return',Backspace:'BackSpace',Tab:'Tab',Escape:'Escape',Delete:'Delete',ArrowUp:'Up',ArrowDown:'Down',ArrowLeft:'Left',ArrowRight:'Right',Home:'Home',End:'End',PageUp:'Page_Up',PageDown:'Page_Down',' ':'space'};
-        const mapped=keyMap[e.key]||e.key;
-        computerMeta=await api('/api/bots/'+encodeURIComponent(preferred.id)+'/computer',{kind:'keyboard',action:'key',key:mapped});
-      }
-      drawComputer(pBots);
-      document.querySelector('#stageScreenWrap')?.focus();
-    }catch(err){setStatus(err.message)}
+    }
+    if(e.key==='Backspace'&&keyBuffer.length>0){
+      keyBuffer=keyBuffer.slice(0,-1);
+      const hud=document.querySelector('#stageTypingHud');
+      if(hud){hud.textContent='⌨ Typing: '+keyBuffer;hud.classList.toggle('hidden',!keyBuffer)}
+      if(keyTimer)clearTimeout(keyTimer);
+      if(keyBuffer)keyTimer=setTimeout(()=>flushKeyBuffer(preferred.id),180);
+      return;
+    }
+    if(e.key.length===1&&!e.ctrlKey&&!e.metaKey){
+      keyBuffer+=e.key;
+      const hud=document.querySelector('#stageTypingHud');
+      if(hud){hud.textContent='⌨ Typing: '+keyBuffer;hud.classList.remove('hidden')}
+      const statusEl=document.querySelector('#stageCompStatus');
+      if(statusEl)statusEl.textContent='Typing: "'+keyBuffer+'"…';
+      if(keyTimer)clearTimeout(keyTimer);
+      keyTimer=setTimeout(()=>flushKeyBuffer(preferred.id),180);
+      return;
+    }
+    flushKeyBuffer(preferred.id);
+    const keyMap={Enter:'Return',Backspace:'BackSpace',Tab:'Tab',Escape:'Escape',Delete:'Delete',ArrowUp:'Up',ArrowDown:'Down',ArrowLeft:'Left',ArrowRight:'Right',Home:'Home',End:'End',PageUp:'Page_Up',PageDown:'Page_Down',' ':'space'};
+    const mapped=keyMap[e.key]||e.key;
+    enqueueCompAction(preferred.id,{kind:'keyboard',action:'key',key:mapped},'Pressed '+mapped);
   });
 
   const askBotFromStage=async()=>{
@@ -1515,21 +1626,24 @@ function drawComputer(pBots){
     const prompt=inp?.value?.trim();
     if(!prompt)return;
     inp.value='';
-    if(held){
-      await api('/api/bots/'+encodeURIComponent(preferred.id)+'/computer',{kind:'return'});
+    flushKeyBuffer(preferred.id);
+    if((computerMeta?.control||'')==='human'){
+      await enqueueCompAction(preferred.id,{kind:'return'},'Returning control to '+preferred.name+'…');
     }
-    setStatus('Sent task to '+preferred.name+'!');
     const r=await api('/api/tasks',{botId:preferred.id,prompt});
     selected=r.taskId;
     await load();
   };
   document.querySelector('#stageAskBotBtn')?.addEventListener('click',askBotFromStage);
-  document.querySelector('#stageBotPrompt')?.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();askBotFromStage()}});
+  document.querySelector('#stageBotPrompt')?.addEventListener('keydown',e=>{e.stopPropagation();if(e.key==='Enter'){e.preventDefault();askBotFromStage()}});
 }
 
 function drawDetail(pTasks){
   const panel=document.querySelector('#detail'),tasks=pTasks||projectTasks(),t=tasks.find(x=>x.id===selected)||tasks[0];
   if(!t){panel.innerHTML='<h2>Activity &amp; Changes</h2><p class="sub">Click any message in the chat to inspect its steps, modified files, and code changes.</p>';return}
+  const sig=JSON.stringify([t.id,t.status,t.events?.length,t.pendingApproval?.id,t.workspaceChanges?.files?.length]);
+  if(sig===lastDetailSig)return;
+  lastDetailSig=sig;
   const b=state.bots.find(x=>x.id===t.botId),reviewer=state.bots.find(x=>x.id===t.reviewerBotId),agents=t.agents||[],p=t.pendingApproval;
   panel.innerHTML='<div class="row spread"><div><h2>'+esc(b?.name||t.botId)+' · '+esc(t.status)+'</h2><div class="meta">'+(reviewer?'Reviewed by '+esc(reviewer.name)+' · ':'')+esc(new Date(t.createdAt).toLocaleTimeString())+'</div></div><div class="row">'+(t.status==='running'||t.status==='awaiting-approval'||t.status==='queued'?'<button id="cancel" class="danger">Cancel</button>':((b&&['failed','cancelled','needs-attention'].includes(t.status))?'<button id="retry" class="secondary">Retry</button>':'')+'<button id="delete" class="ghost">Delete</button>')+'</div></div>'+(agents.length?'<div class="meta mt-sm">Pipeline: '+agents.map(a=>esc(a.name)+' ('+esc(roleFriendly(a.role))+')').join(' → ')+'</div>':'')+(p?'<div class="approval"><h3>Approval needed: '+esc(p.title)+'</h3>'+(p.description?'<p>'+esc(p.description)+'</p>':'')+'<div class="row"><button id="approve">Allow once</button><button id="deny" class="secondary">Deny</button></div></div>':'')+'<h3>Step-by-Step Timeline</h3><div class="activity">'+(t.events?.length?t.events.slice().reverse().map(e=>'<div class="event"><time>'+esc(new Date(e.createdAt).toLocaleTimeString())+'</time>'+esc(e.title||e.kind)+'</div>').join(''):'<div class="meta">No tool events recorded.</div>')+'</div>'+(t.workspaceChanges?'<h3>Workspace Changes</h3>'+(t.workspaceChanges.available?'<div class="activity">'+t.workspaceChanges.files.map(f=>'<div class="event"><button type="button" class="secondary" data-workspace-file="'+esc(f.path)+'">'+esc(f.status)+' · '+esc(f.path)+'</button></div>').join('')+'</div><div id="workspaceFileView"></div>':'<p class="meta">'+esc(t.workspaceChanges.diffOmittedReason||'No Git changes.')+'</p>')+(t.workspaceChanges.diff?'<details open class="fold-box"><summary class="fold-summary">Git Diff</summary><pre>'+esc(t.workspaceChanges.diff)+'</pre></details>':''):'');
   document.querySelectorAll('[data-workspace-file]').forEach(el=>el.addEventListener('click',async()=>{const view=document.querySelector('#workspaceFileView'),filePath=el.dataset.workspaceFile;view.innerHTML='<p class="meta">Loading file…</p>';try{const file=await api('/api/workspace/file?botId='+encodeURIComponent(t.botId)+'&path='+encodeURIComponent(filePath));view.innerHTML='<h3>'+esc(filePath)+'</h3><pre>'+esc(file.content)+'</pre>'}catch(error){view.innerHTML='<p class="meta">'+esc(error.message)+'</p>'}}));

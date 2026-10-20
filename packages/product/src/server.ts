@@ -242,7 +242,13 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
         hermes: ocpAgent,
         grokBuild: ocpCoder,
         docker,
+        activeBrainLabel: effectiveEnv.LITELLM_BASE_URL
+          ? `Local GPU (${effectiveEnv.OCP_DEFAULT_MODEL || "gemma4:latest"})`
+          : effectiveEnv.OPENROUTER_API_KEY
+            ? `OpenRouter (${effectiveEnv.OCP_DEFAULT_MODEL || "gpt-4.1-mini"})`
+            : "Local Orchestrator",
         providerConfigured: Boolean(
+          effectiveEnv.LITELLM_BASE_URL ||
           effectiveEnv.OPENROUTER_API_KEY ||
           effectiveEnv.LITELLM_API_KEY ||
           effectiveEnv.LITELLM_MASTER_KEY ||
@@ -1058,14 +1064,18 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;font:11.5px/1.45 ui-monospace,SF
       </div>
 
       <div id="tab-settings" class="tab-pane hidden">
-        <h2>⚙ API Keys &amp; Models</h2>
-        <p class="sub">Stored locally with 0600 permissions and applied immediately to all projects and bots.</p>
+        <h2>⚙ API Keys &amp; Local GPU</h2>
+        <p class="sub">Switch to your local NVIDIA GPU (Ollama) in one click, or save cloud provider keys locally (mode 0600).</p>
+        <div class="row" style="margin-bottom:10px">
+          <button type="button" id="useLocalGpuBtn">⚡ Use Local GPU (gemma4:latest)</button>
+          <button type="button" class="secondary" id="useOpenRouterPresetBtn">✦ Use OpenRouter</button>
+        </div>
         <form id="settingsForm">
           <label>OpenRouter API Key<input type="password" name="openrouterApiKey" placeholder="sk-or-v1-..."></label>
           <label>OpenAI API Key<input type="password" name="openaiApiKey" placeholder="sk-..."></label>
           <label>LiteLLM / Custom API Key<input type="password" name="litellmApiKey" placeholder="sk-..."></label>
-          <label>LiteLLM / Ollama Base URL<input name="litellmBaseUrl" placeholder="http://127.0.0.1:4000/v1"></label>
-          <label>Default Model ID<input name="defaultModel" placeholder="openai/gpt-4.1-mini"></label>
+          <label>LiteLLM / Ollama Base URL<input name="litellmBaseUrl" placeholder="http://127.0.0.1:11434/v1"></label>
+          <label>Default Model ID<input name="defaultModel" placeholder="gemma4:latest or openai/gpt-4.1-mini"></label>
           <button type="submit">Save &amp; Apply Immediately</button>
         </form>
         <div id="settingsStatus" class="status"></div>
@@ -1308,6 +1318,26 @@ document.querySelector('#projectForm').addEventListener('submit',async e=>{
   }catch(err){document.querySelector('#projectStatus').textContent=err.message}
 });
 
+document.querySelector('#useLocalGpuBtn').addEventListener('click',async()=>{
+  const f=document.querySelector('#settingsForm');
+  f.elements.litellmBaseUrl.value='http://127.0.0.1:11434/v1';
+  f.elements.defaultModel.value='gemma4:latest';
+  try{
+    await api('/api/settings',{litellmBaseUrl:'http://127.0.0.1:11434/v1',defaultModel:'gemma4:latest'},'POST');
+    document.querySelector('#settingsStatus').textContent='Switched to Local GPU (gemma4:latest via Ollama)!';
+    await load();await showHealth();
+  }catch(err){document.querySelector('#settingsStatus').textContent=err.message}
+});
+document.querySelector('#useOpenRouterPresetBtn').addEventListener('click',async()=>{
+  const f=document.querySelector('#settingsForm');
+  f.elements.litellmBaseUrl.value='';
+  f.elements.defaultModel.value='openai/gpt-4.1-mini';
+  try{
+    await api('/api/settings',{litellmBaseUrl:'',defaultModel:'openai/gpt-4.1-mini'},'POST');
+    document.querySelector('#settingsStatus').textContent='Switched to OpenRouter!';
+    await load();await showHealth();
+  }catch(err){document.querySelector('#settingsStatus').textContent=err.message}
+});
 document.querySelector('#settingsForm').addEventListener('submit',async e=>{
   e.preventDefault();
   const f=new FormData(e.target),body=Object.fromEntries(f.entries());
@@ -1371,7 +1401,7 @@ async function showHealth(){
   try{
     const h=await api('/api/health');
     const dot=ok=>'<span class="dot '+(ok?'':'wait')+'"></span>';
-    document.querySelector('#health').innerHTML='<span class="pill">'+dot(true)+' '+(h.providerConfigured?'OpenRouter / Cloud':'Local Brain')+'</span><span class="pill">'+dot(h.ocpAgent??h.hermes)+' OCP Agent</span><span class="pill">'+dot(h.ocpCoder??h.grokBuild)+' OCP Coder</span>';
+    document.querySelector('#health').innerHTML='<span class="pill">'+dot(true)+' '+esc(h.activeBrainLabel||(h.providerConfigured?'OpenRouter / Cloud':'Local Brain'))+'</span><span class="pill">'+dot(h.ocpAgent??h.hermes)+' OCP Agent</span><span class="pill">'+dot(h.ocpCoder??h.grokBuild)+' OCP Coder</span>';
   }catch(e){document.querySelector('#health').textContent=e.message}
 }
 load().catch(e=>document.querySelector('#tasks').textContent=e.message);

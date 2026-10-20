@@ -103,7 +103,7 @@ async function parseHermesConfig(hermesHome: string, env: NodeJS.ProcessEnv): Pr
     }
   } catch {
     // Fall back to environment variables when no config.yaml exists
-    if (env.LITELLM_API_KEY || env.LITELLM_MASTER_KEY) {
+    if (env.LITELLM_BASE_URL || env.LITELLM_API_KEY || env.LITELLM_MASTER_KEY) {
       provider = "custom";
       baseUrl = env.LITELLM_BASE_URL || env.OPENAI_BASE_URL || "http://127.0.0.1:4000/v1";
       keyEnv = env.LITELLM_API_KEY ? "LITELLM_API_KEY" : "LITELLM_MASTER_KEY";
@@ -122,6 +122,7 @@ async function parseHermesConfig(hermesHome: string, env: NodeJS.ProcessEnv): Pr
   const apiKey =
     env[keyEnv] ||
     (keyEnv === "LITELLM_API_KEY" ? env.LITELLM_MASTER_KEY : undefined) ||
+    (provider === "custom" && env.LITELLM_BASE_URL ? "ollama" : undefined) ||
     env.OPENROUTER_API_KEY ||
     env.LITELLM_API_KEY ||
     env.OPENAI_API_KEY ||

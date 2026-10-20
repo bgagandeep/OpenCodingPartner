@@ -326,9 +326,10 @@ export async function captureComputerScreen(workspaceRoot: string, note = "Captu
   const state = await ensureComputerDisplay(root);
   const framePath = path.join(root, FRAME_REL);
   await mkdir(path.dirname(framePath), { recursive: true });
+  const displayActive = state.status === "live" || state.status === "held";
 
   let captured = false;
-  if (state.status === "live" && state.display.startsWith("macos:") && (await hasBinary("screencapture"))) {
+  if (displayActive && state.display.startsWith("macos:") && (await hasBinary("screencapture"))) {
     try {
       await execFileAsync("screencapture", ["-x", "-C", framePath], { timeout: 5_000 });
       const info = await stat(framePath).catch(() => undefined);
@@ -336,7 +337,7 @@ export async function captureComputerScreen(workspaceRoot: string, note = "Captu
     } catch {
       captured = false;
     }
-  } else if (state.status === "live" && (await hasBinary("ffmpeg"))) {
+  } else if (displayActive && (await hasBinary("ffmpeg"))) {
     try {
       await execFileAsync(
         "ffmpeg",
@@ -368,7 +369,7 @@ export async function captureComputerScreen(workspaceRoot: string, note = "Captu
     await writeFile(framePath, FALLBACK_PNG);
   }
 
-  const { cursor, windowTitle } = state.status === "live" ? await getCursorAndWindow(state.display) : {};
+  const { cursor, windowTitle } = displayActive ? await getCursorAndWindow(state.display) : {};
   const info = await stat(framePath).catch(() => undefined);
   await writeFile(
     path.join(root, LAST_RUN_REL),
@@ -459,8 +460,9 @@ export async function computerMouse(workspaceRoot: string, input: MouseActionInp
   const x = input.x !== undefined ? clampX(input.x) : undefined;
   const y = input.y !== undefined ? clampY(input.y) : undefined;
   const env = { ...process.env, DISPLAY: state.display };
-  const macReady = state.status === "live" && state.display.startsWith("macos:") && (await hasBinary("osascript"));
-  const xdotoolReady = state.status === "live" && !state.display.startsWith("macos:") && (await hasBinary("xdotool"));
+  const displayActive = state.status === "live" || state.status === "held";
+  const macReady = displayActive && state.display.startsWith("macos:") && (await hasBinary("osascript"));
+  const xdotoolReady = displayActive && !state.display.startsWith("macos:") && (await hasBinary("xdotool"));
 
   try {
     if (input.action === "position") {
@@ -662,8 +664,9 @@ export async function computerKeyboard(workspaceRoot: string, input: KeyboardAct
   }
 
   const env = { ...process.env, DISPLAY: state.display };
-  const macReady = state.status === "live" && state.display.startsWith("macos:") && (await hasBinary("osascript"));
-  const xdotoolReady = state.status === "live" && !state.display.startsWith("macos:") && (await hasBinary("xdotool"));
+  const displayActive = state.status === "live" || state.status === "held";
+  const macReady = displayActive && state.display.startsWith("macos:") && (await hasBinary("osascript"));
+  const xdotoolReady = displayActive && !state.display.startsWith("macos:") && (await hasBinary("xdotool"));
   try {
     if (input.action === "type") {
       const text = typeof input.text === "string" ? input.text : "";
@@ -823,7 +826,8 @@ export async function computerOpenBrowser(
           ? "chromium-browser"
           : undefined;
 
-  if (state.status === "live" && chromeBin) {
+  const displayActive = state.status === "live" || state.status === "held";
+  if (displayActive && chromeBin) {
     try {
       const child = spawn(
         chromeBin,
@@ -857,7 +861,7 @@ export async function computerOpenBrowser(
       state.lastUrl = parsed.toString();
       await writeDesktopState(root, state);
     }
-  } else if (state.status === "live" && state.display.startsWith("macos:") && (await hasBinary("open"))) {
+  } else if (displayActive && state.display.startsWith("macos:") && (await hasBinary("open"))) {
     try {
       await execFileAsync("open", [parsed.toString()], { timeout: 4_000 });
       state.lastUrl = parsed.toString();

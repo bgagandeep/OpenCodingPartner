@@ -825,22 +825,28 @@ function renderApp(token: string): string {
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>OpenCodingPartner · Project Bot Studio</title>
 <style nonce="${token}">
-:root{color-scheme:dark;--bg:#0b0f17;--panel:#111722;--panel2:#161f2e;--line:#222e42;--muted:#8b9bb4;--text:#f1f5f9;--accent:#34d399;--accent-fg:#042419;--warn:#fbbf24;--danger:#f87171}
+:root{color-scheme:dark;--bg:#0b0f17;--panel:#111722;--panel2:#161f2e;--line:#222e42;--muted:#8b9bb4;--text:#f1f5f9;--accent:#34d399;--accent-fg:#042419;--warn:#fbbf24;--danger:#f87171;--info:#38bdf8}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--text);font:13.5px/1.5 ui-sans-serif,system-ui,-apple-system,sans-serif;height:100vh;display:flex;flex-direction:column;overflow:hidden}
-header{height:54px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;padding:0 18px;background:#0d131d;flex-shrink:0;gap:12px}
+header{height:56px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;padding:0 18px;background:#0d131d;flex-shrink:0;gap:12px}
 .brand-row{display:flex;align-items:center;gap:14px}
 .brand{display:flex;align-items:center;gap:9px}
-.mark{width:28px;height:28px;border-radius:7px;background:linear-gradient(135deg,var(--accent),#38bdf8);color:var(--accent-fg);display:grid;place-items:center;font-weight:900;font-size:14px}
-.brand strong{font-size:14px;letter-spacing:-.01em}
+.mark{width:29px;height:29px;border-radius:8px;background:linear-gradient(135deg,var(--accent),#38bdf8);color:var(--accent-fg);display:grid;place-items:center;font-weight:900;font-size:14px}
+.brand strong{font-size:14.5px;letter-spacing:-.01em}
 .proj-bar{display:flex;align-items:center;gap:6px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:3px 6px 3px 10px}
 .proj-bar span{font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.04em}
 .proj-bar select{background:transparent;border:0;color:var(--text);font-weight:700;font-size:13px;padding:4px 6px;width:auto;min-width:170px;cursor:pointer}
 .proj-bar select:focus{outline:none}
+.stage-switch{display:flex;background:#090d14;border:1px solid var(--line);border-radius:9px;padding:3px;gap:3px}
+.stage-btn{background:transparent;color:var(--muted);border:0;border-radius:7px;padding:6px 13px;font-weight:700;font-size:12.5px;cursor:pointer;display:inline-flex;align-items:center;gap:6px}
+.stage-btn:hover{color:var(--text)}
+.stage-btn.active{background:var(--accent);color:var(--accent-fg)}
 .top-actions{display:flex;gap:7px;align-items:center}
-.studio{display:grid;grid-template-columns:255px minmax(0,1fr) 360px;flex:1;min-height:0;overflow:hidden}
+.studio{display:grid;grid-template-columns:260px minmax(0,1fr) 355px;flex:1;min-height:0;overflow:hidden}
+.studio.drawer-closed{grid-template-columns:260px minmax(0,1fr)}
 .sidebar{border-right:1px solid var(--line);background:#0d121b;display:flex;flex-direction:column;min-height:0;padding:12px;gap:12px;overflow-y:auto}
-.center-col{display:flex;flex-direction:column;min-height:0;background:var(--bg)}
+.sidebar-bots-wrap{flex:1;min-height:0;display:flex;flex-direction:column}
+.center-col{display:flex;flex-direction:column;min-height:0;background:var(--bg);overflow:hidden}
 .inspector{border-left:1px solid var(--line);background:#0d121b;display:flex;flex-direction:column;min-height:0}
 .sec-label{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin:4px 4px 6px;display:flex;justify-content:space-between;align-items:center}
 h1{font-size:15px;margin:0}
@@ -848,6 +854,7 @@ h2{font-size:14px;margin:0 0 8px;font-weight:700}
 h3{font-size:12px;margin:12px 0 6px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
 .sub{color:var(--muted);font-size:12px;margin:0 0 10px}
 label{display:grid;gap:4px;font-size:12px;color:#cbd5e1;margin:8px 0}
+.col-flex{flex:1}
 input,select,textarea{width:100%;background:#090d14;border:1px solid #28354a;border-radius:7px;padding:8px 10px;color:var(--text);font:inherit}
 input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent)}
 textarea{min-height:68px;resize:vertical}
@@ -855,13 +862,17 @@ button{border:0;border-radius:7px;background:var(--accent);color:var(--accent-fg
 button:hover{opacity:.92}
 button.secondary{background:#182232;color:var(--text);border:1px solid #2a3950}
 button.secondary:hover{border-color:#3e5473}
+button.warn-btn{background:var(--warn);color:#1f1600;border:0}
 button.ghost{background:transparent;color:var(--muted);padding:4px 7px;font-weight:600}
 button.ghost:hover{color:var(--text);background:#182232}
 button.danger{background:#3b1d22;color:#fecaca;border:1px solid #5c2b33}
-button.chip{background:#131c2b;color:#cbd5e1;border:1px solid #243349;border-radius:99px;padding:5px 11px;font-weight:500;font-size:12px}
+button.chip{background:#131c2b;color:#cbd5e1;border:1px solid #243349;border-radius:99px;padding:6px 12px;font-weight:500;font-size:12px}
 button.chip:hover{border-color:var(--accent);color:var(--accent)}
 .row{display:flex;gap:7px;align-items:center;flex-wrap:wrap}
+.row.nowrap{flex-wrap:nowrap}
 .row.spread{justify-content:space-between}
+.mt-sm{margin-top:8px}
+.mb-sm{margin-bottom:8px}
 .nav-list{display:grid;gap:4px}
 .nav-item{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 10px;border-radius:8px;border:1px solid transparent;cursor:pointer;color:#cbd5e1;transition:background .12s}
 .nav-item:hover{background:#141d2b}
@@ -871,6 +882,9 @@ button.chip:hover{border-color:var(--accent);color:var(--accent)}
 .nav-actions{display:none;gap:3px}
 .nav-item:hover .nav-actions{display:flex}
 .meta{font-size:11px;color:var(--muted)}
+.meta-break{font-size:11px;color:var(--muted);word-break:break-all}
+.fold-box{margin:8px 0;padding:8px;border:1px solid var(--line);border-radius:7px}
+.fold-summary{cursor:pointer;font-weight:600;font-size:11.5px;color:var(--muted)}
 .pill{font-size:10.5px;border:1px solid #293b52;background:#111a27;padding:1px 7px;border-radius:99px;color:var(--accent);white-space:nowrap;display:inline-flex;align-items:center;gap:4px}
 .pill.wait{color:var(--warn);border-color:#5c4822;background:#211a0d}
 .pill.role{color:#93c5fd;border-color:#233b5c;background:#101c2e}
@@ -879,16 +893,16 @@ button.chip:hover{border-color:var(--accent);color:var(--accent)}
 .dot.wait{background:var(--warn);box-shadow:0 0 8px var(--warn)}
 .chat-head{height:52px;padding:0 18px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;gap:10px;background:#0e141f;flex-shrink:0}
 .chat-feed{flex:1;padding:18px 22px;overflow-y:auto;display:grid;gap:14px;align-content:start}
-.welcome-box{border:1px solid #223247;border-radius:11px;padding:14px 16px;background:#101824}
+.welcome-box{border:1px solid #223247;border-radius:11px;padding:14px 16px;background:linear-gradient(180deg,#111a28,#0e1520)}
 .chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
 .turn{display:grid;gap:8px}
-.msg-user{justify-self:end;max-width:80%;background:#19273c;border:1px solid #2b4162;border-radius:12px 12px 3px 12px;padding:9px 13px}
-.msg-bot{justify-self:stretch;background:var(--panel);border:1px solid var(--line);border-radius:12px 12px 12px 3px;padding:12px 15px;cursor:pointer;transition:border-color .12s}
+.msg-user{justify-self:end;max-width:82%;background:#19273c;border:1px solid #2b4162;border-radius:12px 12px 3px 12px;padding:10px 14px}
+.msg-bot{justify-self:stretch;background:var(--panel);border:1px solid var(--line);border-radius:12px 12px 12px 3px;padding:13px 16px;cursor:pointer;transition:border-color .12s}
 .msg-bot:hover,.msg-bot.selected{border-color:#385173}
-.msg-head{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:5px;font-size:11px;color:var(--muted)}
+.msg-head{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px;font-size:11px;color:var(--muted)}
 .msg-head strong{color:var(--text);font-size:13px;display:inline-flex;align-items:center;gap:6px}
 .composer{padding:12px 18px;border-top:1px solid var(--line);background:#0d131d;flex-shrink:0}
-.composer-bar{display:flex;gap:10px;align-items:center;margin-bottom:7px;font-size:12px;color:var(--muted)}
+.composer-bar{display:flex;gap:10px;align-items:center;margin-bottom:7px;font-size:12px;color:var(--muted);flex-wrap:wrap}
 .composer-bar select{width:auto;padding:4px 8px;font-size:12px;background:#131c2b}
 .composer-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:stretch}
 .composer-row textarea{min-height:46px;max-height:140px;margin:0}
@@ -900,13 +914,42 @@ details.tools-fold{margin:6px 0;border:1px solid #1e2a3c;border-radius:7px;backg
 details.tools-fold summary{cursor:pointer;font-weight:600;color:#93c5fd}
 .approval{border:1px solid #785c26;background:#221c10;border-radius:9px;padding:11px;margin:8px 0}
 .approval h3{font-size:12.5px;margin:0 0 4px;color:var(--warn);text-transform:none}
-pre{white-space:pre-wrap;overflow-wrap:anywhere;font:11.5px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;background:#070a0f;border:1px solid var(--line);border-radius:7px;padding:9px;max-height:280px;overflow:auto;margin:6px 0}
-.result{white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.55}
+pre{white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;background:#070a0f;border:1px solid var(--line);border-radius:7px;padding:10px;max-height:320px;overflow:auto;margin:8px 0}
+.result{overflow-wrap:anywhere;line-height:1.58}
+.err-text{color:var(--danger);margin-top:6px;white-space:pre-wrap}
+.md h1,.md h2,.md h3,.md h4{color:#f8fafc;margin:10px 0 5px;line-height:1.3;text-transform:none;letter-spacing:0}
+.md h1{font-size:16px;border-bottom:1px solid var(--line);padding-bottom:4px}
+.md h2{font-size:14.5px}
+.md h3{font-size:13.5px;color:#93c5fd}
+.md h4{font-size:13px;color:#cbd5e1}
+.md p{margin:6px 0}
+.md p:first-child{margin-top:0}
+.md p:last-child{margin-bottom:0}
+.md ul,.md ol{margin:6px 0;padding-left:20px}
+.md li{margin:3px 0}
+.md code{font:12px/1.35 ui-monospace,SFMono-Regular,Menlo,monospace;background:#090d14;border:1px solid #233247;border-radius:5px;padding:1px 5px;color:#7dd3fc}
+.md pre code{background:transparent;border:0;padding:0;color:#e2e8f0}
+.md blockquote{margin:6px 0;padding:4px 10px;border-left:3px solid var(--accent);background:#0c131e;color:#cbd5e1;border-radius:0 6px 6px 0}
+.md-table-wrap{overflow-x:auto;margin:8px 0}
+.md-table{width:100%;border-collapse:collapse;font-size:12.5px;background:#0a0f17;border:1px solid var(--line);border-radius:7px;overflow:hidden}
+.md-table th,.md-table td{border:1px solid #1e2b3e;padding:6px 10px;text-align:left;vertical-align:top}
+.md-table th{background:#131d2c;color:#93c5fd;font-weight:700}
+.md-table tr:nth-child(even) td{background:#0d1420}
 .status{color:var(--muted);font-size:11.5px;min-height:15px;margin-top:4px}
 .tabs{display:flex;border-bottom:1px solid var(--line);background:#0b1018;padding:0 8px;flex-shrink:0;overflow-x:auto}
 .tab{background:transparent;color:var(--muted);border:0;border-bottom:2px solid transparent;border-radius:0;padding:11px 10px;font-size:12px;font-weight:600}
 .tab.active{color:var(--accent);border-bottom-color:var(--accent)}
 .drawer-body{flex:1;padding:14px;overflow-y:auto}
+.comp-stage{flex:1;display:flex;flex-direction:column;min-height:0;padding:14px 18px;gap:10px;overflow-y:auto;background:#080c12}
+.comp-toolbar{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;background:#101723;border:1px solid var(--line);border-radius:10px;padding:10px 14px}
+.comp-banner{border-radius:9px;padding:9px 13px;font-size:12.5px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+.comp-banner.human{background:#231b0a;border:1px solid #85641e;color:#fde68a}
+.comp-banner.bot{background:#0c1d18;border:1px solid #1f5742;color:#a7f3d0}
+.screen-stage-wrap{position:relative;flex:1;min-height:360px;border:2px solid #26364d;border-radius:11px;overflow:hidden;background:#040609;display:grid;place-items:center;outline:none}
+.screen-stage-wrap:focus{border-color:var(--accent);box-shadow:0 0 0 2px rgba(52,211,153,.25)}
+.screen-stage-wrap.human-mode{border-color:var(--warn)}
+.screen-stage-wrap img{display:block;width:100%;max-height:calc(100vh - 285px);object-fit:contain;cursor:crosshair;user-select:none}
+.click-dot{position:absolute;width:18px;height:18px;border:2px solid var(--warn);background:rgba(251,191,36,.3);border-radius:50%;transform:translate(-50%,-50%);pointer-events:none}
 .screen-wrap{position:relative;border:1px solid var(--line);border-radius:9px;overflow:hidden;background:#05080c;margin:8px 0}
 .screen-wrap img{display:block;width:100%;height:auto;cursor:crosshair}
 .proj-meta-card{background:#121a27;border:1px solid #223147;border-radius:9px;padding:9px 11px}
@@ -928,34 +971,38 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;font:11.5px/1.45 ui-monospace,SF
       <button type="button" class="ghost" id="openNewProjectBtn" title="Create or add a project">+ New Project</button>
     </div>
   </div>
+  <div class="stage-switch" role="tablist" aria-label="Workspace View">
+    <button type="button" class="stage-btn active" id="viewChatBtn">✦ Team Chat</button>
+    <button type="button" class="stage-btn" id="viewComputerBtn">▣ Virtual Computer (Full Screen)</button>
+  </div>
   <div class="top-actions">
-    <button type="button" id="spawnTeamBtn" title="Ensure Ada, Linus, Grace, Sentinel &amp; Atlas exist in this project">⚡ Spawn Project Team</button>
-    <button type="button" class="secondary" id="openComputerTopBtn">▣ Computer</button>
-    <button type="button" class="secondary" id="openNewBotBtn">+ New Bot</button>
-    <button type="button" class="secondary" id="openSettingsBtn">⚙ API Keys</button>
+    <button type="button" id="spawnTeamBtn" title="Ensure Ada, Linus, Grace, Sentinel &amp; Atlas exist in this project">⚡ Spawn Team</button>
+    <button type="button" class="secondary" id="openNewBotBtn">+ Add Bot</button>
+    <button type="button" class="secondary" id="openSettingsBtn">⚙ AI &amp; GPU</button>
+    <button type="button" class="ghost" id="toggleDrawerBtn" title="Show or hide side panel">◫ Side Panel</button>
   </div>
 </header>
 
-<main class="studio">
+<main class="studio" id="studioGrid">
   <aside class="sidebar">
     <div class="proj-meta-card" id="activeProjectCard"></div>
 
     <div>
-      <div class="sec-label"><span>Project Room</span></div>
+      <div class="sec-label"><span>Team Channel</span></div>
       <div id="channelTeamHq" class="nav-item selected">
         <div class="nav-main">
           <strong>#</strong>
           <div>
             <strong>project-hq</strong>
-            <div class="meta">All bots · Ada orchestrates</div>
+            <div class="meta">All bots · Ask Ada anything</div>
           </div>
         </div>
       </div>
     </div>
 
-    <div style="flex:1;min-height:0;display:flex;flex-direction:column">
+    <div class="sidebar-bots-wrap">
       <div class="sec-label">
-        <span>Project Bots</span>
+        <span>Your Project Bots</span>
         <button type="button" class="ghost" id="sidebarAddBotBtn">+ Add</button>
       </div>
       <div id="bots" class="nav-list"></div>
@@ -965,51 +1012,58 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;font:11.5px/1.45 ui-monospace,SF
   </aside>
 
   <section class="center-col">
-    <div class="chat-head">
-      <div>
-        <h1 id="activeRoomTitle"># project-hq</h1>
-        <div class="meta" id="activeRoomSub">Shared project room · Ask Ada to create bots, delegate tasks, or @mention any bot.</div>
+    <div id="chatStageView" class="center-col col-flex">
+      <div class="chat-head">
+        <div>
+          <h1 id="activeRoomTitle"># project-hq</h1>
+          <div class="meta" id="activeRoomSub">Shared project room · Ask Ada to create bots, write code, or use the Virtual Computer.</div>
+        </div>
+        <div class="row">
+          <button type="button" class="secondary hidden" id="allRoomBtn">← Back to #project-hq</button>
+          <button type="button" class="secondary" id="openComputerFromChatBtn">▣ Open Virtual Computer</button>
+          <button type="button" class="ghost" id="refresh" title="Refresh state">↻ Refresh</button>
+        </div>
       </div>
-      <div class="row">
-        <button type="button" class="secondary hidden" id="allRoomBtn">← Back to #project-hq</button>
-        <button type="button" class="ghost" id="refresh" title="Refresh state">↻ Refresh</button>
+
+      <div id="chatFeed" class="chat-feed"></div>
+
+      <div class="composer">
+        <form id="taskForm">
+          <div class="composer-bar">
+            <span>Send to:</span>
+            <select name="botId" id="botSelect" required></select>
+            <span>Auto-Review by:</span>
+            <select name="reviewerBotId" id="reviewerSelect"><option value="">No automatic review</option></select>
+            <span id="taskStatus" class="status"></span>
+          </div>
+          <div class="composer-row">
+            <textarea name="prompt" id="promptInput" required placeholder="Tell your bots what to build, fix, or open on the Virtual Computer… (Press Enter to send)"></textarea>
+            <button>Send ↵</button>
+          </div>
+        </form>
       </div>
     </div>
 
-    <div id="chatFeed" class="chat-feed"></div>
-
-    <div class="composer">
-      <form id="taskForm">
-        <div class="composer-bar">
-          <span>To:</span>
-          <select name="botId" id="botSelect" required></select>
-          <span>QA Review:</span>
-          <select name="reviewerBotId" id="reviewerSelect"><option value="">None</option></select>
-          <span id="taskStatus" class="status"></span>
-        </div>
-        <div class="composer-row">
-          <textarea name="prompt" id="promptInput" required placeholder="Message Ada or @mention a bot in this project… (Enter to send, Shift+Enter for newline)"></textarea>
-          <button>Send ↵</button>
-        </div>
-      </form>
+    <div id="computerStageView" class="comp-stage hidden">
+      <div id="computerStagePanel" class="col-flex"></div>
     </div>
   </section>
 
-  <aside class="inspector">
+  <aside class="inspector" id="inspectorDrawer">
     <div class="tabs">
-      <button type="button" class="tab active" data-tab="detail">≡ Inspector</button>
-      <button type="button" class="tab" data-tab="computer">▣ Computer</button>
+      <button type="button" class="tab active" data-tab="detail">≡ Activity</button>
+      <button type="button" class="tab" data-tab="computer">▣ Mini Screen</button>
       <button type="button" class="tab" data-tab="bot">+ Bot</button>
       <button type="button" class="tab" data-tab="project">◈ Project</button>
-      <button type="button" class="tab" data-tab="settings">⚙ Keys</button>
+      <button type="button" class="tab" data-tab="settings">⚙ AI / GPU</button>
     </div>
 
     <div class="drawer-body">
       <div id="tab-detail" class="tab-pane">
         <div id="detail"></div>
-        <details style="margin-top:14px">
-          <summary class="meta" style="cursor:pointer;font-weight:600">Recent project tasks (<span id="taskCount">0</span>)</summary>
-          <div id="tasks" class="nav-list" style="margin-top:8px"></div>
+        <details class="fold-box mt-sm">
+          <summary class="fold-summary">Recent project tasks (<span id="taskCount">0</span>)</summary>
+          <div id="tasks" class="nav-list mt-sm"></div>
         </details>
       </div>
 
@@ -1024,12 +1078,12 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;font:11.5px/1.45 ui-monospace,SF
           <input type="hidden" name="botId">
           <label>Bot Name<input name="name" required placeholder="e.g. Linus, Grace, Nova"></label>
           <div class="row">
-            <label style="flex:1">Role<select name="role"><option value="general">general (Orchestrator)</option><option value="coding">coding (Coder)</option><option value="qa">qa (Reviewer)</option><option value="security">security (Auditor)</option><option value="research">research</option><option value="computer">computer</option></select></label>
-            <label style="flex:1">Runtime<select name="runtime"><option value="ocp-agent">OCP Agent</option><option value="ocp-coder">OCP Coder</option></select></label>
+            <label class="col-flex">Role<select name="role"><option value="general">Team Lead (Orchestrator)</option><option value="coding">Coder (Writes Code)</option><option value="qa">QA Tester (Verifies Work)</option><option value="security">Security Guard (Audits)</option><option value="computer">Computer Operator (Browser/GUI)</option><option value="research">Researcher</option></select></label>
+            <label class="col-flex">Runtime<select name="runtime"><option value="ocp-agent">OCP Agent</option><option value="ocp-coder">OCP Coder</option></select></label>
           </div>
-          <label>Instructions (optional)<textarea name="instructions" placeholder="Leave blank for role default instructions…"></textarea></label>
-          <details style="margin:8px 0;padding:8px;border:1px solid var(--line);border-radius:7px">
-            <summary class="meta" style="cursor:pointer;font-weight:600">Advanced Project Path, Sandbox &amp; Model Override</summary>
+          <label>Instructions (optional)<textarea name="instructions" placeholder="Leave blank for smart default instructions…"></textarea></label>
+          <details class="fold-box">
+            <summary class="fold-summary">Advanced Project Path, Sandbox &amp; Model Override</summary>
             <label>Project Workspace Path<input name="workspace" required value="${escapeAttribute(process.cwd())}"></label>
             <label>Tool Isolation<select name="isolation"><option value="host">Host process (fast local)</option><option value="docker">Docker container sandbox</option></select></label>
             <label id="networkField" class="hidden">Docker Network<select name="network"><option value="disabled">Disabled</option><option value="enabled">Enabled</option></select></label>
@@ -1038,7 +1092,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;font:11.5px/1.45 ui-monospace,SF
             <label class="provider-field hidden">LiteLLM Endpoint<input name="endpoint" placeholder="http://127.0.0.1:4000/v1"></label>
             <label class="provider-field hidden">API Key Env<input name="apiKeyEnv" value="LITELLM_API_KEY"></label>
           </details>
-          <div class="row" style="margin-top:10px">
+          <div class="row mt-sm">
             <button id="botSubmit">Save Bot</button>
             <button id="botEditCancel" type="button" class="secondary hidden">Reset</button>
           </div>
@@ -1055,18 +1109,18 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;font:11.5px/1.45 ui-monospace,SF
           <label>Description (optional)<input name="description" placeholder="Short summary of this product"></label>
           <label>Starter Bot Team<select name="mode">
             <option value="team">⚡ Full 5-Bot Team (Ada, Linus, Grace, Sentinel, Atlas)</option>
-            <option value="lead">✦ Lead Orchestrator Only (Ada)</option>
+            <option value="lead">✦ Team Lead Only (Ada)</option>
             <option value="none">Empty (Add bots manually)</option>
           </select></label>
-          <button type="submit" style="margin-top:6px">Create Project &amp; Team</button>
+          <button type="submit" class="mt-sm">Create Project &amp; Team</button>
         </form>
         <div id="projectStatus" class="status"></div>
       </div>
 
       <div id="tab-settings" class="tab-pane hidden">
-        <h2>⚙ API Keys &amp; Local GPU</h2>
+        <h2>⚙ AI Brain &amp; Local GPU</h2>
         <p class="sub">Switch to your local NVIDIA GPU (Ollama) in one click, or save cloud provider keys locally (mode 0600).</p>
-        <div class="row" style="margin-bottom:10px">
+        <div class="row mb-sm">
           <button type="button" id="useLocalGpuBtn">⚡ Use Local GPU (gemma4:latest)</button>
           <button type="button" class="secondary" id="useOpenRouterPresetBtn">✦ Use OpenRouter</button>
         </div>
@@ -1084,18 +1138,116 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;font:11.5px/1.45 ui-monospace,SF
   </aside>
 </main>
 
-<script nonce="${token}">const TOKEN='${token}',DEFAULT_WS='${escapeJs(process.cwd())}';let state={projects:[],bots:[],tasks:[]},activeWorkspace='',selected='',conversationBot='',computerBot='',computerMeta=null,bootstrapped=false,activeTab='detail';
+<script nonce="${token}">const TOKEN='${token}',DEFAULT_WS='${escapeJs(process.cwd())}';let state={projects:[],bots:[],tasks:[]},activeWorkspace='',selected='',conversationBot='',computerBot='',computerMeta=null,bootstrapped=false,activeTab='detail',centerView='chat',lastClickPt=null;
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const isAgentRuntime=r=>r==='ocp-agent'||r==='hermes';
 const runtimeLabel=r=>isAgentRuntime(r)?'OCP Agent':'OCP Coder';
 const roleIcon=r=>({general:'✦',coding:'⚡',qa:'✔',security:'◆',research:'◎',computer:'▣'}[r]||'●');
+const roleFriendly=r=>({general:'Team Lead',coding:'Coder',qa:'QA Tester',security:'Security',research:'Researcher',computer:'Computer'}[r]||r);
+
+function inlineMd(s){
+  return s
+    .replace(/\`([^\`]+)\`/g,'<code>$1</code>')
+    .replace(/\\*\\*([^*]+)\\*\\*/g,'<strong>$1</strong>')
+    .replace(/(^|[\\s(])\\*([^\\s*][^*]*?)\\*(?=[\\s).,!?:;]|$)/g,'$1<em>$2</em>');
+}
+
+function renderMd(raw){
+  if(!raw)return '';
+  const codeBlocks=[];
+  let text=esc(raw).replace(/\`\`\`([a-zA-Z0-9_-]*)\\n([\\s\\S]*?)\`\`\`/g,(_,lang,code)=>{
+    const idx=codeBlocks.length;
+    codeBlocks.push('<pre><code>'+code.replace(/\\n$/,'')+'</code></pre>');
+    return '@@CODEBLOCK_'+idx+'@@';
+  });
+  const lines=text.split('\\n');
+  const out=[];
+  let i=0;
+  while(i<lines.length){
+    const line=lines[i];
+    const trimmed=line.trim();
+    if(!trimmed){i++;continue}
+    if(/^@@CODEBLOCK_\\d+@@$/.test(trimmed)){
+      out.push(trimmed);i++;continue;
+    }
+    if(trimmed.startsWith('|')&&trimmed.endsWith('|')&&i+1<lines.length&&/^\\|[\\s:|-]+\\|$/.test(lines[i+1].trim())){
+      const headers=trimmed.slice(1,-1).split('|').map(c=>inlineMd(c.trim()));
+      i+=2;
+      const rows=[];
+      while(i<lines.length&&lines[i].trim().startsWith('|')&&lines[i].trim().endsWith('|')){
+        rows.push(lines[i].trim().slice(1,-1).split('|').map(c=>inlineMd(c.trim())));
+        i++;
+      }
+      out.push('<div class="md-table-wrap"><table class="md-table"><thead><tr>'+headers.map(h=>'<th>'+h+'</th>').join('')+'</tr></thead><tbody>'+rows.map(r=>'<tr>'+r.map(c=>'<td>'+c+'</td>').join('')+'</tr>').join('')+'</tbody></table></div>');
+      continue;
+    }
+    const hMatch=/^(#{1,4})\\s+(.+)$/.exec(trimmed);
+    if(hMatch){
+      const lvl=hMatch[1].length;
+      out.push('<h'+lvl+'>'+inlineMd(hMatch[2])+'</h'+lvl+'>');
+      i++;continue;
+    }
+    if(/^[-*]\\s+/.test(trimmed)){
+      const items=[];
+      while(i<lines.length&&/^[-*]\\s+/.test(lines[i].trim())){
+        items.push('<li>'+inlineMd(lines[i].trim().replace(/^[-*]\\s+/,''))+'</li>');
+        i++;
+      }
+      out.push('<ul>'+items.join('')+'</ul>');
+      continue;
+    }
+    if(/^\\d+\\.\\s+/.test(trimmed)){
+      const items=[];
+      while(i<lines.length&&/^\\d+\\.\\s+/.test(lines[i].trim())){
+        items.push('<li>'+inlineMd(lines[i].trim().replace(/^\\d+\\.\\s+/,''))+'</li>');
+        i++;
+      }
+      out.push('<ol>'+items.join('')+'</ol>');
+      continue;
+    }
+    if(trimmed.startsWith('&gt;')){
+      const quotes=[];
+      while(i<lines.length&&lines[i].trim().startsWith('&gt;')){
+        quotes.push(inlineMd(lines[i].trim().replace(/^&gt;\\s?/,'')));
+        i++;
+      }
+      out.push('<blockquote>'+quotes.join('<br>')+'</blockquote>');
+      continue;
+    }
+    const para=[];
+    while(i<lines.length&&lines[i].trim()&&!/^(#{1,4}\\s|[-*]\\s|\\d+\\.\\s|&gt;|@@CODEBLOCK_\\d+@@)/.test(lines[i].trim())&&!(lines[i].trim().startsWith('|')&&lines[i].trim().endsWith('|'))){
+      para.push(inlineMd(lines[i]));
+      i++;
+    }
+    out.push('<p>'+para.join('<br>')+'</p>');
+  }
+  return '<div class="md">'+out.join('').replace(/@@CODEBLOCK_(\\d+)@@/g,(_,idx)=>codeBlocks[Number(idx)]||'')+'</div>';
+}
+
+function setCenterView(mode){
+  centerView=mode;
+  document.querySelector('#viewChatBtn').classList.toggle('active',mode==='chat');
+  document.querySelector('#viewComputerBtn').classList.toggle('active',mode==='computer');
+  document.querySelector('#chatStageView').classList.toggle('hidden',mode!=='chat');
+  document.querySelector('#computerStageView').classList.toggle('hidden',mode!=='computer');
+  if(mode==='computer')refreshComputer(true);
+}
 
 function setTab(tabName){
   activeTab=tabName;
+  document.querySelector('#studioGrid').classList.remove('drawer-closed');
+  document.querySelector('#inspectorDrawer').classList.remove('hidden');
   document.querySelectorAll('.tab').forEach(btn=>btn.classList.toggle('active',btn.dataset.tab===tabName));
   document.querySelectorAll('.tab-pane').forEach(pane=>pane.classList.toggle('hidden',pane.id!=='tab-'+tabName));
 }
 document.querySelectorAll('.tab').forEach(btn=>btn.addEventListener('click',()=>setTab(btn.dataset.tab)));
+document.querySelector('#viewChatBtn').addEventListener('click',()=>setCenterView('chat'));
+document.querySelector('#viewComputerBtn').addEventListener('click',()=>setCenterView('computer'));
+document.querySelector('#openComputerFromChatBtn').addEventListener('click',()=>setCenterView('computer'));
+document.querySelector('#toggleDrawerBtn').addEventListener('click',()=>{
+  const closed=document.querySelector('#studioGrid').classList.toggle('drawer-closed');
+  document.querySelector('#inspectorDrawer').classList.toggle('hidden',closed);
+});
 
 async function api(url,body,method){
   const r=await fetch(url,{method:method||(body?'POST':'GET'),headers:body?{'content-type':'application/json','x-ocp-token':TOKEN}:{},body:body?JSON.stringify(body):undefined});
@@ -1191,7 +1343,7 @@ function draw(){
   const activeProj=projects.find(p=>p.workspace===activeWorkspace)||projects[0];
   const pBots=projectBots();
   const pTasks=projectTasks();
-  document.querySelector('#activeProjectCard').innerHTML='<strong>◈ '+esc(activeProj?.name||'Project')+'</strong><div class="meta" style="word-break:break-all">'+esc(activeWorkspace)+'</div>'+(activeProj?.description?'<div class="meta" style="margin-top:3px">'+esc(activeProj.description)+'</div>':'');
+  document.querySelector('#activeProjectCard').innerHTML='<strong>◈ '+esc(activeProj?.name||'Project')+'</strong><div class="meta-break">'+esc(activeWorkspace)+'</div>'+(activeProj?.description?'<div class="meta mt-sm">'+esc(activeProj.description)+'</div>':'');
 
   const botsEl=document.querySelector('#bots'),select=document.querySelector('#botSelect'),reviewerSelect=document.querySelector('#reviewerSelect'),chosenBot=select.value,chosenReviewer=reviewerSelect.value;
   document.querySelector('#channelTeamHq').classList.toggle('selected',!conversationBot);
@@ -1200,21 +1352,21 @@ function draw(){
   botsEl.innerHTML=pBots.length?pBots.map(b=>{
     const activeTask=pTasks.find(t=>t.botId===b.id&&['queued','running','awaiting-approval'].includes(t.status));
     const dotClass=activeTask?(activeTask.status==='awaiting-approval'?'wait':'busy'):'';
-    return '<div class="nav-item '+(conversationBot===b.id?'selected':'')+'" data-chat-bot="'+esc(b.id)+'"><div class="nav-main"><span class="dot '+dotClass+'"></span><span>'+roleIcon(b.role)+'</span><strong>'+esc(b.name)+'</strong><span class="pill role">'+esc(b.role)+'</span></div><div class="nav-actions"><button type="button" class="ghost" title="Edit bot" data-edit="'+esc(b.id)+'">✎</button><button type="button" class="ghost" title="Delete bot" data-delete-bot="'+esc(b.id)+'">×</button></div></div>';
-  }).join(''):'<div class="meta" style="padding:8px">No bots in this project yet. Click <b>⚡ Spawn Project Team</b> above!</div>';
+    return '<div class="nav-item '+(conversationBot===b.id?'selected':'')+'" data-chat-bot="'+esc(b.id)+'"><div class="nav-main"><span class="dot '+dotClass+'"></span><span>'+roleIcon(b.role)+'</span><strong>'+esc(b.name)+'</strong><span class="pill role">'+esc(roleFriendly(b.role))+'</span></div><div class="nav-actions"><button type="button" class="ghost" title="Edit bot" data-edit="'+esc(b.id)+'">✎</button><button type="button" class="ghost" title="Delete bot" data-delete-bot="'+esc(b.id)+'">×</button></div></div>';
+  }).join(''):'<div class="meta">No bots in this project yet. Click <b>⚡ Spawn Team</b> above!</div>';
 
-  select.innerHTML=pBots.map(b=>'<option value="'+esc(b.id)+'">'+roleIcon(b.role)+' '+esc(b.name)+' ('+esc(b.role)+')</option>').join('');
+  select.innerHTML=pBots.map(b=>'<option value="'+esc(b.id)+'">'+roleIcon(b.role)+' '+esc(b.name)+' ('+esc(roleFriendly(b.role))+')</option>').join('');
   if(conversationBot&&pBots.some(b=>b.id===conversationBot))select.value=conversationBot;
   else if(pBots.some(b=>b.id===chosenBot))select.value=chosenBot;
 
   const primary=pBots.find(b=>b.id===select.value);
   const reviewers=pBots.filter(b=>(b.role==='qa'||b.role==='security')&&b.id!==primary?.id);
-  reviewerSelect.innerHTML='<option value="">None</option>'+reviewers.map(b=>'<option value="'+esc(b.id)+'">'+esc(b.name)+' ('+esc(b.role)+')</option>').join('');
+  reviewerSelect.innerHTML='<option value="">No automatic review</option>'+reviewers.map(b=>'<option value="'+esc(b.id)+'">'+esc(b.name)+' ('+esc(roleFriendly(b.role))+')</option>').join('');
   if(reviewers.some(b=>b.id===chosenReviewer))reviewerSelect.value=chosenReviewer;
   select.onchange=draw;
 
   document.querySelectorAll('[data-edit]').forEach(el=>el.addEventListener('click',e=>{e.stopPropagation();editBot(el.dataset.edit)}));
-  document.querySelectorAll('[data-chat-bot]').forEach(el=>el.addEventListener('click',()=>{conversationBot=el.dataset.chatBot;select.value=conversationBot;draw()}));
+  document.querySelectorAll('[data-chat-bot]').forEach(el=>el.addEventListener('click',()=>{conversationBot=el.dataset.chatBot;select.value=conversationBot;if(state.bots.find(b=>b.id===conversationBot)?.role==='computer'){computerBot=conversationBot}draw()}));
   document.querySelectorAll('[data-delete-bot]').forEach(el=>el.addEventListener('click',async e=>{
     e.stopPropagation();
     const bot=state.bots.find(item=>item.id===el.dataset.deleteBot);
@@ -1236,56 +1388,150 @@ function draw(){
 
 function drawChatFeed(activeProj,pBots,pTasks){
   const feed=document.querySelector('#chatFeed'),activeBot=pBots.find(b=>b.id===conversationBot);
-  document.querySelector('#activeRoomTitle').textContent=activeBot?(roleIcon(activeBot.role)+' '+activeBot.name+' · '+activeBot.role+' ('+runtimeLabel(activeBot.runtime)+')'):'# project-hq · '+(activeProj?.name||'Project');
-  document.querySelector('#activeRoomSub').textContent=activeBot?('Direct 1-on-1 session in '+activeWorkspace):('All '+pBots.length+' bots in this project · Lead Bot (Ada) creates bots & delegates work');
+  document.querySelector('#activeRoomTitle').textContent=activeBot?(roleIcon(activeBot.role)+' '+activeBot.name+' · '+roleFriendly(activeBot.role)+' ('+runtimeLabel(activeBot.runtime)+')'):'# project-hq · '+(activeProj?.name||'Project');
+  document.querySelector('#activeRoomSub').textContent=activeBot?('Direct 1-on-1 chat with '+activeBot.name+' in '+activeWorkspace):('All '+pBots.length+' bots in this project · Ask Ada (Team Lead) to create bots, delegate code, or use the Virtual Computer');
   const visibleTasks=(activeBot?pTasks.filter(t=>t.botId===activeBot.id||t.reviewerBotId===activeBot.id):pTasks).slice().sort((a,b)=>a.createdAt.localeCompare(b.createdAt));
 
-  const quickChips='<div class="welcome-box"><div class="row spread"><strong>✦ '+esc(activeProj?.name||'Project')+' Bot Team</strong><span class="meta">Quick prompts</span></div><div class="chips"><button type="button" class="chip" data-quick="Spin up a full team of bots for this project">⚡ Spin up full project team</button><button type="button" class="chip" data-quick="List all bots in this project and their roles">≡ List project bots</button><button type="button" class="chip" data-quick="Create a research bot named Nova and ask Nova to summarize package.json">+ Create Nova &amp; delegate research</button><button type="button" class="chip" data-quick="Inspect this project repository and summarize the architecture">◎ Summarize repo architecture</button></div></div>';
+  const quickChips='<div class="welcome-box"><div class="row spread"><strong>✦ Welcome to '+esc(activeProj?.name||'Project')+' Studio</strong><span class="meta">Click any starter action below</span></div><div class="chips"><button type="button" class="chip" data-quick="Spin up a full team of bots for this project">⚡ 1. Create My Bot Team</button><button type="button" class="chip" data-quick="List all bots in this project and explain what each one does in simple terms">≡ 2. Meet the Bots</button><button type="button" class="chip" data-quick="@Atlas Open https://mail.google.com on the virtual computer browser and take a screenshot">▣ 3. Open Gmail on Virtual Computer</button><button type="button" class="chip" data-quick="Inspect this project repository and summarize what it does in plain English">◎ 4. Explain This Project</button></div></div>';
 
   feed.innerHTML=quickChips+(visibleTasks.length?visibleTasks.map(t=>{
     const b=state.bots.find(x=>x.id===t.botId),rev=state.bots.find(x=>x.id===t.reviewerBotId),p=t.pendingApproval,evts=t.events||[];
     const isRunning=t.status==='running'||t.status==='queued';
-    const toolsHtml=evts.length?(isRunning?'<div class="activity">'+evts.slice(-4).map(e=>'<div class="event">⚙ '+esc(e.title||e.kind)+'</div>').join('')+'</div>':'<details class="tools-fold"><summary>⚙ '+evts.length+' tool step'+(evts.length===1?'':'s')+' executed</summary><div class="activity" style="margin-top:6px">'+evts.map(e=>'<div class="event">'+esc(e.title||e.kind)+'</div>').join('')+'</div></details>'):'';
-    return '<div class="turn"><div class="msg-user"><div class="msg-head"><strong>You → @'+esc(b?.name||t.botId)+(rev?' (QA: @'+esc(rev.name)+')':'')+'</strong><span>'+esc(new Date(t.createdAt).toLocaleTimeString())+'</span></div><div class="result">'+esc(t.prompt)+'</div></div><div class="msg-bot '+(selected===t.id?'selected':'')+'" data-select-turn="'+esc(t.id)+'"><div class="msg-head"><strong>'+roleIcon(b?.role||'general')+' '+esc(b?.name||t.botId)+' <span class="pill role">'+esc(b?.role||'bot')+'</span></strong><span class="pill '+(t.status==='awaiting-approval'?'wait':'')+'">'+esc(t.status)+'</span></div>'+toolsHtml+(p?'<div class="approval"><h3>! Approval needed: '+esc(p.title)+'</h3>'+(p.description?'<div class="meta" style="margin-bottom:8px">'+esc(p.description)+'</div>':'')+'<div class="row"><button type="button" data-inline-approve="'+esc(t.id)+'" data-req="'+esc(p.id)+'">Allow once</button><button type="button" class="secondary" data-inline-deny="'+esc(t.id)+'" data-req="'+esc(p.id)+'">Deny</button></div></div>':'')+(t.result?'<div class="result">'+esc(t.result)+'</div>':(isRunning?'<div class="meta">Working…</div>':''))+(t.error?'<div class="result" style="color:var(--danger)">'+esc(t.error)+'</div>':'')+(t.workspaceChanges?.files?.length?'<div class="meta" style="margin-top:8px">◈ Changed: '+t.workspaceChanges.files.map(f=>esc(f.path)).join(', ')+'</div>':'')+'</div></div>';
+    const toolsHtml=evts.length?(isRunning?'<div class="activity">'+evts.slice(-4).map(e=>'<div class="event">⚙ '+esc(e.title||e.kind)+'</div>').join('')+'</div>':'<details class="tools-fold"><summary>⚙ '+evts.length+' step'+(evts.length===1?'':'s')+' completed (click to view)</summary><div class="activity mt-sm">'+evts.map(e=>'<div class="event">'+esc(e.title||e.kind)+'</div>').join('')+'</div></details>'):'';
+    return '<div class="turn"><div class="msg-user"><div class="msg-head"><strong>You → @'+esc(b?.name||t.botId)+(rev?' (Reviewed by @'+esc(rev.name)+')':'')+'</strong><span>'+esc(new Date(t.createdAt).toLocaleTimeString())+'</span></div><div class="result">'+renderMd(t.prompt)+'</div></div><div class="msg-bot '+(selected===t.id?'selected':'')+'" data-select-turn="'+esc(t.id)+'"><div class="msg-head"><strong>'+roleIcon(b?.role||'general')+' '+esc(b?.name||t.botId)+' <span class="pill role">'+esc(roleFriendly(b?.role||'bot'))+'</span></strong><span class="pill '+(t.status==='awaiting-approval'?'wait':'')+'">'+esc(t.status)+'</span></div>'+toolsHtml+(p?'<div class="approval"><h3>! Permission requested: '+esc(p.title)+'</h3>'+(p.description?'<div class="meta mb-sm">'+esc(p.description)+'</div>':'')+'<div class="row"><button type="button" data-inline-approve="'+esc(t.id)+'" data-req="'+esc(p.id)+'">✓ Approve &amp; Continue</button><button type="button" class="secondary" data-inline-deny="'+esc(t.id)+'" data-req="'+esc(p.id)+'">✕ Deny</button></div></div>':'')+(t.result?'<div class="result">'+renderMd(t.result)+'</div>':(isRunning?'<div class="meta">Thinking &amp; working…</div>':''))+(t.error?'<div class="err-text">'+esc(t.error)+'</div>':'')+(t.workspaceChanges?.files?.length?'<div class="meta mt-sm">◈ Files updated: '+t.workspaceChanges.files.map(f=>esc(f.path)).join(', ')+'</div>':'')+'</div></div>';
   }).join(''):'');
 
   document.querySelectorAll('[data-quick]').forEach(el=>el.addEventListener('click',()=>{const inp=document.querySelector('#promptInput');inp.value=el.dataset.quick;inp.focus()}));
-  document.querySelectorAll('[data-select-turn]').forEach(el=>el.addEventListener('click',()=>{selected=el.dataset.selectTurn;setTab('detail');drawDetail(pTasks)}));
+  document.querySelectorAll('[data-select-turn]').forEach(el=>el.addEventListener('click',()=>{selected=el.dataset.selectTurn;drawDetail(pTasks)}));
   document.querySelectorAll('[data-inline-approve]').forEach(el=>el.addEventListener('click',async e=>{e.stopPropagation();await api('/api/tasks/'+encodeURIComponent(el.dataset.inlineApprove)+'/approval',{requestId:el.dataset.req,approved:true});await load()}));
   document.querySelectorAll('[data-inline-deny]').forEach(el=>el.addEventListener('click',async e=>{e.stopPropagation();await api('/api/tasks/'+encodeURIComponent(el.dataset.inlineDeny)+'/approval',{requestId:el.dataset.req,approved:false});await load()}));
 }
 
 async function refreshComputer(capture){
   const pBots=projectBots();
-  if((!computerBot||!pBots.some(b=>b.id===computerBot))&&pBots[0])computerBot=pBots[0].id;
+  const preferred=pBots.find(b=>b.role==='computer')||pBots[0];
+  if((!computerBot||!pBots.some(b=>b.id===computerBot))&&preferred)computerBot=preferred.id;
   if(!computerBot)return;
   try{computerMeta=await api('/api/bots/'+encodeURIComponent(computerBot)+'/computer'+(capture?'?refresh=1':''));drawComputer(pBots)}catch(e){computerMeta={detail:e.message};drawComputer(pBots)}
 }
 
 function drawComputer(pBots){
-  const panel=document.querySelector('#computerPanel');
-  const bot=pBots.find(item=>item.id===computerBot)||pBots[0];
-  if(!bot){panel.innerHTML='<p class="sub">Spawn a bot in this project first to use the Virtual Computer.</p>';return}
-  computerBot=bot.id;
+  const miniPanel=document.querySelector('#computerPanel');
+  const stagePanel=document.querySelector('#computerStagePanel');
+  const preferred=pBots.find(item=>item.id===computerBot)||pBots.find(item=>item.role==='computer')||pBots[0];
+  if(!preferred){
+    const emptyMsg='<p class="sub">Click <b>⚡ Spawn Team</b> in the top bar first to create Atlas (your Computer Operator bot).</p>';
+    miniPanel.innerHTML=emptyMsg;
+    stagePanel.innerHTML=emptyMsg;
+    return;
+  }
+  computerBot=preferred.id;
   const m=computerMeta||{display:':50',width:1280,height:800,control:'partner',status:'live'};
   const held=m.control==='human';
-  panel.innerHTML='<div class="row spread" style="margin-bottom:6px"><div><h2>🖥️ Virtual Computer ('+esc(m.display||':50')+')</h2><div class="meta">Click screen to interact · Active bot: '+esc(bot.name)+'</div></div><span class="pill '+(held?'wait':'')+'">'+esc(m.control||'partner')+'</span></div><div class="row"><button type="button" id="compRefresh" class="secondary">↻ Refresh</button>'+(held?'<button type="button" id="compReturn">Return control</button>':'<button type="button" id="compTakeover" class="secondary">Take over</button>')+'<button type="button" id="compScrollUp" class="secondary">↑</button><button type="button" id="compScrollDown" class="secondary">↓</button></div><div class="screen-wrap"><img id="computerScreenImg" src="/api/bots/'+encodeURIComponent(bot.id)+'/computer/frame?t='+(m.frameMtimeMs||Date.now())+'" alt="Virtual computer screen"></div><div class="row" style="flex-wrap:nowrap"><input id="compUrlInput" placeholder="https://example.com" value="'+esc(m.lastUrl||'')+'"><button type="button" id="compOpenUrl">Open URL</button></div><div class="row" style="margin-top:6px"><input id="compTypeInput" placeholder="Type text…" style="flex:1"><button type="button" id="compTypeBtn">Type</button><button type="button" class="secondary" data-comp-key="Return">↵</button><button type="button" class="secondary" data-comp-key="BackSpace">⌫</button></div><div class="status" id="compStatus">'+esc(m.detail||'')+'</div>';
-  document.querySelector('#compRefresh').addEventListener('click',()=>refreshComputer(true));
-  document.querySelector('#compTakeover')?.addEventListener('click',async()=>{computerMeta=await api('/api/bots/'+encodeURIComponent(bot.id)+'/computer',{kind:'takeover'});drawComputer(pBots)});
-  document.querySelector('#compReturn')?.addEventListener('click',async()=>{computerMeta=await api('/api/bots/'+encodeURIComponent(bot.id)+'/computer',{kind:'return'});drawComputer(pBots)});
-  document.querySelector('#compScrollUp').addEventListener('click',async()=>{computerMeta=await api('/api/bots/'+encodeURIComponent(bot.id)+'/computer',{kind:'mouse',action:'scroll',direction:'up',amount:4});drawComputer(pBots)});
-  document.querySelector('#compScrollDown').addEventListener('click',async()=>{computerMeta=await api('/api/bots/'+encodeURIComponent(bot.id)+'/computer',{kind:'mouse',action:'scroll',direction:'down',amount:4});drawComputer(pBots)});
-  document.querySelector('#compOpenUrl').addEventListener('click',async()=>{const u=document.querySelector('#compUrlInput').value.trim();if(!u)return;document.querySelector('#compStatus').textContent='Opening URL…';try{computerMeta=await api('/api/bots/'+encodeURIComponent(bot.id)+'/computer',{kind:'browser',url:u});drawComputer(pBots)}catch(e){document.querySelector('#compStatus').textContent=e.message}});
-  document.querySelector('#compTypeBtn').addEventListener('click',async()=>{const t=document.querySelector('#compTypeInput').value;if(!t)return;try{computerMeta=await api('/api/bots/'+encodeURIComponent(bot.id)+'/computer',{kind:'keyboard',action:'type',text:t});drawComputer(pBots)}catch(e){document.querySelector('#compStatus').textContent=e.message}});
-  document.querySelectorAll('[data-comp-key]').forEach(el=>el.addEventListener('click',async()=>{try{computerMeta=await api('/api/bots/'+encodeURIComponent(bot.id)+'/computer',{kind:'keyboard',action:'key',key:el.dataset.compKey});drawComputer(pBots)}catch(e){document.querySelector('#compStatus').textContent=e.message}}));
-  document.querySelector('#computerScreenImg').addEventListener('click',async e=>{const rect=e.target.getBoundingClientRect();const w=m.width||1280,h=m.height||800;const x=Math.round((e.clientX-rect.left)/rect.width*w);const y=Math.round((e.clientY-rect.top)/rect.height*h);document.querySelector('#compStatus').textContent='Clicking ('+x+', '+y+')…';try{computerMeta=await api('/api/bots/'+encodeURIComponent(bot.id)+'/computer',{kind:'mouse',action:'click',x,y});drawComputer(pBots)}catch(err){document.querySelector('#compStatus').textContent=err.message}});
+  const frameSrc='/api/bots/'+encodeURIComponent(preferred.id)+'/computer/frame?t='+(m.frameMtimeMs||Date.now());
+
+  // 1. Mini sidebar preview
+  miniPanel.innerHTML='<div class="row spread mb-sm"><div><h2>▣ Virtual Computer ('+esc(m.display||':50')+')</h2><div class="meta">Operator: '+esc(preferred.name)+'</div></div><span class="pill '+(held?'wait':'')+'">'+(held?'● Human in Control':'● Bot in Control')+'</span></div><div class="row mb-sm"><button type="button" id="miniExpandBtn">▣ Open Full-Screen View</button><button type="button" id="miniRefreshBtn" class="secondary">↻</button></div><div class="screen-wrap"><img id="miniScreenImg" src="'+frameSrc+'" alt="Virtual computer mini preview"></div><div class="meta">'+esc(m.detail||'Click Open Full-Screen View for easy mouse & keyboard control.')+'</div>';
+  document.querySelector('#miniExpandBtn')?.addEventListener('click',()=>setCenterView('computer'));
+  document.querySelector('#miniRefreshBtn')?.addEventListener('click',()=>refreshComputer(true));
+  document.querySelector('#miniScreenImg')?.addEventListener('click',()=>setCenterView('computer'));
+
+  // 2. Large Full-Stage Interactive Virtual Computer
+  const dotHtml=lastClickPt?'<div class="click-dot" id="stageClickDot"></div>':'';
+  stagePanel.innerHTML='<div class="comp-toolbar"><div class="row"><strong>▣ Virtual Computer · '+esc(m.display||':50')+' ('+(m.width||1280)+'×'+(m.height||800)+')</strong><span class="pill '+(held?'wait':'')+'">'+(held?'● You Have Control (Bots Paused)':'● Bot Control ('+esc(preferred.name)+')')+'</span></div><div class="row">'+(held?'<button type="button" id="stageReturnBtn">✦ Return Control to Bot ('+esc(preferred.name)+')</button>':'<button type="button" class="warn-btn" id="stageTakeoverBtn">⚡ Take Control (Log in / Use Mouse &amp; Keyboard)</button>')+'<button type="button" class="secondary" id="stageRefreshBtn">↻ Refresh Screen</button><button type="button" class="secondary" id="stageScrollUpBtn">↑ Scroll Up</button><button type="button" class="secondary" id="stageScrollDownBtn">↓ Scroll Down</button><button type="button" class="ghost" id="stageBackChatBtn">← Back to Chat</button></div></div>'
+    +'<div class="comp-banner '+(held?'human':'bot')+'"><div>'+(held?'<strong>⚡ Human Takeover Active:</strong> Click anywhere on the screen below and type directly on your keyboard (or use the URL/text boxes below). While you hold control, bots are blocked from touching the screen.':'<strong>✦ Bot Mode Active:</strong> <b>'+esc(preferred.name)+'</b> can operate this screen. Need to sign into Gmail or enter a password? Click <b>⚡ Take Control</b> above.')+'</div><div class="row"><button type="button" class="chip" data-stage-url="https://mail.google.com">▸ Open Gmail</button><button type="button" class="chip" data-stage-url="https://www.google.com">▸ Google</button><button type="button" class="chip" data-stage-url="https://github.com">▸ GitHub</button></div></div>'
+    +'<div class="row nowrap"><input id="stageUrlInput" placeholder="Enter website URL (e.g. https://mail.google.com)…" value="'+esc(m.lastUrl||'')+'"><button type="button" id="stageOpenUrlBtn">Go to Website</button><input id="stageTypeInput" placeholder="Or paste/type text here to send to screen…"><button type="button" id="stageTypeBtn" class="secondary">Send Text</button><button type="button" class="secondary" data-stage-key="Return" title="Press Enter">Enter ↵</button><button type="button" class="secondary" data-stage-key="Tab" title="Press Tab">Tab ⇥</button><button type="button" class="secondary" data-stage-key="BackSpace" title="Press Backspace">⌫</button></div>'
+    +'<div class="screen-stage-wrap '+(held?'human-mode':'')+'" id="stageScreenWrap" tabindex="0" title="Click anywhere on the screen to click at that spot and type directly with your keyboard"><img id="stageScreenImg" src="'+frameSrc+'" alt="Full size virtual computer screen">'+dotHtml+'</div>'
+    +'<div class="row spread"><div class="status" id="stageCompStatus">'+esc(m.detail||'Ready · Click the screen to interact directly.')+'</div><div class="row nowrap"><input id="stageBotPrompt" placeholder="Tell '+esc(preferred.name)+' what to do on this screen next…"><button type="button" id="stageAskBotBtn">Ask '+esc(preferred.name)+' ↵</button></div></div>';
+
+  const setStatus=txt=>{const el=document.querySelector('#stageCompStatus');if(el)el.textContent=txt};
+  document.querySelector('#stageBackChatBtn')?.addEventListener('click',()=>setCenterView('chat'));
+  document.querySelector('#stageRefreshBtn')?.addEventListener('click',()=>refreshComputer(true));
+  document.querySelector('#stageTakeoverBtn')?.addEventListener('click',async()=>{setStatus('Taking human control…');computerMeta=await api('/api/bots/'+encodeURIComponent(preferred.id)+'/computer',{kind:'takeover'});drawComputer(pBots);document.querySelector('#stageScreenWrap')?.focus()});
+  document.querySelector('#stageReturnBtn')?.addEventListener('click',async()=>{setStatus('Returning control to '+preferred.name+'…');computerMeta=await api('/api/bots/'+encodeURIComponent(preferred.id)+'/computer',{kind:'return'});drawComputer(pBots)});
+  document.querySelector('#stageScrollUpBtn')?.addEventListener('click',async()=>{computerMeta=await api('/api/bots/'+encodeURIComponent(preferred.id)+'/computer',{kind:'mouse',action:'scroll',direction:'up',amount:5});drawComputer(pBots)});
+  document.querySelector('#stageScrollDownBtn')?.addEventListener('click',async()=>{computerMeta=await api('/api/bots/'+encodeURIComponent(preferred.id)+'/computer',{kind:'mouse',action:'scroll',direction:'down',amount:5});drawComputer(pBots)});
+
+  const openUrl=async u=>{if(!u)return;setStatus('Opening '+u+'…');try{computerMeta=await api('/api/bots/'+encodeURIComponent(preferred.id)+'/computer',{kind:'browser',url:u});drawComputer(pBots)}catch(e){setStatus(e.message)}};
+  document.querySelector('#stageOpenUrlBtn')?.addEventListener('click',()=>openUrl(document.querySelector('#stageUrlInput').value.trim()));
+  document.querySelector('#stageUrlInput')?.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();openUrl(e.target.value.trim())}});
+  document.querySelectorAll('[data-stage-url]').forEach(el=>el.addEventListener('click',()=>openUrl(el.dataset.stageUrl)));
+
+  const sendType=async()=>{const inp=document.querySelector('#stageTypeInput');const t=inp?.value;if(!t)return;inp.value='';setStatus('Typing text…');try{computerMeta=await api('/api/bots/'+encodeURIComponent(preferred.id)+'/computer',{kind:'keyboard',action:'type',text:t});drawComputer(pBots)}catch(e){setStatus(e.message)}};
+  document.querySelector('#stageTypeBtn')?.addEventListener('click',sendType);
+  document.querySelector('#stageTypeInput')?.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();sendType()}});
+  document.querySelectorAll('[data-stage-key]').forEach(el=>el.addEventListener('click',async()=>{try{computerMeta=await api('/api/bots/'+encodeURIComponent(preferred.id)+'/computer',{kind:'keyboard',action:'key',key:el.dataset.stageKey});drawComputer(pBots)}catch(e){setStatus(e.message)}}));
+
+  const stageImg=document.querySelector('#stageScreenImg');
+  const stageWrap=document.querySelector('#stageScreenWrap');
+  stageImg?.addEventListener('click',async e=>{
+    stageWrap?.focus();
+    const rect=e.target.getBoundingClientRect();
+    const w=m.width||1280,h=m.height||800;
+    const x=Math.round((e.clientX-rect.left)/rect.width*w);
+    const y=Math.round((e.clientY-rect.top)/rect.height*h);
+    lastClickPt={x,y};
+    setStatus('Clicking ('+x+', '+y+') — you can now type directly on your keyboard…');
+    try{computerMeta=await api('/api/bots/'+encodeURIComponent(preferred.id)+'/computer',{kind:'mouse',action:'click',x,y});drawComputer(pBots);document.querySelector('#stageScreenWrap')?.focus()}catch(err){setStatus(err.message)}
+  });
+  stageImg?.addEventListener('dblclick',async e=>{
+    const rect=e.target.getBoundingClientRect();
+    const w=m.width||1280,h=m.height||800;
+    const x=Math.round((e.clientX-rect.left)/rect.width*w);
+    const y=Math.round((e.clientY-rect.top)/rect.height*h);
+    setStatus('Double-clicking ('+x+', '+y+')…');
+    try{computerMeta=await api('/api/bots/'+encodeURIComponent(preferred.id)+'/computer',{kind:'mouse',action:'double_click',x,y});drawComputer(pBots);document.querySelector('#stageScreenWrap')?.focus()}catch(err){setStatus(err.message)}
+  });
+  stageWrap?.addEventListener('wheel',async e=>{
+    e.preventDefault();
+    const direction=e.deltaY<0?'up':'down';
+    try{computerMeta=await api('/api/bots/'+encodeURIComponent(preferred.id)+'/computer',{kind:'mouse',action:'scroll',direction,amount:4});drawComputer(pBots)}catch{}
+  },{passive:false});
+  stageWrap?.addEventListener('keydown',async e=>{
+    if(['Shift','Control','Alt','Meta','CapsLock'].includes(e.key))return;
+    e.preventDefault();
+    try{
+      if(e.ctrlKey||e.metaKey){
+        const k=e.key.toLowerCase();
+        if(['a','c','v','x','l','r','t','w','z'].includes(k)){
+          computerMeta=await api('/api/bots/'+encodeURIComponent(preferred.id)+'/computer',{kind:'keyboard',action:'hotkey',key:'ctrl+'+k});
+          drawComputer(pBots);document.querySelector('#stageScreenWrap')?.focus();return;
+        }
+      }
+      if(e.key.length===1&&!e.ctrlKey&&!e.metaKey){
+        computerMeta=await api('/api/bots/'+encodeURIComponent(preferred.id)+'/computer',{kind:'keyboard',action:'type',text:e.key});
+      }else{
+        const keyMap={Enter:'Return',Backspace:'BackSpace',Tab:'Tab',Escape:'Escape',Delete:'Delete',ArrowUp:'Up',ArrowDown:'Down',ArrowLeft:'Left',ArrowRight:'Right',Home:'Home',End:'End',PageUp:'Page_Up',PageDown:'Page_Down',' ':'space'};
+        const mapped=keyMap[e.key]||e.key;
+        computerMeta=await api('/api/bots/'+encodeURIComponent(preferred.id)+'/computer',{kind:'keyboard',action:'key',key:mapped});
+      }
+      drawComputer(pBots);
+      document.querySelector('#stageScreenWrap')?.focus();
+    }catch(err){setStatus(err.message)}
+  });
+
+  const askBotFromStage=async()=>{
+    const inp=document.querySelector('#stageBotPrompt');
+    const prompt=inp?.value?.trim();
+    if(!prompt)return;
+    inp.value='';
+    if(held){
+      await api('/api/bots/'+encodeURIComponent(preferred.id)+'/computer',{kind:'return'});
+    }
+    setStatus('Sent task to '+preferred.name+'!');
+    const r=await api('/api/tasks',{botId:preferred.id,prompt});
+    selected=r.taskId;
+    await load();
+  };
+  document.querySelector('#stageAskBotBtn')?.addEventListener('click',askBotFromStage);
+  document.querySelector('#stageBotPrompt')?.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();askBotFromStage()}});
 }
 
 function drawDetail(pTasks){
   const panel=document.querySelector('#detail'),tasks=pTasks||projectTasks(),t=tasks.find(x=>x.id===selected)||tasks[0];
-  if(!t){panel.innerHTML='<h2>Turn &amp; Diff Inspector</h2><p class="sub">Click any message in the chat to inspect its tool timeline, modified files, and Git diff.</p>';return}
+  if(!t){panel.innerHTML='<h2>Activity &amp; Changes</h2><p class="sub">Click any message in the chat to inspect its steps, modified files, and code changes.</p>';return}
   const b=state.bots.find(x=>x.id===t.botId),reviewer=state.bots.find(x=>x.id===t.reviewerBotId),agents=t.agents||[],p=t.pendingApproval;
-  panel.innerHTML='<div class="row spread"><div><h2>'+esc(b?.name||t.botId)+' · '+esc(t.status)+'</h2><div class="meta">'+(reviewer?'Reviewed by '+esc(reviewer.name)+' · ':'')+esc(new Date(t.createdAt).toLocaleTimeString())+'</div></div><div class="row">'+(t.status==='running'||t.status==='awaiting-approval'||t.status==='queued'?'<button id="cancel" class="danger">Cancel</button>':((b&&['failed','cancelled','needs-attention'].includes(t.status))?'<button id="retry" class="secondary">Retry</button>':'')+'<button id="delete" class="ghost">Delete</button>')+'</div></div>'+(agents.length?'<div class="meta" style="margin-top:4px">Pipeline: '+agents.map(a=>esc(a.name)+' ('+esc(a.role)+')').join(' → ')+'</div>':'')+(p?'<div class="approval"><h3>Approval needed: '+esc(p.title)+'</h3>'+(p.description?'<p>'+esc(p.description)+'</p>':'')+'<div class="row"><button id="approve">Allow once</button><button id="deny" class="secondary">Deny</button></div></div>':'')+'<h3>Tool &amp; Handoff Timeline</h3><div class="activity">'+(t.events?.length?t.events.slice().reverse().map(e=>'<div class="event"><time>'+esc(new Date(e.createdAt).toLocaleTimeString())+'</time>'+esc(e.title||e.kind)+'</div>').join(''):'<div class="meta">No tool events recorded.</div>')+'</div>'+(t.workspaceChanges?'<h3>Workspace Changes</h3>'+(t.workspaceChanges.available?'<div class="activity">'+t.workspaceChanges.files.map(f=>'<div class="event"><button type="button" class="secondary" data-workspace-file="'+esc(f.path)+'">'+esc(f.status)+' · '+esc(f.path)+'</button></div>').join('')+'</div><div id="workspaceFileView"></div>':'<p class="meta">'+esc(t.workspaceChanges.diffOmittedReason||'No Git changes.')+'</p>')+(t.workspaceChanges.diff?'<details open><summary class="meta" style="cursor:pointer;font-weight:600">Git Diff</summary><pre>'+esc(t.workspaceChanges.diff)+'</pre></details>':''):'');
+  panel.innerHTML='<div class="row spread"><div><h2>'+esc(b?.name||t.botId)+' · '+esc(t.status)+'</h2><div class="meta">'+(reviewer?'Reviewed by '+esc(reviewer.name)+' · ':'')+esc(new Date(t.createdAt).toLocaleTimeString())+'</div></div><div class="row">'+(t.status==='running'||t.status==='awaiting-approval'||t.status==='queued'?'<button id="cancel" class="danger">Cancel</button>':((b&&['failed','cancelled','needs-attention'].includes(t.status))?'<button id="retry" class="secondary">Retry</button>':'')+'<button id="delete" class="ghost">Delete</button>')+'</div></div>'+(agents.length?'<div class="meta mt-sm">Pipeline: '+agents.map(a=>esc(a.name)+' ('+esc(roleFriendly(a.role))+')').join(' → ')+'</div>':'')+(p?'<div class="approval"><h3>Approval needed: '+esc(p.title)+'</h3>'+(p.description?'<p>'+esc(p.description)+'</p>':'')+'<div class="row"><button id="approve">Allow once</button><button id="deny" class="secondary">Deny</button></div></div>':'')+'<h3>Step-by-Step Timeline</h3><div class="activity">'+(t.events?.length?t.events.slice().reverse().map(e=>'<div class="event"><time>'+esc(new Date(e.createdAt).toLocaleTimeString())+'</time>'+esc(e.title||e.kind)+'</div>').join(''):'<div class="meta">No tool events recorded.</div>')+'</div>'+(t.workspaceChanges?'<h3>Workspace Changes</h3>'+(t.workspaceChanges.available?'<div class="activity">'+t.workspaceChanges.files.map(f=>'<div class="event"><button type="button" class="secondary" data-workspace-file="'+esc(f.path)+'">'+esc(f.status)+' · '+esc(f.path)+'</button></div>').join('')+'</div><div id="workspaceFileView"></div>':'<p class="meta">'+esc(t.workspaceChanges.diffOmittedReason||'No Git changes.')+'</p>')+(t.workspaceChanges.diff?'<details open class="fold-box"><summary class="fold-summary">Git Diff</summary><pre>'+esc(t.workspaceChanges.diff)+'</pre></details>':''):'');
   document.querySelectorAll('[data-workspace-file]').forEach(el=>el.addEventListener('click',async()=>{const view=document.querySelector('#workspaceFileView'),filePath=el.dataset.workspaceFile;view.innerHTML='<p class="meta">Loading file…</p>';try{const file=await api('/api/workspace/file?botId='+encodeURIComponent(t.botId)+'&path='+encodeURIComponent(filePath));view.innerHTML='<h3>'+esc(filePath)+'</h3><pre>'+esc(file.content)+'</pre>'}catch(error){view.innerHTML='<p class="meta">'+esc(error.message)+'</p>'}}));
   const action=async(what,body)=>{try{await api('/api/tasks/'+encodeURIComponent(t.id)+'/'+what,body);await load()}catch(e){alert(e.message)}};
   document.querySelector('#approve')?.addEventListener('click',()=>action('approval',{requestId:p.id,approved:true}));
@@ -1295,10 +1541,9 @@ function drawDetail(pTasks){
   document.querySelector('#delete')?.addEventListener('click',async()=>{try{await api('/api/tasks/'+encodeURIComponent(t.id),{},'DELETE');if(selected===t.id)selected='';await load()}catch(e){alert(e.message)}});
 }
 
-document.querySelector('#channelTeamHq').addEventListener('click',()=>{conversationBot='';draw()});
+document.querySelector('#channelTeamHq').addEventListener('click',()=>{conversationBot='';setCenterView('chat');draw()});
 document.querySelector('#allRoomBtn').addEventListener('click',()=>{conversationBot='';draw()});
 document.querySelector('#spawnTeamBtn').addEventListener('click',async()=>{try{await api('/api/bootstrap',{mode:'team',workspace:activeWorkspace||DEFAULT_WS});await load()}catch(e){alert(e.message)}});
-document.querySelector('#openComputerTopBtn').addEventListener('click',async()=>{setTab('computer');await refreshComputer(true)});
 document.querySelector('#openNewBotBtn').addEventListener('click',()=>{clearBotForm();setTab('bot');document.querySelector('#botForm').elements.name.focus()});
 document.querySelector('#sidebarAddBotBtn').addEventListener('click',()=>{clearBotForm();setTab('bot');document.querySelector('#botForm').elements.name.focus()});
 document.querySelector('#openNewProjectBtn').addEventListener('click',()=>{setTab('project');document.querySelector('#projectForm').elements.name.focus()});
@@ -1404,9 +1649,9 @@ async function showHealth(){
     document.querySelector('#health').innerHTML='<span class="pill">'+dot(true)+' '+esc(h.activeBrainLabel||(h.providerConfigured?'OpenRouter / Cloud':'Local Brain'))+'</span><span class="pill">'+dot(h.ocpAgent??h.hermes)+' OCP Agent</span><span class="pill">'+dot(h.ocpCoder??h.grokBuild)+' OCP Coder</span>';
   }catch(e){document.querySelector('#health').textContent=e.message}
 }
-load().catch(e=>document.querySelector('#tasks').textContent=e.message);
+load().then(()=>{if(location.hash==='#computer'||new URLSearchParams(location.search).get('view')==='computer')setCenterView('computer')}).catch(e=>document.querySelector('#tasks').textContent=e.message);
 showHealth();
-setInterval(()=>load().catch(()=>{}),2000);
+setInterval(()=>{load().catch(()=>{});if(centerView==='computer')refreshComputer(false).catch(()=>{})},2000);
 setInterval(showHealth,30000);
 </script></body></html>`;
 }

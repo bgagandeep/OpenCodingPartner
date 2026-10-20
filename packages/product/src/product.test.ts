@@ -9,6 +9,8 @@ import { fileURLToPath } from "node:url";
 import {
   backupProductData,
   botRuntimeLabel,
+  computerKeyboard,
+  computerMouse,
   createBot,
   createTask,
   defaultBotInstructions,
@@ -23,6 +25,7 @@ import {
   resolveRuntimeCommand,
   restoreProductData,
   runBotSession,
+  setComputerControl,
   stopComputerDesktop,
   updateBot,
   updateBotSession,
@@ -1020,7 +1023,25 @@ test("Lead Orchestrator bot creates other bots, manages the fleet, delegates wor
     assert.equal(projData.bots.length, 5);
     assert.equal((await listBots(dataDir, workspace)).length, 4);
     assert.equal((await listBots(dataDir, secondWorkspace)).length, 5);
+
+    // 8. Verify Virtual Computer human takeover blocks bot actions while allowing human actions, then returns control
+    const held = await setComputerControl(workspace, "takeover");
+    assert.equal(held.control, "human");
+    assert.equal(held.status, "held");
+    const blockedBotMouse = await computerMouse(workspace, { action: "click", x: 200, y: 200, actor: "partner" });
+    assert.equal(blockedBotMouse.ok, false);
+    assert.match(blockedBotMouse.detail, /held by human takeover/);
+    const allowedHumanMouse = await computerMouse(workspace, { action: "click", x: 200, y: 200, actor: "human" });
+    assert.equal(allowedHumanMouse.ok, true);
+    const allowedHumanKey = await computerKeyboard(workspace, { action: "type", text: "hello", actor: "human" });
+    assert.equal(allowedHumanKey.ok, true);
+    const returned = await setComputerControl(workspace, "return");
+    assert.equal(returned.control, "partner");
+    assert.equal(returned.status, "live");
+    const allowedBotMouseAfter = await computerMouse(workspace, { action: "click", x: 200, y: 200, actor: "partner" });
+    assert.equal(allowedBotMouseAfter.ok, true);
   } finally {
+    await stopComputerDesktop(workspace).catch(() => undefined);
     await app.close();
     await rm(root, { recursive: true, force: true });
   }

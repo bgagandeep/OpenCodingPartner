@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import { externalToolNeedsApproval } from "./connectors.js";
 import { listHttpMcpTools, type HttpMcpEndpoint } from "./http-mcp.js";
 import { formatPins, splitRecent, summarizeTurns, takePins, type PinnedNotes } from "./context.js";
+import { layoutCachedPrompt } from "./prompt-cache.js";
 import { recentTokenBudget } from "./provider-presets.js";
 import { noteModelUsage, usageCapReason, usageProviderKind } from "./usage.js";
 
@@ -531,7 +532,7 @@ export async function runNativeAcpAgent(): Promise<void> {
 
         const activeModel = state.modelOverride || config.model;
         let usageContinued = false;
-        const messagesForModel = async (): Promise<ChatMessage[]> => {
+        const messagesForModel = async () => {
           const rest = state.messages.slice(1);
           const budget = recentTokenBudget(config.provider, config.baseUrl);
           const { older, recent } = splitRecent(rest, budget);
@@ -572,11 +573,14 @@ export async function runNativeAcpAgent(): Promise<void> {
             state.foldedCount = older.length;
           }
           const pinText = formatPins(state.pinned ?? { facts: [], decisions: [], todos: [] });
-          const request: ChatMessage[] = [state.messages[0] ?? { role: "system", content: state.rules }];
-          if (pinText) request.push({ role: "system", content: `Pinned notes:\n${pinText}` });
-          if (state.summary) request.push({ role: "system", content: `Earlier conversation summary:\n${state.summary}` });
-          request.push(...recent);
-          return request;
+          return layoutCachedPrompt({
+            system: state.rules,
+            toolIndex: openAiTools.map((tool) => tool.function.name).join("\n"),
+            pinned: pinText,
+            summary: state.summary ?? "",
+            recent,
+            model: activeModel,
+          }).messages;
         };
         for (let step = 0; step < 12; step += 1) {
           if (!usageContinued && process.env.OCP_DATA_DIR && process.env.OCP_ACTOR_BOT_ID) {

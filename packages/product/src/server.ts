@@ -1960,7 +1960,7 @@ function tokenLine(b){
   const bits=[];
   if(!allEstimated)bits.push((b.promptTokens-b.estimatedPromptTokens)+' in / '+(b.completionTokens-b.estimatedCompletionTokens)+' out');
   if(estimated)bits.push('estimated '+b.estimatedPromptTokens+' in / '+b.estimatedCompletionTokens+' out');
-  if(b.cachedPromptTokens)bits.push(b.cachedPromptTokens+' cached');
+  if(b.cachedPromptTokens)bits.push(b.cachedPromptTokens+' cached / '+Math.max(0,(b.promptTokens-b.estimatedPromptTokens)-b.cachedPromptTokens)+' uncached');
   return bits.join(' · ');
 }
 function costLine(b){
@@ -1984,7 +1984,8 @@ function renderUsage(pBots){
   const botName=id=>{const b=(state.bots||[]).find(x=>x.id===id);return b?b.name:id};
   const tasks=(usage.byTask||[]).slice(-8).map(b=>usageRow('Task '+b.key.slice(0,8),b)).join('');
   const recent=(usage.recent||[]).slice(0,8).map(c=>{
-    const label=c.estimated?('estimated '+c.promptTokens+' in / '+c.completionTokens+' out'):(c.promptTokens+' in / '+c.completionTokens+' out');
+    const cached=c.estimated||c.cachedPromptTokens===undefined?'':(' · '+c.cachedPromptTokens+' cached / '+Math.max(0,c.promptTokens-c.cachedPromptTokens)+' uncached');
+    const label=(c.estimated?('estimated '+c.promptTokens+' in / '+c.completionTokens+' out'):(c.promptTokens+' in / '+c.completionTokens+' out'))+cached;
     const cost=c.costBasis==='entered'?'$'+usd(c.costUsd)+' from entered prices':c.costBasis==='local-default'?'$0 local default':'no price entered';
     return '<div class="event"><time>'+esc(new Date(c.createdAt).toLocaleTimeString())+'</time>'+esc(c.model)+' · '+esc(label)+'<div class="meta">'+esc(botName(c.botId))+' · '+esc(cost)+'</div></div>';
   }).join('')||'<div class="meta">No model calls yet.</div>';

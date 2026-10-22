@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
+import { appendChannelLog } from "./index.js";
 import { deleteVaultItemByName, publicVault, readVaultSecret, upsertVaultItem } from "./vault.js";
 
 export type AccountProvider = "google" | "microsoft";
@@ -12,7 +13,7 @@ export const GOOGLE_SCOPES: AccountScope[] = [
   { id: "openid", label: "Sign-in" },
   { id: "email", label: "Account address" },
   { id: "https://www.googleapis.com/auth/gmail.readonly", label: "Gmail read and search" },
-  { id: "https://www.googleapis.com/auth/gmail.compose", label: "Gmail drafts. OCP does not send mail." },
+  { id: "https://www.googleapis.com/auth/gmail.compose", label: "Gmail drafts. A person sends from a draft card." },
   { id: "https://www.googleapis.com/auth/calendar.readonly", label: "Calendar read" },
   { id: "https://www.googleapis.com/auth/calendar.events", label: "Calendar create. OCP asks before creating an event." },
   { id: "https://www.googleapis.com/auth/drive.readonly", label: "Drive search and read" },
@@ -22,7 +23,8 @@ export const MICROSOFT_SCOPES: AccountScope[] = [
   { id: "offline_access", label: "Refresh token" },
   { id: "https://graph.microsoft.com/User.Read", label: "Signed-in account address" },
   { id: "https://graph.microsoft.com/Mail.Read", label: "Outlook read and search" },
-  { id: "https://graph.microsoft.com/Mail.ReadWrite", label: "Outlook drafts. OCP does not send mail." },
+  { id: "https://graph.microsoft.com/Mail.ReadWrite", label: "Outlook drafts. A person sends from a draft card." },
+  { id: "https://graph.microsoft.com/Mail.Send", label: "Outlook send. Only a person sends, from a draft card." },
   { id: "https://graph.microsoft.com/Calendars.Read", label: "Outlook calendar read" },
   { id: "https://graph.microsoft.com/Calendars.ReadWrite", label: "Outlook calendar create. OCP asks before creating an event." },
   { id: "https://graph.microsoft.com/Files.Read", label: "OneDrive search and read" },
@@ -370,6 +372,66 @@ function requireId(value: unknown): string {
   return id;
 }
 
+async function queueMailDraft(
+  root: string,
+  channel: "gmail" | "outlook",
+  args: Record<string, unknown>,
+  env: NodeJS.ProcessEnv,
+): Promise<{ ok: boolean; text: string }> {
+  const to = clean(args.to, 200);
+  const subject = clean(args.subject, 200);
+  const body = typeof args.body === "string" ? args.body.slice(0, 8_000) : "";
+  const label = channel === "gmail" ? "Gmail" : "Outlook";
+  if (!to || !subject || !body) return { ok: false, text: `A ${label} draft needs to, subject, and body. Nothing was sent.` };
+  await appendChannelLog({
+    channel,
+    direction: "out",
+    text: body,
+    subject,
+    ...(env.OCP_ACTOR_BOT_ID ? { botId: env.OCP_ACTOR_BOT_ID } : {}),
+    destination: to,
+    status: "draft",
+  }, root);
+  return { ok: true, text: `Saved a ${label} draft for you to send. Nothing was sent.` };
+}
+
+export async function deliverMailDraft(
+  root: string,
+  channel: "gmail" | "outlook",
+  to: string,
+  subject: string,
+  body: string,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<{ ok: boolean; detail?: string }> {
+  try {
+    if (channel === "gmail") {
+      const created = JSON.parse(await googleCall(root, env, "/gmail/v1/users/me/drafts", "POST", JSON.stringify({ message: { raw: rawMessage(to, subject, body) } }))) as { id?: string };
+      const gmailId = providerDraftId(created.id);
+      if (!gmailId) return { ok: false, detail: "Gmail did not return a draft id. Nothing was sent." };
+      await googleCall(root, env, `/gmail/v1/users/me/drafts/${encodeURIComponent(gmailId)}/send`, "POST", "{}");
+      return { ok: true };
+    }
+    const created = JSON.parse(await microsoftCall(root, env, "/v1.0/me/messages", "POST", JSON.stringify({
+      subject,
+      body: { contentType: "Text", content: body },
+      toRecipients: [{ emailAddress: { address: to } }],
+      isDraft: true,
+    }))) as { id?: string };
+    const outlookId = providerDraftId(created.id);
+    if (!outlookId) return { ok: false, detail: "Outlook did not return a draft id. Nothing was sent." };
+    await microsoftCall(root, env, `/v1.0/me/messages/${encodeURIComponent(outlookId)}/send`, "POST", "{}");
+    return { ok: true };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "The provider rejected the send.";
+    return { ok: false, detail: `${message} The message was not marked sent.`.slice(0, 300) };
+  }
+}
+
+function providerDraftId(value: string | undefined): string {
+  if (!value || value.length > 400 || /[\r\n/?#\\]/.test(value)) return "";
+  return value;
+}
+
 function rawMessage(to: string, subject: string, body: string): string {
   return Buffer.from(`To: ${to}\r\nSubject: ${subject}\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n${body}`).toString("base64url");
 }
@@ -414,14 +476,14 @@ export function isAccountTool(name: string): boolean {
 export const ACCOUNT_TOOL_DEFS = [
   { name: "gmail_search", description: "Search the connected Gmail account. Requires approval. Does not send mail.", inputSchema: { type: "object", properties: { query: { type: "string" } }, required: ["query"] } },
   { name: "gmail_read", description: "Read one Gmail message by id. Requires approval. Does not send mail.", inputSchema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] } },
-  { name: "gmail_draft", description: "Create a Gmail draft. Requires approval. OCP does not send the draft.", inputSchema: { type: "object", properties: { to: { type: "string" }, subject: { type: "string" }, body: { type: "string" } }, required: ["to", "subject", "body"] } },
+  { name: "gmail_draft", description: "Save a Gmail draft card for a person to send. Nothing is sent automatically.", inputSchema: { type: "object", properties: { to: { type: "string" }, subject: { type: "string" }, body: { type: "string" } }, required: ["to", "subject", "body"] } },
   { name: "calendar_list", description: "List events on the connected Google calendar. Requires approval.", inputSchema: { type: "object", properties: {} } },
   { name: "calendar_create", description: "Create a Google calendar event. Requires approval before the event is created.", inputSchema: { type: "object", properties: { summary: { type: "string" }, start: { type: "string" }, end: { type: "string" } }, required: ["summary", "start", "end"] } },
   { name: "drive_search", description: "Search the connected Google Drive. Requires approval. Read only.", inputSchema: { type: "object", properties: { query: { type: "string" } }, required: ["query"] } },
   { name: "drive_read", description: "Read one Google Drive file by id. Requires approval.", inputSchema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] } },
   { name: "outlook_search", description: "Search the connected Outlook mailbox. Requires approval. Does not send mail.", inputSchema: { type: "object", properties: { query: { type: "string" } }, required: ["query"] } },
   { name: "outlook_read", description: "Read one Outlook message by id. Requires approval.", inputSchema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] } },
-  { name: "outlook_draft", description: "Create an Outlook draft. Requires approval. OCP does not send the draft.", inputSchema: { type: "object", properties: { to: { type: "string" }, subject: { type: "string" }, body: { type: "string" } }, required: ["to", "subject", "body"] } },
+  { name: "outlook_draft", description: "Save an Outlook draft card for a person to send. Nothing is sent automatically.", inputSchema: { type: "object", properties: { to: { type: "string" }, subject: { type: "string" }, body: { type: "string" } }, required: ["to", "subject", "body"] } },
   { name: "outlook_calendar_list", description: "List events on the connected Outlook calendar. Requires approval.", inputSchema: { type: "object", properties: {} } },
   { name: "outlook_calendar_create", description: "Create an Outlook calendar event. Requires approval before the event is created.", inputSchema: { type: "object", properties: { summary: { type: "string" }, start: { type: "string" }, end: { type: "string" } }, required: ["summary", "start", "end"] } },
   { name: "onedrive_search", description: "Search the connected OneDrive. Requires approval. Read only.", inputSchema: { type: "object", properties: { query: { type: "string" } }, required: ["query"] } },
@@ -467,15 +529,7 @@ export async function runAccountTool(
       const detail = JSON.parse(await googleCall(root, env, `/gmail/v1/users/me/messages/${encodeURIComponent(id)}`)) as { snippet?: string };
       return { ok: true, text: detail.snippet || "Gmail message had no snippet." };
     }
-    if (name === "gmail_draft") {
-      const to = clean(args.to, 200);
-      const subject = clean(args.subject, 200);
-      const body = typeof args.body === "string" ? args.body.slice(0, 8_000) : "";
-      if (!to || !subject || !body) return { ok: false, text: "A Gmail draft needs to, subject, and body. Nothing was sent." };
-      const text = await googleCall(root, env, "/gmail/v1/users/me/drafts", "POST", JSON.stringify({ message: { raw: rawMessage(to, subject, body) } }));
-      const parsed = JSON.parse(text) as { id?: string };
-      return { ok: true, text: `Gmail draft ${parsed.id ?? "created"}. It was not sent.` };
-    }
+    if (name === "gmail_draft") return queueMailDraft(root, "gmail", args, env);
     if (name === "calendar_list") {
       const text = await googleCall(root, env, "/calendar/v3/calendars/primary/events");
       const parsed = JSON.parse(text) as { items?: Array<{ id?: string; summary?: string }> };
@@ -518,20 +572,7 @@ export async function runAccountTool(
       const parsed = JSON.parse(text) as { subject?: string; bodyPreview?: string };
       return { ok: true, text: `${parsed.subject ?? "Untitled"}\n${parsed.bodyPreview ?? ""}`.trim() };
     }
-    if (name === "outlook_draft") {
-      const to = clean(args.to, 200);
-      const subject = clean(args.subject, 200);
-      const body = typeof args.body === "string" ? args.body.slice(0, 8_000) : "";
-      if (!to || !subject || !body) return { ok: false, text: "An Outlook draft needs to, subject, and body. Nothing was sent." };
-      const text = await microsoftCall(root, env, "/v1.0/me/messages", "POST", JSON.stringify({
-        subject,
-        body: { contentType: "Text", content: body },
-        toRecipients: [{ emailAddress: { address: to } }],
-        isDraft: true,
-      }));
-      const parsed = JSON.parse(text) as { id?: string };
-      return { ok: true, text: `Outlook draft ${parsed.id ?? "created"}. It was not sent.` };
-    }
+    if (name === "outlook_draft") return queueMailDraft(root, "outlook", args, env);
     if (name === "outlook_calendar_list") {
       const text = await microsoftCall(root, env, "/v1.0/me/events?$top=10");
       const parsed = JSON.parse(text) as { value?: Array<{ id?: string; subject?: string }> };

@@ -34,9 +34,10 @@ import {
   updateBotSession,
   updateTask,
   validBotRuntime,
+  waitForRecordedApproval,
   type RuntimeUpdate,
 } from "./index.js";
-import { startProductApp } from "./server.js";
+import { startProductApp, visibleWorkspaceChangeFiles } from "./server.js";
 
 const distDir = path.dirname(fileURLToPath(import.meta.url));
 
@@ -601,6 +602,11 @@ test("startProductApp serves OCP Agent and OCP Coder UI, health check, model-ove
     const html = await htmlRes.text();
     assert.match(html, /OCP Agent/);
     assert.match(html, /OCP Coder/);
+    assert.match(html, /Open Coding Partner/);
+    assert.match(html, /\/api\/events/);
+    assert.doesNotMatch(html, /Ask Ada/);
+    assert.doesNotMatch(html, /Open Gmail/);
+    assert.doesNotMatch(html, /mail\.google\.com/);
     const inlineScript = /<script[^>]*>([\s\S]*?)<\/script>/.exec(html)?.[1] ?? "";
     assert.ok(inlineScript.length > 100);
     assert.doesNotThrow(() => new Function(inlineScript));
@@ -1188,6 +1194,67 @@ test("Chrome profile lives outside the workspace and browser fails without a dis
     if (previousPath === undefined) delete process.env.PATH;
     else process.env.PATH = previousPath;
     await stopComputerDesktop(workspace).catch(() => undefined);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("dashboard hides .ocp and gtm paths, streams SSE, and Always-for-task approvals persist", async () => {
+  assert.deepEqual(
+    visibleWorkspaceChangeFiles([
+      { path: "src/app.ts" },
+      { path: ".ocp/state.json" },
+      { path: "gtm/last-frame.png" },
+      { path: "packages/.ocp/cache" },
+    ]).map((file) => file.path),
+    ["src/app.ts"],
+  );
+
+  const root = await makeTempDir("ocp-ui-sse-");
+  const workspace = path.join(root, "workspace");
+  await mkdir(workspace, { recursive: true });
+  const app = await startProductApp({ root, port: 0 });
+  try {
+    const events = await fetch(`${app.url}/api/events`);
+    assert.equal(events.status, 200);
+    assert.match(events.headers.get("content-type") ?? "", /text\/event-stream/);
+    events.body?.cancel();
+
+    const htmlRes = await fetch(app.url);
+    const tokenMatch = /script-src 'nonce-([a-f0-9]+)'/.exec(htmlRes.headers.get("content-security-policy") ?? "");
+    const token = tokenMatch?.[1] ?? "";
+    const botRes = await fetch(`${app.url}/api/bots`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-ocp-token": token },
+      body: JSON.stringify({ name: "Coder", role: "coding", runtime: "ocp-agent", isolation: "host", workspace }),
+    });
+    assert.equal(botRes.status, 201);
+    const { bot } = (await botRes.json()) as { bot: { id: string } };
+    const task = await createTask({ botId: bot.id, prompt: "Write a file" }, root);
+    await updateTask(task.id, {
+      status: "awaiting-approval",
+      pendingApproval: {
+        id: "req-always",
+        title: "workspace_write",
+        description: "edit hello.txt",
+        allowOnceOptionId: "allow-once",
+        requestedAt: new Date().toISOString(),
+      },
+    }, root);
+    const approvalRes = await fetch(`${app.url}/api/tasks/${encodeURIComponent(task.id)}/approval`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-ocp-token": token },
+      body: JSON.stringify({ requestId: "req-always", decision: "always" }),
+    });
+    assert.equal(approvalRes.status, 200);
+    const saved = await findTask(task.id, root);
+    assert.equal(saved?.autoApproveRemaining, true);
+    const auto = await waitForRecordedApproval(task.id, {
+      title: "workspace_write",
+      options: [{ optionId: "allow-once", name: "Allow once", kind: "allow_once" }],
+    }, root);
+    assert.equal(auto, "allow-once");
+  } finally {
+    await app.close();
     await rm(root, { recursive: true, force: true });
   }
 });

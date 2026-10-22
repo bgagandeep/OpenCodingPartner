@@ -50,6 +50,7 @@ export interface ProductTask {
   approvals?: TaskApproval[];
   events?: ProductTaskEvent[];
   pendingApproval?: PendingTaskApproval;
+  autoApproveRemaining?: boolean;
   runtimeSessionId?: string;
   result?: string;
   error?: string;
@@ -88,9 +89,10 @@ export interface PendingTaskApproval {
 export interface TaskApproval {
   title: string;
   description?: string;
-  decision: "allow-once" | "cancelled";
+  decision: "allow-once" | "always" | "cancelled" | "redirect";
   createdAt: string;
   requestId?: string;
+  redirectBotId?: string;
 }
 
 export interface ProductProject {
@@ -794,7 +796,7 @@ export async function workspacesOverlap(leftPath: string, rightPath: string): Pr
 
 export async function updateTask(
   id: string,
-  update: Partial<Pick<ProductTask, "status" | "runtimeSessionId" | "result" | "error" | "processId" | "processIdentity" | "approvals" | "pendingApproval" | "workspaceChanges">>,
+  update: Partial<Pick<ProductTask, "status" | "runtimeSessionId" | "result" | "error" | "processId" | "processIdentity" | "approvals" | "pendingApproval" | "workspaceChanges" | "autoApproveRemaining">>,
   root = productDataDir(),
 ): Promise<ProductTask> {
   let updated: ProductTask | undefined;
@@ -836,16 +838,19 @@ export async function waitForRecordedApproval(
     allowOnceOptionId: allow.optionId,
     requestedAt: new Date().toISOString(),
   };
+  const existing = await findTask(taskId, root);
+  if (existing?.autoApproveRemaining) return allow.optionId;
   await updateTask(taskId, { status: "awaiting-approval", pendingApproval: pending }, root);
   const started = Date.now();
   while (!signal?.aborted && Date.now() - started < 10 * 60_000) {
     const task = await findTask(taskId, root);
     if (!task) return undefined;
+    if (task.autoApproveRemaining) return allow.optionId;
     const recorded = task.approvals?.find((item) => item.requestId === id);
-    if (recorded) return recorded.decision === "allow-once" ? allow.optionId : undefined;
+    if (recorded) return recorded.decision === "allow-once" || recorded.decision === "always" ? allow.optionId : undefined;
     if (!task.pendingApproval || task.pendingApproval.id !== id) {
       const last = task.approvals?.at(-1);
-      if (last?.title === request.title) return last.decision === "allow-once" ? allow.optionId : undefined;
+      if (last?.title === request.title) return last.decision === "allow-once" || last.decision === "always" ? allow.optionId : undefined;
       return undefined;
     }
     await new Promise((resolve) => setTimeout(resolve, 80));

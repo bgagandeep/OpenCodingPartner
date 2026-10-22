@@ -78,7 +78,12 @@ export function measureUsage(usage: unknown, promptText: string, completionText:
       ? record.prompt_tokens_details as Record<string, unknown>
       : undefined;
     const cached = details ? finiteToken(details.cached_tokens) : undefined;
-    const cachedTop = cached ?? (record ? finiteToken(record.cached_tokens) ?? finiteToken(record.cache_read_input_tokens) : undefined);
+    const gemini = record?.usage_metadata && typeof record.usage_metadata === "object"
+      ? finiteToken((record.usage_metadata as { cached_content_token_count?: unknown }).cached_content_token_count)
+      : undefined;
+    const cachedTop = cached
+      ?? (record ? finiteToken(record.cached_tokens) ?? finiteToken(record.cache_read_input_tokens) ?? finiteToken(record.prompt_cache_hit_tokens) : undefined)
+      ?? gemini;
     return {
       promptTokens: prompt,
       completionTokens: completion,

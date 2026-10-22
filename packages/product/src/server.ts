@@ -5,6 +5,14 @@ import path from "node:path";
 import { readFile, stat } from "node:fs/promises";
 import { readWorkspaceFile } from "./workspace-mcp.js";
 import {
+  postSlackReply,
+  postTelegramReply,
+  slackEventMessage,
+  verifySlackRequest,
+  verifyTelegramRequest,
+  telegramUpdateMessage,
+} from "@opencodingpartner/gateway";
+import {
   applyProviderSettingsToEnv,
   bootstrapFleet,
   captureComputerScreen,
@@ -19,8 +27,12 @@ import {
   ensureComputerDisplay,
   captureWorkspaceBaseline,
   collectWorkspaceChanges,
+  appendChannelLog,
   createProductRoutine,
   createTask,
+  findChannelExternal,
+  listChannelLog,
+  updateChannelLog,
   deleteProductRoutine,
   deleteTask,
   dueProductRoutines,
@@ -69,6 +81,7 @@ interface AppOptions {
   port?: number;
   root?: string;
   env?: NodeJS.ProcessEnv;
+  fetchImpl?: typeof fetch;
 }
 
 interface ActiveRun {
@@ -87,6 +100,7 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
   const port = options.port ?? 4317;
   const root = options.root ?? productDataDir(options.env);
   const env = options.env ?? process.env;
+  const fetchImpl = options.fetchImpl ?? fetch;
   if (!isLoopback(host)) throw new Error("The OpenCodingPartner app can only bind to a loopback address.");
   const token = randomBytes(32).toString("hex");
   const activeRuns = new Map<string, ActiveRun>();
@@ -95,6 +109,119 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
   const sseClients = new Set<ServerResponse>();
   let boundPort = port;
   let closing = false;
+
+  function oneHeader(value: string | string[] | undefined): string {
+    return Array.isArray(value) ? value[0] ?? "" : value ?? "";
+  }
+
+  async function startInboundTask(taskId: string, bot: NonNullable<Awaited<ReturnType<typeof findBot>>>): Promise<void> {
+    const current = await findTask(taskId, root);
+    if (!current) return;
+    if (await workspaceHasBusyTask(bot.workspace, root)) {
+      notifySse();
+      return;
+    }
+    const baseline = await captureWorkspaceBaseline(bot.workspace);
+    await updateTask(taskId, { status: "running", processId: process.pid }, root);
+    launchTask(taskId, bot, undefined, current.prompt, baseline);
+    notifySse();
+  }
+
+  async function acceptSlackInbound(rawBody: string, timestamp: string | string[] | undefined, signature: string | string[] | undefined): Promise<{ status: number; body: unknown }> {
+    const settings = await readProviderSettings(root);
+    if (!settings.slackSigningSecret || !settings.slackBotToken) return { status: 409, body: { error: "Slack is not configured." } };
+    const verified = verifySlackRequest({
+      secret: settings.slackSigningSecret,
+      timestamp: oneHeader(timestamp),
+      signature: oneHeader(signature),
+      rawBody,
+      nowMs: Date.now(),
+    });
+    if (!verified.ok) return { status: 401, body: { error: verified.reason || "Slack signature was rejected." } };
+    let parsed: { event_id?: string; event?: { bot_id?: string; subtype?: string; ts?: string } };
+    try {
+      parsed = JSON.parse(rawBody) as typeof parsed;
+    } catch {
+      return { status: 400, body: { error: "Slack event was not JSON." } };
+    }
+    const event = slackEventMessage(rawBody);
+    if (!event) return { status: 400, body: { error: "Slack event had no text." } };
+    if (event.challenge) return { status: 200, body: { challenge: event.challenge } };
+    if (parsed.event?.bot_id || parsed.event?.subtype) return { status: 200, body: { ok: true, ignored: "bot or system message" } };
+    const externalId = parsed.event_id || parsed.event?.ts || "";
+    if (externalId) {
+      const existing = await findChannelExternal("slack", externalId, root);
+      if (existing && existing.status !== "failed") return { status: 200, body: { ok: true, duplicate: true } };
+    }
+    const bot = settings.slackBotId ? await findBot(settings.slackBotId, root) : undefined;
+    if (!bot) {
+      await appendChannelLog({ channel: "slack", direction: "in", text: event.text, destination: event.channel, thread: event.thread, externalId, status: "failed", error: "No bot is assigned to Slack." }, root);
+      notifySse();
+      return { status: 200, body: { ok: false, error: "No bot is assigned to Slack." } };
+    }
+    const task = await createTask({
+      botId: bot.id,
+      prompt: `Slack message in ${event.channel}:\n${event.text.slice(0, 8_000)}\n\nReply with the message to send back. Do not claim it was sent. A person approves the reply before it leaves this app.`,
+      channelOrigin: { channel: "slack", destination: event.channel, thread: event.thread, externalId },
+    }, root);
+    await appendChannelLog({ channel: "slack", direction: "in", text: event.text, botId: bot.id, taskId: task.id, destination: event.channel, thread: event.thread, externalId, status: "received" }, root);
+    await startInboundTask(task.id, bot);
+    return { status: 202, body: { ok: true, taskId: task.id } };
+  }
+
+  async function acceptTelegramInbound(rawBody: string, secretHeader: string | string[] | undefined): Promise<{ status: number; body: unknown }> {
+    const settings = await readProviderSettings(root);
+    if (!settings.telegramWebhookSecret || !settings.telegramBotToken) return { status: 409, body: { error: "Telegram is not configured." } };
+    const verified = verifyTelegramRequest({ secret: settings.telegramWebhookSecret, header: oneHeader(secretHeader) });
+    if (!verified.ok) return { status: 401, body: { error: verified.reason || "Telegram secret was rejected." } };
+    let parsed: { update_id?: number; message?: { from?: { is_bot?: boolean } } };
+    try {
+      parsed = JSON.parse(rawBody) as typeof parsed;
+    } catch {
+      return { status: 400, body: { error: "Telegram update was not JSON." } };
+    }
+    const update = telegramUpdateMessage(rawBody);
+    if (!update) return { status: 400, body: { error: "Telegram update had no text." } };
+    if (parsed.message?.from?.is_bot) return { status: 200, body: { ok: true, ignored: "bot message" } };
+    const externalId = parsed.update_id === undefined ? "" : String(parsed.update_id);
+    if (externalId) {
+      const existing = await findChannelExternal("telegram", externalId, root);
+      if (existing && existing.status !== "failed") return { status: 200, body: { ok: true, duplicate: true } };
+    }
+    const bot = settings.telegramBotId ? await findBot(settings.telegramBotId, root) : undefined;
+    if (!bot) {
+      await appendChannelLog({ channel: "telegram", direction: "in", text: update.text, destination: update.chatId, thread: update.replyTo, externalId, status: "failed", error: "No bot is assigned to Telegram." }, root);
+      notifySse();
+      return { status: 200, body: { ok: false, error: "No bot is assigned to Telegram." } };
+    }
+    const task = await createTask({
+      botId: bot.id,
+      prompt: `Telegram message in chat ${update.chatId}:\n${update.text.slice(0, 8_000)}\n\nReply with the message to send back. Do not claim it was sent. A person approves the reply before it leaves this app.`,
+      channelOrigin: { channel: "telegram", destination: update.chatId, thread: update.replyTo, externalId },
+    }, root);
+    await appendChannelLog({ channel: "telegram", direction: "in", text: update.text, botId: bot.id, taskId: task.id, destination: update.chatId, thread: update.replyTo, externalId, status: "received" }, root);
+    await startInboundTask(task.id, bot);
+    return { status: 202, body: { ok: true, taskId: task.id } };
+  }
+
+  async function decideChannelDraft(id: string, decision: "allow" | "deny"): Promise<{ ok: boolean; error?: string; status: string }> {
+    const entry = (await listChannelLog(root)).find((item) => item.id === id);
+    if (!entry || entry.direction !== "out" || entry.status !== "draft") throw new Error("That reply draft is not pending.");
+    if (decision === "deny") {
+      await updateChannelLog(id, { status: "denied" }, root);
+      return { ok: true, status: "denied" };
+    }
+    const settings = await readProviderSettings(root);
+    const posted = entry.channel === "slack"
+      ? await postSlackReply(settings.slackBotToken ?? "", entry.destination, entry.text, entry.thread ?? "", fetchImpl)
+      : await postTelegramReply(settings.telegramBotToken ?? "", entry.destination, entry.text, entry.thread ?? "", fetchImpl);
+    if (!posted.ok) {
+      await updateChannelLog(id, { status: "failed", error: posted.detail }, root);
+      return { ok: false, status: "failed", error: posted.detail };
+    }
+    await updateChannelLog(id, { status: "sent" }, root);
+    return { ok: true, status: "sent" };
+  }
 
   function notifySse(kind = "state"): void {
     const chunk = `event: ${kind}\ndata: ${JSON.stringify({ t: Date.now() })}\n\n`;
@@ -124,11 +251,13 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
       return;
     }
     const hostHeader = request.headers.host ?? "";
-    if (!validHostHeader(hostHeader, boundPort) || !validOrigin(request.headers.origin, hostHeader)) {
+    const requestUrl = new URL(request.url ?? "/", `http://${hostHeader || "127.0.0.1"}`);
+    const channelWebhook = request.method === "POST" && (requestUrl.pathname === "/api/channels/slack" || requestUrl.pathname === "/api/channels/telegram");
+    if (!validHostHeader(hostHeader, boundPort) || (!channelWebhook && !validOrigin(request.headers.origin, hostHeader))) {
       sendJson(response, 403, { error: "This local app only accepts requests from its loopback origin." });
       return;
     }
-    const url = new URL(request.url ?? "/", `http://${hostHeader}`);
+    const url = requestUrl;
     if (request.method === "GET" && url.pathname === "/") {
       response.writeHead(200, {
         "content-type": "text/html; charset=utf-8",
@@ -314,9 +443,12 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
         activeBrainLabel: brainLabel(effectiveEnv),
         activeModel: effectiveEnv.OCP_DEFAULT_MODEL || settings.defaultModel || "",
         routines,
+        channelLog: await listChannelLog(root),
         channels: {
           slackConfigured: Boolean(settings.slackBotToken && settings.slackSigningSecret),
           telegramConfigured: Boolean(settings.telegramBotToken && settings.telegramWebhookSecret),
+          slackBotId: settings.slackBotId ?? "",
+          telegramBotId: settings.telegramBotId ?? "",
         },
       });
       return;
@@ -397,6 +529,14 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
       });
       return;
     }
+    if (request.method === "POST" && (url.pathname === "/api/channels/slack" || url.pathname === "/api/channels/telegram")) {
+      const rawBody = await readRaw(request);
+      const result = url.pathname.endsWith("/slack")
+        ? await acceptSlackInbound(rawBody, request.headers["x-slack-request-timestamp"], request.headers["x-slack-signature"])
+        : await acceptTelegramInbound(rawBody, request.headers["x-telegram-bot-api-secret-token"]);
+      sendJson(response, result.status, result.body);
+      return;
+    }
     if (request.method !== "POST" && request.method !== "PATCH" && request.method !== "DELETE") {
       sendJson(response, 404, { error: "Not found." });
       return;
@@ -408,6 +548,22 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
     const body = await readJson(request);
     if (closing) {
       sendJson(response, 503, { error: "OpenCodingPartner is shutting down." });
+      return;
+    }
+    const channelDraftMatch = /^\/api\/channels\/drafts\/([^/]+)$/.exec(url.pathname);
+    if (request.method === "POST" && channelDraftMatch) {
+      const decision = body.decision === "allow" || body.decision === "deny" ? body.decision : "";
+      if (!decision) {
+        sendJson(response, 400, { error: "Choose allow or deny for this reply draft." });
+        return;
+      }
+      try {
+        const result = await decideChannelDraft(decodeURIComponent(channelDraftMatch[1] ?? ""), decision);
+        notifySse();
+        sendJson(response, result.ok ? 200 : 409, result);
+      } catch (error) {
+        sendJson(response, 409, { error: error instanceof Error ? error.message : "Could not update that reply draft." });
+      }
       return;
     }
     if (request.method === "POST" && url.pathname === "/api/projects") {
@@ -476,6 +632,8 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
           ...(typeof body.slackSigningSecret === "string" ? { slackSigningSecret: body.slackSigningSecret } : {}),
           ...(typeof body.telegramBotToken === "string" ? { telegramBotToken: body.telegramBotToken } : {}),
           ...(typeof body.telegramWebhookSecret === "string" ? { telegramWebhookSecret: body.telegramWebhookSecret } : {}),
+          ...(typeof body.slackBotId === "string" ? { slackBotId: body.slackBotId } : {}),
+          ...(typeof body.telegramBotId === "string" ? { telegramBotId: body.telegramBotId } : {}),
         },
         root,
       );
@@ -854,6 +1012,25 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
     sendJson(response, 404, { error: "Not found." });
   }
 
+  async function recordChannelOutcome(taskId: string, status: "draft" | "failed", text: string, error?: string): Promise<void> {
+    const finished = await findTask(taskId, root);
+    const origin = finished?.channelOrigin;
+    if (!origin) return;
+    await appendChannelLog({
+      channel: origin.channel,
+      direction: "out",
+      text: text.slice(0, 4_000),
+      error,
+      botId: finished.botId,
+      taskId,
+      destination: origin.destination,
+      thread: origin.thread,
+      externalId: `reply:${taskId}`,
+      status,
+    }, root);
+    notifySse();
+  }
+
   function launchTask(taskId: string, bot: NonNullable<Awaited<ReturnType<typeof findBot>>>, reviewer: NonNullable<Awaited<ReturnType<typeof findBot>>> | undefined, prompt: string, workspaceBaseline: Awaited<ReturnType<typeof captureWorkspaceBaseline>>): void {
     const controller = new AbortController();
     const run: ActiveRun = { controller };
@@ -938,6 +1115,7 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
           processId: undefined,
           pendingApproval: undefined,
         }, root);
+        await recordChannelOutcome(taskId, permissionDenied ? "failed" : "draft", result, permissionDenied ? "Reply stayed in the app because the task needs attention." : undefined);
       } catch (error) {
         await flushProgress().catch(() => undefined);
         const cancelled = controller.signal.aborted;
@@ -949,6 +1127,7 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
           pendingApproval: undefined,
           workspaceChanges,
         }, root).catch(() => undefined);
+        if (!cancelled) await recordChannelOutcome(taskId, "failed", "", error instanceof Error ? error.message : "Agent run failed.").catch(() => undefined);
       } finally {
         if (progressTimer) clearTimeout(progressTimer);
         activeRuns.delete(taskId);
@@ -1184,6 +1363,15 @@ function validHostHeader(value: string, port: number): boolean {
 
 function validOrigin(origin: string | undefined, host: string): boolean {
   return !origin || origin === `http://${host}`;
+}
+
+async function readRaw(request: IncomingMessage): Promise<string> {
+  let body = "";
+  for await (const chunk of request) {
+    body += chunk.toString();
+    if (body.length > 1_000_000) throw new Error("Request body is too large.");
+  }
+  return body;
 }
 
 async function readJson(request: IncomingMessage): Promise<Record<string, unknown>> {
@@ -1553,6 +1741,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;font:12.5px/1.45 "JetBrains Mono
       <button type="button" class="tab" data-tab="credits">Credits</button>
       <button type="button" class="tab" data-tab="routines">Routines</button>
       <button type="button" class="tab" data-tab="connectors">Connectors</button>
+      <button type="button" class="tab" data-tab="channels">Channels</button>
     </div>
 
     <div class="drawer-body">
@@ -1680,6 +1869,12 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;font:12.5px/1.45 "JetBrains Mono
         <div id="connectorStatus" class="status"></div>
         <div id="connectorList" class="nav-list mt-sm"></div>
       </div>
+
+      <div id="tab-channels" class="tab-pane hidden">
+        <h2>Channels</h2>
+        <p class="sub">Slack and Telegram messages become tasks for the assigned bot. Replies stay as drafts until you send them. Nothing is sent automatically. Tokens stay in Settings.</p>
+        <div id="channelPanel"></div>
+      </div>
     </div>
   </aside>
 </main>
@@ -1696,7 +1891,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;font:12.5px/1.45 "JetBrains Mono
   <div id="paletteList" role="listbox"></div>
 </div>
 
-<script nonce="${token}">const TOKEN='${token}',DEFAULT_WS='${escapeJs(process.cwd())}';let state={projects:[],bots:[],tasks:[],routines:[],channels:{},activeBrainLabel:'',activeModel:''},activeWorkspace='',selected='',conversationBot='',computerBot='',computerMeta=null,bootstrapped=false,activeTab='detail',centerView='chat',lastClickPt=null,renderedCompBot='',lastFrameSrc='',lastSyncedUrl='',lastSidebarSig='',lastChatSig='',lastDetailSig='',keyBuffer='',keyTimer=null,lastCompInteract=0,compQueue=Promise.resolve(),paletteIndex=0,sseLive=false,connectorBot='';
+<script nonce="${token}">const TOKEN='${token}',DEFAULT_WS='${escapeJs(process.cwd())}';let state={projects:[],bots:[],tasks:[],routines:[],channels:{},channelLog:[],activeBrainLabel:'',activeModel:''},activeWorkspace='',selected='',conversationBot='',computerBot='',computerMeta=null,bootstrapped=false,activeTab='detail',centerView='chat',lastClickPt=null,renderedCompBot='',lastFrameSrc='',lastSyncedUrl='',lastSidebarSig='',lastChatSig='',lastDetailSig='',keyBuffer='',keyTimer=null,lastCompInteract=0,compQueue=Promise.resolve(),paletteIndex=0,sseLive=false,connectorBot='';
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const isAgentRuntime=r=>r==='ocp-agent'||r==='hermes';
 const runtimeLabel=r=>isAgentRuntime(r)?'OCP Agent':'OCP Coder';
@@ -1708,6 +1903,33 @@ function orbClass(bot,tasks){const t=tasks.find(x=>x.botId===bot.id&&['queued','
 function pendingApprovals(){return (state.tasks||[]).filter(t=>t.pendingApproval)}
 function approvalCard(t,p){const title=String(p.title||'').toLowerCase();const risk=/delete|shell|browser|mouse|key/.test(title)?'High':'Normal';const bot=state.bots.find(x=>x.id===t.botId);const preview=p.description?'<pre>'+esc(typeof p.description==='string'?p.description:JSON.stringify(p.description,null,2))+'</pre>':'';const opts=projectBots().filter(b=>b.id!==t.botId).map(b=>'<option value="'+esc(b.id)+'">'+esc(b.name)+'</option>').join('');return '<div class="approval" role="alertdialog" aria-label="Approval needed"><h3>'+esc(p.title||'Permission requested')+'</h3><div class="meta mb-sm">Bot: '+esc(bot?.name||t.botId)+' · Action: '+esc(p.title||'')+' · Risk: '+risk+'</div>'+preview+'<div class="row"><button type="button" data-appr="allow-once" data-tid="'+esc(t.id)+'" data-req="'+esc(p.id)+'">Allow once <span class="kbd">⌘↵</span></button><button type="button" class="secondary" data-appr="always" data-tid="'+esc(t.id)+'" data-req="'+esc(p.id)+'">Always for task</button><button type="button" class="danger" data-appr="cancelled" data-tid="'+esc(t.id)+'" data-req="'+esc(p.id)+'">Deny <span class="kbd">Esc</span></button></div><div class="row mt-sm"><select data-redirect-select="'+esc(t.id)+'"><option value="">Redirect to…</option>'+opts+'</select><button type="button" class="secondary" data-appr="redirect" data-tid="'+esc(t.id)+'" data-req="'+esc(p.id)+'">Redirect</button></div></div>'}
 function bindApprovals(){document.querySelectorAll('[data-appr]').forEach(el=>el.addEventListener('click',async e=>{e.stopPropagation();const decision=el.dataset.appr;const body={requestId:el.dataset.req,decision,approved:decision==='allow-once'||decision==='always'};if(decision==='redirect'){const sel=document.querySelector('[data-redirect-select="'+el.dataset.tid+'"]');body.redirectBotId=sel&&sel.value}try{await api('/api/tasks/'+encodeURIComponent(el.dataset.tid)+'/approval',body);await load()}catch(err){alert(err.message)}}))}
+function channelDrafts(){return (state.channelLog||[]).filter(m=>m.direction==='out'&&m.status==='draft')}
+function draftCard(m){const bot=state.bots.find(b=>b.id===m.botId);return '<div class="approval" role="alertdialog" aria-label="Reply draft"><h3>Send '+esc(m.channel)+' reply?</h3><div class="meta mb-sm">'+(bot?esc(bot.name)+' · ':'')+esc(m.destination)+'</div><pre>'+esc(m.text||'')+'</pre><div class="row"><button type="button" data-draft="allow" data-draft-id="'+esc(m.id)+'">Send reply</button><button type="button" class="danger" data-draft="deny" data-draft-id="'+esc(m.id)+'">Do not send</button></div></div>'}
+function bindDrafts(){document.querySelectorAll('[data-draft]').forEach(el=>el.addEventListener('click',async()=>{try{await api('/api/channels/drafts/'+encodeURIComponent(el.dataset.draftId),{decision:el.dataset.draft});await load()}catch(err){alert(err.message)}}))}
+let lastChannelSig='';
+function renderChannels(pBots){
+  const box=document.querySelector('#channelPanel');
+  if(!box)return;
+  const ch=state.channels||{};
+  const sig=JSON.stringify([ch,state.channelLog,pBots.map(b=>[b.id,b.name])]);
+  if(sig===lastChannelSig)return;
+  lastChannelSig=sig;
+  const options=pBots.map(b=>'<option value="'+esc(b.id)+'">'+esc(b.name)+'</option>').join('');
+  const slackBot=pBots.find(b=>b.id===ch.slackBotId);
+  const telegramBot=pBots.find(b=>b.id===ch.telegramBotId);
+  const log=(state.channelLog||[]).slice(-12).reverse().map(m=>'<div class="event"><time>'+esc(new Date(m.createdAt).toLocaleTimeString())+'</time>'+esc(m.channel)+' '+esc(m.direction)+' · '+esc(m.status)+(m.error?' · '+esc(m.error):'')+'<div class="meta">'+esc(String(m.text||'').slice(0,180))+'</div></div>').join('')||'<div class="meta">No channel messages yet.</div>';
+  box.innerHTML='<div class="home-grid"><div class="home-card"><span class="meta">Slack</span><strong>'+(ch.slackConfigured?'Configured':'Not configured')+'</strong><div class="meta">'+(slackBot?esc(slackBot.name):'No bot assigned')+'</div></div><div class="home-card"><span class="meta">Telegram</span><strong>'+(ch.telegramConfigured?'Configured':'Not configured')+'</strong><div class="meta">'+(telegramBot?esc(telegramBot.name):'No bot assigned')+'</div></div></div><form id="channelAssignForm" class="mt-sm"><label>Slack bot<select name="slackBotId"><option value="">Unassigned</option>'+options+'</select></label><label>Telegram bot<select name="telegramBotId"><option value="">Unassigned</option>'+options+'</select></label><button type="submit">Save assignment</button></form><div id="channelAssignStatus" class="status"></div><p class="meta">Inbound messages become tasks. Replies stay in the approval inbox until you click Send reply.</p>'+channelDrafts().map(draftCard).join('')+'<h3>Recent messages</h3><div class="activity">'+log+'</div>';
+  const form=document.querySelector('#channelAssignForm');
+  if(!form)return;
+  if(ch.slackBotId)form.elements.slackBotId.value=ch.slackBotId;
+  if(ch.telegramBotId)form.elements.telegramBotId.value=ch.telegramBotId;
+  form.addEventListener('submit',async e=>{
+    e.preventDefault();
+    const f=new FormData(form);
+    try{await api('/api/settings',{slackBotId:String(f.get('slackBotId')||''),telegramBotId:String(f.get('telegramBotId')||'')});lastChannelSig='';document.querySelector('#channelAssignStatus').textContent='Assignment saved.';await load()}catch(err){document.querySelector('#channelAssignStatus').textContent=err.message}
+  });
+  bindDrafts();
+}
 function homeDashboard(pBots,pTasks){const running=pTasks.filter(t=>['running','queued','awaiting-approval'].includes(t.status)).length;const waiting=pTasks.filter(t=>t.status==='awaiting-approval').length;const done=pTasks.filter(t=>t.status==='succeeded').length;return '<div class="home-grid"><div class="home-card"><span class="meta">Active tasks</span><strong>'+running+'</strong></div><div class="home-card"><span class="meta">Waiting on you</span><strong>'+waiting+'</strong></div><div class="home-card"><span class="meta">Completed</span><strong>'+done+'</strong></div><div class="home-card"><span class="meta">Active model</span><strong style="font-size:13px">'+esc(state.activeBrainLabel||state.activeModel||'No model configured')+'</strong></div></div>'}
 function graphHtml(t){const agents=t.agents||[];if(!agents.length)return '';return '<div class="graph" aria-label="Delegation graph">'+agents.map((a,i)=>(i?'<span class="edge">→</span>':'')+'<span class="node">'+esc(a.name)+' · '+esc(roleFriendly(a.role))+'</span>').join('')+'</div>'}
 
@@ -1967,6 +2189,7 @@ function draw(){
     document.querySelectorAll('[data-task]').forEach(el=>el.addEventListener('click',()=>{selected=el.dataset.task;draw();drawDetail()}));
   }
 
+  renderChannels(pBots);
   drawChatFeed(activeProj,pBots,pTasks);
   drawComputer(pBots);
   drawDetail(pTasks);
@@ -2030,6 +2253,7 @@ function drawChatFeed(activeProj,pBots,pTasks){
   document.querySelectorAll('[data-quick]').forEach(el=>el.addEventListener('click',()=>{const inp=document.querySelector('#promptInput');inp.value=el.dataset.quick;inp.focus()}));
   document.querySelectorAll('[data-select-turn]').forEach(el=>el.addEventListener('click',()=>{selected=el.dataset.selectTurn;drawDetail(pTasks)}));
   bindApprovals();
+  bindDrafts();
 }
 
 function enqueueCompAction(botId,payload,statusMsg){
@@ -2271,16 +2495,18 @@ function drawComputer(pBots){
 function drawDetail(pTasks){
   const panel=document.querySelector('#detail'),tasks=pTasks||projectTasks(),t=tasks.find(x=>x.id===selected)||tasks[0];
   const inbox=pendingApprovals();
-  if(!t && !inbox.length){panel.innerHTML='<h2>Activity</h2><p class="sub">Click any message in the chat to inspect steps, diffs, and tests.</p>';return}
-  const sig=JSON.stringify([t?.id,t?.status,t?.events?.length,t?.pendingApproval?.id,t?.workspaceChanges?.files?.length,inbox.map(i=>i.pendingApproval?.id)]);
+  const drafts=channelDrafts();
+  if(!t && !inbox.length && !drafts.length){panel.innerHTML='<h2>Activity</h2><p class="sub">Click any message in the chat to inspect steps, diffs, and tests.</p>';return}
+  const sig=JSON.stringify([t?.id,t?.status,t?.events?.length,t?.pendingApproval?.id,t?.workspaceChanges?.files?.length,inbox.map(i=>i.pendingApproval?.id),drafts.map(d=>d.id+d.status)]);
   if(sig===lastDetailSig)return;
   lastDetailSig=sig;
   const b=t&&state.bots.find(x=>x.id===t.botId),reviewer=t&&state.bots.find(x=>x.id===t.reviewerBotId),p=t&&t.pendingApproval;
   const files=visibleFiles(t?.workspaceChanges?.files);
-  const inboxHtml=inbox.length?'<h3>Approvals inbox</h3>'+inbox.map(item=>approvalCard(item,item.pendingApproval)).join(''):'';
+  const inboxHtml=(inbox.length||drafts.length)?'<h3>Approvals inbox</h3>'+drafts.map(draftCard).join('')+inbox.map(item=>approvalCard(item,item.pendingApproval)).join(''):'';
   panel.innerHTML=inboxHtml+(t?'<div class="row spread"><div><h2>'+esc(b?.name||t.botId)+' · '+esc(t.status)+'</h2><div class="meta">'+(reviewer?'Reviewed by '+esc(reviewer.name)+' · ':'')+esc(new Date(t.createdAt).toLocaleTimeString())+'</div></div><div class="row">'+(t.status==='running'||t.status==='awaiting-approval'||t.status==='queued'?'<button id="cancel" class="danger">Cancel</button>':((b&&['failed','cancelled','needs-attention'].includes(t.status))?'<button id="retry" class="secondary">Retry</button>':'')+'<button id="delete" class="ghost">Delete</button>')+'</div></div>'+graphHtml(t)+(p?approvalCard(t,p):'')+'<h3>Timeline</h3><div class="activity">'+(t.events?.length?t.events.slice().reverse().map(e=>'<div class="event"><time>'+esc(new Date(e.createdAt).toLocaleTimeString())+'</time>'+esc(e.title||e.kind)+'</div>').join(''):'<div class="meta">No tool events recorded.</div>')+'</div>'+(t.workspaceChanges?'<h3>Diff &amp; tests</h3>'+(files.length?'<div class="activity">'+files.map(f=>'<div class="event"><button type="button" class="secondary" data-workspace-file="'+esc(f.path)+'">'+esc(f.status)+' · '+esc(f.path)+'</button></div>').join('')+'</div><div id="workspaceFileView"></div>':'<p class="meta">'+esc(t.workspaceChanges.diffOmittedReason||'No visible Git changes.')+'</p>')+(t.workspaceChanges.diff?'<details open class="fold-box"><summary class="fold-summary">Git Diff</summary><pre>'+esc(t.workspaceChanges.diff)+'</pre></details>':''):''):'');
   document.querySelectorAll('[data-workspace-file]').forEach(el=>el.addEventListener('click',async()=>{const view=document.querySelector('#workspaceFileView'),filePath=el.dataset.workspaceFile;view.innerHTML='<p class="meta">Loading file…</p>';try{const file=await api('/api/workspace/file?botId='+encodeURIComponent(t.botId)+'&path='+encodeURIComponent(filePath));view.innerHTML='<h3>'+esc(filePath)+'</h3><pre>'+esc(file.content)+'</pre>'}catch(error){view.innerHTML='<p class="meta">'+esc(error.message)+'</p>'}}));
   bindApprovals();
+  bindDrafts();
   if(!t)return;
   const action=async(what,body)=>{try{await api('/api/tasks/'+encodeURIComponent(t.id)+'/'+what,body);await load()}catch(e){alert(e.message)}};
   document.querySelector('#cancel')?.addEventListener('click',()=>action('cancel',{}));
@@ -2442,6 +2668,7 @@ const paletteCommands=[
   {id:'credits',label:'Credits',run:()=>setTab('credits')},
   {id:'routines',label:'Routines',run:()=>setTab('routines')},
   {id:'connectors',label:'Connectors',run:()=>setTab('connectors')},
+  {id:'channels',label:'Channels',run:()=>setTab('channels')},
   {id:'inbox',label:'Approvals inbox',run:()=>{setTab('detail');lastDetailSig='';drawDetail()}}
 ];
 function paletteVisible(){return !document.querySelector('#palette').classList.contains('hidden')}

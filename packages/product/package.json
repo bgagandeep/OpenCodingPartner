@@ -7,6 +7,9 @@
     ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" },
     "./server": { "types": "./dist/server.d.ts", "import": "./dist/server.js" }
   },
-  "dependencies": { "@opencodingpartner/workers": "workspace:*" },
+  "dependencies": {
+    "@opencodingpartner/gateway": "workspace:*",
+    "@opencodingpartner/workers": "workspace:*"
+  },
   "devDependencies": { "@types/node": "^22.14.0" }
 }

@@ -80,6 +80,7 @@ import { deleteMcpSecret, listMcpSecretKeys, mcpSecretKey, readMcpSecret, writeM
 import { createVaultItem, deleteVaultItem, publicVault, VaultError } from "./vault.js";
 import { parseActionRules } from "./action-rules.js";
 import { createSkill, deleteSkill, exportSkillPack, importSkillGit, importSkillZip, listSkills, SkillError, updateSkill } from "./skills.js";
+import { approveIssuePlan, IssuePrError, listIssueRuns, openIssuePullRequest, runIssueTests, startIssueRun } from "./issue-pr.js";
 import { AccountError, completeAccountLogin, deliverMailDraft, disconnectAccount, GOOGLE_SCOPES, MICROSOFT_SCOPES, publicAccounts, saveAccountClient, startAccountLogin } from "./accounts.js";
 
 interface AppOptions {
@@ -462,6 +463,7 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
         channelLog: await listChannelLog(root),
         handoffs: await listProductHandoffs(root),
         skills: await listSkills(root),
+        issueRuns: await listIssueRuns(root),
         vault: await publicVault(root, env),
         accounts: await publicAccounts(root, env),
         usage: await usageSnapshot(root),
@@ -774,6 +776,33 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
       const provider = url.pathname.includes("google") ? "google" : "microsoft";
       await disconnectAccount(root, provider, env);
       sendJson(response, 200, { ok: true });
+      return;
+    }
+    if (request.method === "POST" && url.pathname === "/api/issues/start") {
+      try {
+        const run = await startIssueRun(root, body, env);
+        sendJson(response, 201, { run });
+      } catch (error) {
+        const status = error instanceof IssuePrError ? error.status : 400;
+        sendJson(response, status, { error: error instanceof Error ? error.message : "The issue was not started." });
+      }
+      return;
+    }
+    const issueAction = /^\/api\/issues\/([^/]+)\/(approve|test|pull-request)$/.exec(url.pathname);
+    if (issueAction && request.method === "POST") {
+      const id = decodeURIComponent(issueAction[1] ?? "");
+      const action = issueAction[2];
+      try {
+        const run = action === "approve"
+          ? await approveIssuePlan(root, id)
+          : action === "test"
+            ? await runIssueTests(root, id)
+            : await openIssuePullRequest(root, id, env);
+        sendJson(response, action === "pull-request" && run.status !== "pr-opened" ? 409 : 200, { run });
+      } catch (error) {
+        const status = error instanceof IssuePrError ? error.status : 400;
+        sendJson(response, status, { error: error instanceof Error ? error.message : "The issue step failed." });
+      }
       return;
     }
     if (request.method === "POST" && url.pathname === "/api/skills/import") {
@@ -1977,6 +2006,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;font:12.5px/1.45 "JetBrains Mono
       <button type="button" class="tab" data-tab="channels">Channels</button>
       <button type="button" class="tab" data-tab="drafts">Drafts</button>
       <button type="button" class="tab" data-tab="skills">Skills</button>
+      <button type="button" class="tab" data-tab="issue-pr">Issue to PR</button>
       <button type="button" class="tab" data-tab="vault">Vault</button>
       <button type="button" class="tab" data-tab="accounts">Accounts</button>
     </div>
@@ -2156,6 +2186,23 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;font:12.5px/1.45 "JetBrains Mono
         <div id="skillList" class="nav-list mt-sm"></div>
       </div>
 
+      <div id="tab-issue-pr" class="tab-pane hidden">
+        <h2>Issue to PR</h2>
+        <p class="sub">A GitHub or Linear issue becomes a task. Approve the plan, edit, run tests, then open a pull request with the plan, the diff, and the test output. Merging stays with a person.</p>
+        <form id="issueForm">
+          <label>Bot<select name="botId" id="issueBot" required></select></label>
+          <label>Source<select name="provider"><option value="github">GitHub</option><option value="linear">Linear</option></select></label>
+          <label>Issue<input name="issue" required placeholder="owner/name#12 or TEAM-12"></label>
+          <label>Repository<input name="repo" required placeholder="owner/name"></label>
+          <label>Base branch<input name="base" value="main"></label>
+          <label>Issue token vault item<input name="vaultItem" required placeholder="github-token"></label>
+          <label>GitHub token vault item<input name="githubVaultItem" placeholder="Same as the issue token when the source is GitHub"></label>
+          <button type="submit">Start from issue</button>
+        </form>
+        <div id="issueStatus" class="status"></div>
+        <div id="issueList" class="nav-list mt-sm"></div>
+      </div>
+
       <div id="tab-vault" class="tab-pane hidden">
         <h2>Vault</h2>
         <p class="sub">Logins, tokens, and OAuth secrets stay in this vault. A bot fills a virtual-computer login by item name. The secret is not sent to the model and is not written in the task log. A sign-in, 2FA, or captcha asks you to Take Control.</p>
@@ -2187,7 +2234,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;font:12.5px/1.45 "JetBrains Mono
   <div id="paletteList" role="listbox"></div>
 </div>
 
-<script nonce="${token}">const TOKEN='${token}',DEFAULT_WS='${escapeJs(process.cwd())}';let state={projects:[],bots:[],tasks:[],routines:[],channels:{},channelLog:[],handoffs:[],skills:[],vault:{items:[]},accounts:{},activeBrainLabel:'',activeModel:''},activeWorkspace='',selected='',conversationBot='',computerBot='',computerMeta=null,bootstrapped=false,activeTab='detail',centerView='chat',lastClickPt=null,renderedCompBot='',lastFrameSrc='',lastSyncedUrl='',lastSidebarSig='',lastChatSig='',lastDetailSig='',keyBuffer='',keyTimer=null,lastCompInteract=0,compQueue=Promise.resolve(),paletteIndex=0,sseLive=false,connectorBot='';
+<script nonce="${token}">const TOKEN='${token}',DEFAULT_WS='${escapeJs(process.cwd())}';let state={projects:[],bots:[],tasks:[],routines:[],channels:{},channelLog:[],handoffs:[],skills:[],issueRuns:[],vault:{items:[]},accounts:{},activeBrainLabel:'',activeModel:''},activeWorkspace='',selected='',conversationBot='',computerBot='',computerMeta=null,bootstrapped=false,activeTab='detail',centerView='chat',lastClickPt=null,renderedCompBot='',lastFrameSrc='',lastSyncedUrl='',lastSidebarSig='',lastChatSig='',lastDetailSig='',keyBuffer='',keyTimer=null,lastCompInteract=0,compQueue=Promise.resolve(),paletteIndex=0,sseLive=false,connectorBot='';
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const googleSignInNote='Google and Microsoft connectors use an OAuth client you paste in Accounts. OCP ships no OAuth client. Take Control on this virtual computer to sign in on a page yourself.';
 const isAgentRuntime=r=>r==='ocp-agent'||r==='hermes';
@@ -2240,6 +2287,34 @@ function renderSkills(){
     const status=document.querySelector('#skillStatus');
     try{await api('/api/skills/'+encodeURIComponent(el.dataset.skillDelete),{},'DELETE');lastSkillsSig='';if(status)status.textContent='Deleted.';await load()}catch(err){if(status)status.textContent=err.message}
   }));
+}
+let lastIssueSig='';
+function renderIssueRuns(pBots){
+  const select=document.querySelector('#issueBot');
+  if(select){
+    const current=select.value;
+    select.innerHTML=(pBots||[]).map(b=>'<option value="'+esc(b.id)+'">'+esc(b.name)+'</option>').join('');
+    if(current)select.value=current;
+  }
+  const box=document.querySelector('#issueList');
+  if(!box)return;
+  const runs=state.issueRuns||[];
+  const sig=JSON.stringify(runs);
+  if(sig===lastIssueSig)return;
+  lastIssueSig=sig;
+  box.innerHTML=runs.slice().reverse().map(run=>{
+    const tests=run.testResults!==undefined?(run.testExitCode===0?'Tests exited 0.':'Tests exited '+run.testExitCode+'. This is not a pass.'):'Tests have not been run.';
+    const pr=run.prUrl?'<p class="meta">'+esc(run.prUrl)+'</p>':'';
+    const err=run.error?'<p class="meta">'+esc(run.error)+'</p>':'';
+    const approve=run.planApproved?'':'<button type="button" data-issue-approve="'+esc(run.id)+'">Approve plan</button>';
+    const testBtn=run.planApproved?'<button type="button" class="secondary" data-issue-test="'+esc(run.id)+'">Run tests</button>':'';
+    const openBtn=run.planApproved && run.status!=='pr-opened'?'<button type="button" data-issue-open="'+esc(run.id)+'">Open pull request</button>':'';
+    return '<div class="approval"><h3>'+esc(run.title)+'</h3><div class="meta">'+esc(run.issue)+' · '+esc(run.status)+'</div><pre>'+esc(run.plan||'')+'</pre><p class="meta">'+esc(tests)+'</p>'+pr+err+'<div class="row">'+approve+testBtn+openBtn+'</div><p class="meta">Merging stays with a person. This screen does not merge.</p></div>';
+  }).join('')||'<div class="meta">No issue runs yet. Merging stays with a person.</div>';
+  const act=async(url,status)=>{try{await api(url,{});lastIssueSig='';if(status)status.textContent='Updated.';await load()}catch(err){if(status)status.textContent=err.message}};
+  box.querySelectorAll('[data-issue-approve]').forEach(el=>el.addEventListener('click',()=>act('/api/issues/'+encodeURIComponent(el.dataset.issueApprove)+'/approve',document.querySelector('#issueStatus'))));
+  box.querySelectorAll('[data-issue-test]').forEach(el=>el.addEventListener('click',()=>act('/api/issues/'+encodeURIComponent(el.dataset.issueTest)+'/test',document.querySelector('#issueStatus'))));
+  box.querySelectorAll('[data-issue-open]').forEach(el=>el.addEventListener('click',()=>act('/api/issues/'+encodeURIComponent(el.dataset.issueOpen)+'/pull-request',document.querySelector('#issueStatus'))));
 }
 let lastChannelSig='';
 let lastUsageSig='';
@@ -2696,6 +2771,7 @@ function draw(){
   renderChannels(pBots);
   renderDrafts();
   renderSkills();
+  renderIssueRuns(pBots);
   renderVault();
   renderAccounts();
   renderUsage(pBots);
@@ -3132,6 +3208,20 @@ document.querySelector('#skillForm')?.addEventListener('submit',async e=>{
   }catch(err){if(status)status.textContent=err.message}
 });
 document.querySelector('#skillReset')?.addEventListener('click',()=>{document.querySelector('#skillForm')?.reset()});
+document.querySelector('#issueForm')?.addEventListener('submit',async e=>{
+  e.preventDefault();
+  const f=new FormData(e.target);
+  const status=document.querySelector('#issueStatus');
+  const body={botId:String(f.get('botId')||''),provider:String(f.get('provider')||''),issue:String(f.get('issue')||''),repo:String(f.get('repo')||''),base:String(f.get('base')||'main'),vaultItem:String(f.get('vaultItem')||'')};
+  const githubVaultItem=String(f.get('githubVaultItem')||'').trim();
+  if(githubVaultItem)body.githubVaultItem=githubVaultItem;
+  try{
+    await api('/api/issues/start',body);
+    lastIssueSig='';
+    if(status)status.textContent='Issue started. Approve the plan before a pull request can open.';
+    await load();
+  }catch(err){if(status)status.textContent=err.message}
+});
 document.querySelector('#skillExport')?.addEventListener('click',async()=>{
   const status=document.querySelector('#skillStatus');
   try{
@@ -3241,6 +3331,7 @@ const paletteCommands=[
   {id:'channels',label:'Channels',run:()=>setTab('channels')},
   {id:'drafts',label:'Drafts',run:()=>setTab('drafts')},
   {id:'skills',label:'Skills',run:()=>setTab('skills')},
+  {id:'issue-pr',label:'Issue to PR',run:()=>setTab('issue-pr')},
   {id:'vault',label:'Vault',run:()=>setTab('vault')},
   {id:'accounts',label:'Accounts',run:()=>setTab('accounts')},
   {id:'inbox',label:'Approvals inbox',run:()=>{setTab('detail');lastDetailSig='';drawDetail()}}

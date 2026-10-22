@@ -32,8 +32,14 @@ export interface BotDefinition {
   apiKeyEnv?: string;
   model?: string;
   runtimeSessionId?: string;
+  mcpServers?: BotMcpServer[];
   createdAt: string;
   updatedAt: string;
+}
+
+export interface BotMcpServer {
+  name: string;
+  url: string;
 }
 
 export interface ProductTask {
@@ -104,14 +110,27 @@ export interface ProductProject {
   updatedAt: string;
 }
 
+export interface ProductRoutine {
+  id: string;
+  botId: string;
+  prompt: string;
+  status: "active" | "paused";
+  everyMs?: number;
+  event?: string;
+  nextRunAt?: number;
+  lastRunAt?: string;
+  createdAt: string;
+}
+
 interface ProductState {
   schemaVersion: 1;
   projects?: ProductProject[];
   bots: BotDefinition[];
   tasks: ProductTask[];
+  routines?: ProductRoutine[];
 }
 
-const EMPTY_STATE: ProductState = { schemaVersion: 1, projects: [], bots: [], tasks: [] };
+const EMPTY_STATE: ProductState = { schemaVersion: 1, projects: [], bots: [], tasks: [], routines: [] };
 
 export function productDataDir(env: NodeJS.ProcessEnv = process.env): string {
   if (env.OCP_DATA_DIR) return path.resolve(env.OCP_DATA_DIR);
@@ -156,6 +175,10 @@ export interface ProviderSettings {
   litellmBaseUrl?: string;
   openaiApiKey?: string;
   defaultModel?: string;
+  slackBotToken?: string;
+  slackSigningSecret?: string;
+  telegramBotToken?: string;
+  telegramWebhookSecret?: string;
   updatedAt?: string;
 }
 
@@ -188,6 +211,10 @@ export async function saveProviderSettings(
   assign("litellmBaseUrl");
   assign("openaiApiKey");
   assign("defaultModel");
+  assign("slackBotToken");
+  assign("slackSigningSecret");
+  assign("telegramBotToken");
+  assign("telegramWebhookSecret");
   const target = path.join(root, "settings.json");
   await writeFile(target, `${JSON.stringify(next, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
   await chmod(target, 0o600).catch(() => undefined);
@@ -673,7 +700,7 @@ export async function createBot(
 
 export async function updateBot(
   id: string,
-  update: Partial<Pick<BotDefinition, "name" | "role" | "runtime" | "isolation" | "network" | "workspace" | "instructions" | "provider" | "endpoint" | "apiKeyEnv" | "model">>,
+  update: Partial<Pick<BotDefinition, "name" | "role" | "runtime" | "isolation" | "network" | "workspace" | "instructions" | "provider" | "endpoint" | "apiKeyEnv" | "model" | "mcpServers">>,
   root = productDataDir(),
   options: { actor?: "human" | "bot" } = {},
 ): Promise<BotDefinition> {
@@ -808,6 +835,73 @@ export async function updateTask(
     updated = task;
   });
   return updated as ProductTask;
+}
+
+export async function listProductRoutines(root = productDataDir()): Promise<ProductRoutine[]> {
+  return (await readState(root)).routines ?? [];
+}
+
+export async function createProductRoutine(
+  input: { botId: string; prompt: string; everyMs?: number; event?: string },
+  root = productDataDir(),
+): Promise<ProductRoutine> {
+  const prompt = input.prompt.trim();
+  if (!prompt) throw new Error("Routine needs a prompt.");
+  const bot = await findBot(input.botId, root);
+  if (!bot) throw new Error("Unknown bot.");
+  const event = input.event?.trim();
+  const everyMs = input.everyMs;
+  if (event && everyMs) throw new Error("Choose an interval or an event, not both.");
+  if (!event && (!Number.isInteger(everyMs) || (everyMs ?? 0) < 1000)) throw new Error("Interval must be at least 1000 ms.");
+  if (event && !/^[A-Za-z0-9._:-]+$/.test(event)) throw new Error("Event name must be a simple token.");
+  const now = Date.now();
+  const routine: ProductRoutine = {
+    id: randomUUID(),
+    botId: bot.id,
+    prompt,
+    status: "active",
+    everyMs: event ? undefined : everyMs,
+    event: event || undefined,
+    nextRunAt: event ? undefined : now + (everyMs ?? 0),
+    createdAt: new Date().toISOString(),
+  };
+  await mutateState(root, (state) => {
+    state.routines ??= [];
+    state.routines.push(routine);
+  });
+  return routine;
+}
+
+export async function updateProductRoutine(
+  id: string,
+  update: Partial<Pick<ProductRoutine, "status" | "nextRunAt" | "lastRunAt">>,
+  root = productDataDir(),
+): Promise<ProductRoutine> {
+  let updated: ProductRoutine | undefined;
+  await mutateState(root, (state) => {
+    const routine = (state.routines ?? []).find((item) => item.id === id);
+    if (!routine) throw new Error("Unknown routine.");
+    Object.assign(routine, update);
+    updated = routine;
+  });
+  return updated as ProductRoutine;
+}
+
+export async function deleteProductRoutine(id: string, root = productDataDir()): Promise<void> {
+  await mutateState(root, (state) => {
+    state.routines = (state.routines ?? []).filter((item) => item.id !== id);
+  });
+}
+
+export async function dueProductRoutines(now = Date.now(), root = productDataDir()): Promise<ProductRoutine[]> {
+  return (await listProductRoutines(root)).filter((routine) =>
+    routine.status === "active" && Number.isInteger(routine.everyMs) && typeof routine.nextRunAt === "number" && routine.nextRunAt <= now,
+  );
+}
+
+export async function routinesForEvent(name: string, root = productDataDir()): Promise<ProductRoutine[]> {
+  const event = name.trim();
+  return (await listProductRoutines(root)).filter((routine) => routine.status === "active" && routine.event === event);
 }
 
 export async function recordTaskApproval(id: string, approval: TaskApproval, root = productDataDir()): Promise<void> {

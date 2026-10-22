@@ -19,12 +19,16 @@ import {
   ensureComputerDisplay,
   captureWorkspaceBaseline,
   collectWorkspaceChanges,
+  createProductRoutine,
   createTask,
+  deleteProductRoutine,
   deleteTask,
+  dueProductRoutines,
   findBot,
   findTask,
   isOcpAgentRuntime,
   listBots,
+  listProductRoutines,
   listProjects,
   listTasks,
   missingProviderKey,
@@ -48,6 +52,8 @@ import {
   workspaceHasBusyTask,
   workspacePathsMatch,
   nextQueuedTaskForWorkspace,
+  routinesForEvent,
+  updateProductRoutine,
   type KeyboardActionInput,
   type MouseActionInput,
   type PendingTaskApproval,
@@ -261,11 +267,12 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
       return;
     }
     if (request.method === "GET" && url.pathname === "/api/state") {
-      const [projects, bots, tasks, settings] = await Promise.all([
+      const [projects, bots, tasks, settings, routines] = await Promise.all([
         listProjects(root),
         listBots(root),
         listTasks(root),
         readProviderSettings(root),
+        listProductRoutines(root),
       ]);
       const effectiveEnv = applyProviderSettingsToEnv(settings, env);
       sendJson(response, 200, {
@@ -301,6 +308,11 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
         })),
         activeBrainLabel: brainLabel(effectiveEnv),
         activeModel: effectiveEnv.OCP_DEFAULT_MODEL || settings.defaultModel || "",
+        routines,
+        channels: {
+          slackConfigured: Boolean(settings.slackBotToken && settings.slackSigningSecret),
+          telegramConfigured: Boolean(settings.telegramBotToken && settings.telegramWebhookSecret),
+        },
       });
       return;
     }
@@ -332,7 +344,13 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
         openaiConfigured: Boolean(effectiveEnv.OPENAI_API_KEY),
         litellmBaseUrl: settings.litellmBaseUrl || effectiveEnv.LITELLM_BASE_URL || "http://127.0.0.1:4000/v1",
         defaultModel: settings.defaultModel || effectiveEnv.OCP_DEFAULT_MODEL || "",
+        slackConfigured: Boolean(settings.slackBotToken && settings.slackSigningSecret),
+        telegramConfigured: Boolean(settings.telegramBotToken && settings.telegramWebhookSecret),
       });
+      return;
+    }
+    if (request.method === "GET" && url.pathname === "/api/routines") {
+      sendJson(response, 200, { routines: await listProductRoutines(root) });
       return;
     }
     if (request.method === "GET" && url.pathname === "/api/workspace/file") {
@@ -448,6 +466,10 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
           ...(typeof body.litellmBaseUrl === "string" ? { litellmBaseUrl: body.litellmBaseUrl } : {}),
           ...(typeof body.openaiApiKey === "string" ? { openaiApiKey: body.openaiApiKey } : {}),
           ...(typeof body.defaultModel === "string" ? { defaultModel: body.defaultModel } : {}),
+          ...(typeof body.slackBotToken === "string" ? { slackBotToken: body.slackBotToken } : {}),
+          ...(typeof body.slackSigningSecret === "string" ? { slackSigningSecret: body.slackSigningSecret } : {}),
+          ...(typeof body.telegramBotToken === "string" ? { telegramBotToken: body.telegramBotToken } : {}),
+          ...(typeof body.telegramWebhookSecret === "string" ? { telegramWebhookSecret: body.telegramWebhookSecret } : {}),
         },
         root,
       );
@@ -459,7 +481,51 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
         openaiConfigured: Boolean(effectiveEnv.OPENAI_API_KEY),
         litellmBaseUrl: saved.litellmBaseUrl || effectiveEnv.LITELLM_BASE_URL || "http://127.0.0.1:4000/v1",
         defaultModel: saved.defaultModel || effectiveEnv.OCP_DEFAULT_MODEL || "",
+        slackConfigured: Boolean(saved.slackBotToken && saved.slackSigningSecret),
+        telegramConfigured: Boolean(saved.telegramBotToken && saved.telegramWebhookSecret),
       });
+      return;
+    }
+    if (request.method === "POST" && url.pathname === "/api/routines") {
+      try {
+        const everyMs = typeof body.everyMs === "number" ? body.everyMs : typeof body.everyMs === "string" ? Number(body.everyMs) : undefined;
+        const routine = await createProductRoutine({
+          botId: typeof body.botId === "string" ? body.botId : "",
+          prompt: typeof body.prompt === "string" ? body.prompt : "",
+          everyMs: Number.isFinite(everyMs) ? everyMs : undefined,
+          event: typeof body.event === "string" ? body.event : undefined,
+        }, root);
+        notifySse();
+        sendJson(response, 201, { routine });
+      } catch (error) {
+        sendJson(response, 400, { error: error instanceof Error ? error.message : "Could not create routine." });
+      }
+      return;
+    }
+    if (request.method === "POST" && url.pathname === "/api/routines/event") {
+      const name = typeof body.name === "string" ? body.name.trim() : "";
+      const matched = name ? await routinesForEvent(name, root) : [];
+      sendJson(response, 202, { ok: true, fired: matched.length, routineIds: matched.map((item) => item.id) });
+      for (const routine of matched) void startRoutineTask(routine);
+      notifySse();
+      return;
+    }
+    const routineMatch = /^\/api\/routines\/([^/]+)$/.exec(url.pathname);
+    if (routineMatch && request.method === "PATCH") {
+      try {
+        const status = body.status === "paused" ? "paused" : body.status === "active" ? "active" : undefined;
+        const routine = await updateProductRoutine(routineMatch[1] ?? "", status ? { status } : {}, root);
+        notifySse();
+        sendJson(response, 200, { routine });
+      } catch (error) {
+        sendJson(response, 404, { error: error instanceof Error ? error.message : "Unknown routine." });
+      }
+      return;
+    }
+    if (routineMatch && request.method === "DELETE") {
+      await deleteProductRoutine(routineMatch[1] ?? "", root);
+      notifySse();
+      sendJson(response, 200, { ok: true });
       return;
     }
     if (request.method === "POST" && url.pathname === "/api/bootstrap") {
@@ -818,6 +884,17 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
     })();
   }
 
+  async function startRoutineTask(routine: Awaited<ReturnType<typeof listProductRoutines>>[number]): Promise<void> {
+    const bot = await findBot(routine.botId, root);
+    if (!bot) return;
+    const task = await createTask({ botId: bot.id, prompt: `[routine ${routine.id}] ${routine.prompt}` }, root);
+    await updateProductRoutine(routine.id, { lastRunAt: new Date().toISOString(), nextRunAt: routine.everyMs ? Date.now() + routine.everyMs : routine.nextRunAt }, root);
+    if (await workspaceHasBusyTask(bot.workspace, root)) return;
+    const baseline = await captureWorkspaceBaseline(bot.workspace);
+    await updateTask(task.id, { status: "running", processId: process.pid }, root);
+    launchTask(task.id, bot, undefined, task.prompt, baseline);
+  }
+
   async function drainWorkspaceQueue(workspace: string): Promise<void> {
     if (closing) return;
     if (await workspaceHasBusyTask(workspace, root)) return;
@@ -887,12 +964,21 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
     })();
   }, 400);
   queueTimer.unref?.();
+  const routineTimer = setInterval(() => {
+    void (async () => {
+      const due = await dueProductRoutines(Date.now(), root);
+      for (const routine of due) await startRoutineTask(routine);
+      if (due.length) notifySse();
+    })();
+  }, 1000);
+  routineTimer.unref?.();
   return {
     server,
     url: `http://${displayHost}:${actualPort}`,
     close: async () => {
       closing = true;
       clearInterval(queueTimer);
+      clearInterval(routineTimer);
       for (const client of sseClients) {
         try {
           client.end();
@@ -940,6 +1026,7 @@ async function saveBotFromRequest(body: Record<string, unknown>, root: string, i
   if (!provider && model) return { error: "A model override requires an explicit OpenRouter or OpenAI-compatible provider profile." };
   if ((provider === "litellm" && !validEndpoint(endpoint)) || (provider !== "litellm" && endpoint)) return { error: "An OpenAI-compatible endpoint must be HTTP(S) without credentials; OpenRouter does not use a custom endpoint." };
   if ((provider === "litellm" && !validEnvName(apiKeyEnv)) || (provider !== "litellm" && body.apiKeyEnv)) return { error: "API key environment variable name is invalid or not supported for this provider." };
+  const mcpServers = parseMcpServers(body.mcpServers, existing?.mcpServers);
   const botInput = {
       name,
       role,
@@ -950,6 +1037,7 @@ async function saveBotFromRequest(body: Record<string, unknown>, root: string, i
       instructions: typeof body.instructions === "string" ? body.instructions.trim().slice(0, 20_000) || defaultBotInstructions(role) : existing?.instructions ?? defaultBotInstructions(role),
       provider: provider as "openrouter" | "litellm" | undefined,
       model: model || undefined,
+      mcpServers,
       endpoint,
       apiKeyEnv,
   };
@@ -974,10 +1062,10 @@ function validEnvName(value: string | undefined): boolean {
 }
 
 function publicBot(bot: NonNullable<Awaited<ReturnType<typeof findBot>>>, env: NodeJS.ProcessEnv = process.env) {
-  const { id, name, role, runtime, isolation, network, workspace, provider, endpoint, apiKeyEnv, model, instructions, createdAt, updatedAt } = bot;
+  const { id, name, role, runtime, isolation, network, workspace, provider, endpoint, apiKeyEnv, model, instructions, mcpServers, createdAt, updatedAt } = bot;
   const effectiveIsolation = isOcpAgentRuntime(runtime) ? isolation ?? "docker" : undefined;
   const providerKeyConfigured = provider ? missingProviderKey(bot, env) === undefined : undefined;
-  return { id, name, role, runtime, isolation: effectiveIsolation, network: effectiveIsolation === "docker" ? network ?? "disabled" : undefined, workspace, provider, endpoint, apiKeyEnv, model, instructions, providerKeyConfigured, createdAt, updatedAt };
+  return { id, name, role, runtime, isolation: effectiveIsolation, network: effectiveIsolation === "docker" ? network ?? "disabled" : undefined, workspace, provider, endpoint, apiKeyEnv, model, instructions, mcpServers: mcpServers ?? [], providerKeyConfigured, createdAt, updatedAt };
 }
 
 function boundedJson(value: unknown): unknown {
@@ -1024,6 +1112,28 @@ export function isHiddenWorkspacePath(filePath: string): boolean {
 
 export function visibleWorkspaceChangeFiles<T extends { path: string }>(files: readonly T[] | undefined): T[] {
   return (files ?? []).filter((file) => !isHiddenWorkspacePath(file.path));
+}
+
+function parseMcpServers(raw: unknown, fallback?: { name: string; url: string }[]): { name: string; url: string }[] | undefined {
+  if (raw === undefined) return fallback;
+  const text = typeof raw === "string" ? raw.trim() : "";
+  const list = Array.isArray(raw) ? raw : text ? (() => { try { return JSON.parse(text) as unknown; } catch { return null; } })() : [];
+  if (!Array.isArray(list)) return fallback;
+  const servers: { name: string; url: string }[] = [];
+  for (const item of list) {
+    if (!item || typeof item !== "object") continue;
+    const name = typeof (item as { name?: unknown }).name === "string" ? (item as { name: string }).name.trim() : "";
+    const url = typeof (item as { url?: unknown }).url === "string" ? (item as { url: string }).url.trim() : "";
+    if (!name || !url) continue;
+    try {
+      const parsed = new URL(url);
+      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") continue;
+    } catch {
+      continue;
+    }
+    servers.push({ name: name.slice(0, 80), url });
+  }
+  return servers;
 }
 
 function brainLabel(env: NodeJS.ProcessEnv): string {
@@ -1333,6 +1443,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;font:12.5px/1.45 "JetBrains Mono
       <button type="button" class="tab" data-tab="project">◈ Project</button>
       <button type="button" class="tab" data-tab="settings">Settings</button>
       <button type="button" class="tab" data-tab="credits">Credits</button>
+      <button type="button" class="tab" data-tab="routines">Routines</button>
     </div>
 
     <div class="drawer-body">
@@ -1368,6 +1479,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;font:12.5px/1.45 "JetBrains Mono
             <label class="provider-field hidden">Model ID<input name="model" placeholder="Model id you configured"></label>
             <label class="provider-field hidden">OpenAI-compatible endpoint<input name="endpoint" placeholder="http://127.0.0.1:11434/v1"></label>
             <label class="provider-field hidden">API Key Env<input name="apiKeyEnv" value="LITELLM_API_KEY"></label>
+            <label>MCP servers (JSON array of name + url)<textarea name="mcpServers" placeholder='[{"name":"docs","url":"http://127.0.0.1:3100"}]'></textarea></label>
           </details>
           <div class="row mt-sm">
             <button id="botSubmit">Save Bot</button>
@@ -1409,6 +1521,15 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;font:12.5px/1.45 "JetBrains Mono
           <label>Default Model ID<input name="defaultModel" placeholder="Leave blank until you choose a model"></label>
           <button type="submit">Save &amp; Apply Immediately</button>
         </form>
+        <div class="fold-box mt-sm">
+          <h3>Channels in this app</h3>
+          <p class="sub">Tokens stay in local settings.json (mode 0600). Empty fields are left unchanged.</p>
+          <label>Slack bot token<input type="password" name="slackBotToken" form="settingsForm" placeholder="xoxb-…"></label>
+          <label>Slack signing secret<input type="password" name="slackSigningSecret" form="settingsForm"></label>
+          <label>Telegram bot token<input type="password" name="telegramBotToken" form="settingsForm"></label>
+          <label>Telegram webhook secret<input type="password" name="telegramWebhookSecret" form="settingsForm"></label>
+          <p class="meta" id="channelStatus">Slack and Telegram: not configured</p>
+        </div>
         <div id="settingsStatus" class="status"></div>
       </div>
 
@@ -1416,6 +1537,24 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;font:12.5px/1.45 "JetBrains Mono
         <h2>Credits</h2>
         <p class="credits">User-facing product name: <strong>Open Coding Partner (OCP)</strong>.</p>
         <p class="credits">Third-party components documented in NOTICE / THIRD_PARTY_NOTICES: OpenClaw, Hermes, Grok Build, Laya, LiteLLM, and xAI. They are not product names in the rest of this app.</p>
+      </div>
+
+      <div id="tab-routines" class="tab-pane hidden">
+        <h2>Routines</h2>
+        <p class="sub">Cron-style intervals and named events run inside this app and enqueue a bot task.</p>
+        <form id="routineForm">
+          <label>Bot<select name="botId" id="routineBotSelect" required></select></label>
+          <label>Prompt<textarea name="prompt" required placeholder="What should run on a schedule or event?"></textarea></label>
+          <label>Every (seconds)<input name="everySec" type="number" min="1" placeholder="Leave empty if using an event"></label>
+          <label>Event name<input name="event" placeholder="e.g. build-finished"></label>
+          <button type="submit">Save routine</button>
+        </form>
+        <div id="routineStatus" class="status"></div>
+        <div id="routineList" class="nav-list mt-sm"></div>
+        <form id="routineEventForm" class="mt-sm">
+          <label>Fire event<input name="name" required placeholder="build-finished"></label>
+          <button type="submit" class="secondary">Fire now</button>
+        </form>
       </div>
     </div>
   </aside>
@@ -1433,7 +1572,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;font:12.5px/1.45 "JetBrains Mono
   <div id="paletteList" role="listbox"></div>
 </div>
 
-<script nonce="${token}">const TOKEN='${token}',DEFAULT_WS='${escapeJs(process.cwd())}';let state={projects:[],bots:[],tasks:[],activeBrainLabel:'',activeModel:''},activeWorkspace='',selected='',conversationBot='',computerBot='',computerMeta=null,bootstrapped=false,activeTab='detail',centerView='chat',lastClickPt=null,renderedCompBot='',lastFrameSrc='',lastSyncedUrl='',lastSidebarSig='',lastChatSig='',lastDetailSig='',keyBuffer='',keyTimer=null,lastCompInteract=0,compQueue=Promise.resolve(),paletteIndex=0,sseLive=false;
+<script nonce="${token}">const TOKEN='${token}',DEFAULT_WS='${escapeJs(process.cwd())}';let state={projects:[],bots:[],tasks:[],routines:[],channels:{},activeBrainLabel:'',activeModel:''},activeWorkspace='',selected='',conversationBot='',computerBot='',computerMeta=null,bootstrapped=false,activeTab='detail',centerView='chat',lastClickPt=null,renderedCompBot='',lastFrameSrc='',lastSyncedUrl='',lastSidebarSig='',lastChatSig='',lastDetailSig='',keyBuffer='',keyTimer=null,lastCompInteract=0,compQueue=Promise.resolve(),paletteIndex=0,sseLive=false;
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const isAgentRuntime=r=>r==='ocp-agent'||r==='hermes';
 const runtimeLabel=r=>isAgentRuntime(r)?'OCP Agent':'OCP Coder';
@@ -1671,6 +1810,20 @@ function draw(){
     const reviewers=pBots.filter(b=>(b.role==='qa'||b.role==='security')&&b.id!==primary?.id);
     reviewerSelect.innerHTML='<option value="">No automatic review</option>'+reviewers.map(b=>'<option value="'+esc(b.id)+'">'+esc(b.name)+' ('+esc(roleFriendly(b.role))+')</option>').join('');
     if(reviewers.some(b=>b.id===chosenReviewer))reviewerSelect.value=chosenReviewer;
+    const rsel=document.querySelector('#routineBotSelect');
+    if(rsel)rsel.innerHTML=pBots.map(b=>'<option value="'+esc(b.id)+'">'+esc(b.name)+'</option>').join('');
+    const rlist=document.querySelector('#routineList');
+    if(rlist){
+      const routines=state.routines||[];
+      rlist.innerHTML=routines.length?routines.map(r=>{
+        const owner=state.bots.find(b=>b.id===r.botId);
+        const when=r.event?('event '+r.event):('every '+Math.round((r.everyMs||0)/1000)+'s');
+        return '<div class="nav-item"><div class="nav-main"><strong>'+esc(owner?.name||r.botId)+'</strong><div class="meta">'+esc(when)+' · '+esc(r.status)+'</div></div><button type="button" class="ghost" data-routine-toggle="'+esc(r.id)+'" data-status="'+esc(r.status==='active'?'paused':'active')+'">'+(r.status==='active'?'Pause':'Resume')+'</button></div>';
+      }).join(''):'<div class="meta">No routines yet.</div>';
+      rlist.querySelectorAll('[data-routine-toggle]').forEach(el=>el.addEventListener('click',async()=>{try{await api('/api/routines/'+encodeURIComponent(el.dataset.routineToggle),{status:el.dataset.status},'PATCH');await load()}catch(err){alert(err.message)}}));
+    }
+    const ch=document.querySelector('#channelStatus');
+    if(ch)ch.textContent='Slack: '+(state.channels?.slackConfigured?'configured':'not configured')+' · Telegram: '+(state.channels?.telegramConfigured?'configured':'not configured');
     select.onchange=draw;
 
     document.querySelectorAll('[data-edit]').forEach(el=>el.addEventListener('click',e=>{e.stopPropagation();editBot(el.dataset.edit)}));
@@ -2022,6 +2175,23 @@ document.querySelector('#useOpenRouterPresetBtn').addEventListener('click',async
     await load();await showHealth();
   }catch(err){document.querySelector('#settingsStatus').textContent=err.message}
 });
+document.querySelector('#routineForm')?.addEventListener('submit',async e=>{
+  e.preventDefault();
+  const f=new FormData(e.target);
+  const everySec=Number(f.get('everySec'));
+  const event=String(f.get('event')||'').trim();
+  try{
+    await api('/api/routines',{botId:f.get('botId'),prompt:f.get('prompt'),everyMs:event?'':(Number.isFinite(everySec)?everySec*1000:undefined),event:event||undefined});
+    document.querySelector('#routineStatus').textContent='Routine saved.';
+    e.target.reset();
+    await load();
+  }catch(err){document.querySelector('#routineStatus').textContent=err.message}
+});
+document.querySelector('#routineEventForm')?.addEventListener('submit',async e=>{
+  e.preventDefault();
+  const name=new FormData(e.target).get('name');
+  try{const r=await api('/api/routines/event',{name});document.querySelector('#routineStatus').textContent='Fired '+r.fired+' routine(s).';await load()}catch(err){document.querySelector('#routineStatus').textContent=err.message}
+});
 document.querySelector('#settingsForm').addEventListener('submit',async e=>{
   e.preventDefault();
   const f=new FormData(e.target),body=Object.fromEntries(f.entries());
@@ -2100,6 +2270,7 @@ const paletteCommands=[
   {id:'bot',label:'Add Bot',run:()=>document.querySelector('#openNewBotBtn').click()},
   {id:'settings',label:'Settings',run:()=>document.querySelector('#openSettingsBtn').click()},
   {id:'credits',label:'Credits',run:()=>setTab('credits')},
+  {id:'routines',label:'Routines',run:()=>setTab('routines')},
   {id:'inbox',label:'Approvals inbox',run:()=>{setTab('detail');lastDetailSig='';drawDetail()}}
 ];
 function paletteVisible(){return !document.querySelector('#palette').classList.contains('hidden')}

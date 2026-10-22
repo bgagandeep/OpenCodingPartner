@@ -8,6 +8,7 @@ import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import { externalToolNeedsApproval } from "./connectors.js";
 import { listHttpMcpTools, type HttpMcpEndpoint } from "./http-mcp.js";
+import { noteModelUsage, usageCapReason } from "./usage.js";
 
 interface RpcMessage {
   jsonrpc?: string;
@@ -521,7 +522,28 @@ export async function runNativeAcpAgent(): Promise<void> {
         }));
 
         const activeModel = state.modelOverride || config.model;
+        let usageContinued = false;
         for (let step = 0; step < 12; step += 1) {
+          if (!usageContinued && process.env.OCP_DATA_DIR && process.env.OCP_ACTOR_BOT_ID) {
+            const reason = await usageCapReason(process.env.OCP_DATA_DIR, process.env.OCP_ACTOR_BOT_ID);
+            if (reason) {
+              const allowed = await requestPermissionFromClient(reason, "usage-cap", { reason });
+              if (!allowed) {
+                const reply = `${reason} No further model call was made.`;
+                state.messages.push({ role: "assistant", content: reply });
+                send({
+                  jsonrpc: "2.0",
+                  method: "session/update",
+                  params: { sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: reply } } },
+                });
+                await saveSession(state);
+                send({ jsonrpc: "2.0", id, result: { stopReason: "cancelled" } });
+                return;
+              }
+              usageContinued = true;
+            }
+          }
+          const promptText = JSON.stringify(state.messages);
           const response = await fetch(`${config.baseUrl}/chat/completions`, {
             method: "POST",
             headers: {
@@ -558,6 +580,32 @@ export async function runNativeAcpAgent(): Promise<void> {
 
           const assistantText = typeof choice.content === "string" ? choice.content : "";
           const toolCalls = Array.isArray(choice.tool_calls) ? choice.tool_calls : [];
+          if (process.env.OCP_DATA_DIR && process.env.OCP_ACTOR_BOT_ID) {
+            const recorded = await noteModelUsage(process.env.OCP_DATA_DIR, {
+              botId: process.env.OCP_ACTOR_BOT_ID,
+              taskId: process.env.OCP_TASK_ID,
+              model: activeModel,
+              provider: config.provider,
+              baseUrl: config.baseUrl,
+              usage: (payload as { usage?: unknown }).usage,
+              promptText,
+              completionText: assistantText || JSON.stringify(toolCalls),
+            });
+            const tokenLabel = recorded.estimated
+              ? `estimated ${recorded.promptTokens} in / ${recorded.completionTokens} out`
+              : `${recorded.promptTokens} in / ${recorded.completionTokens} out`;
+            send({
+              jsonrpc: "2.0",
+              method: "session/update",
+              params: {
+                sessionId,
+                update: {
+                  sessionUpdate: "usage",
+                  title: `${recorded.model}: ${tokenLabel}`,
+                },
+              },
+            });
+          }
 
           state.messages.push({
             role: "assistant",

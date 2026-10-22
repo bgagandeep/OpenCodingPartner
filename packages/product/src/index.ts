@@ -8,6 +8,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ConnectorSnapshot } from "./connectors.js";
 import { probeConnectors } from "./connectors.js";
+import { normalizeModelPrices, normalizeUsageCaps, type ModelPrice, type UsageCaps } from "./usage.js";
 import type { WorkspaceChangeReview } from "./workspace.js";
 import { deleteMcpSecretsForBot, readMcpSecret } from "./mcp-secrets.js";
 
@@ -205,6 +206,8 @@ export interface ProviderSettings {
   telegramWebhookSecret?: string;
   slackBotId?: string;
   telegramBotId?: string;
+  modelPrices?: ModelPrice[];
+  usageCaps?: UsageCaps;
   updatedAt?: string;
 }
 
@@ -219,14 +222,14 @@ export async function readProviderSettings(root = productDataDir()): Promise<Pro
 }
 
 export async function saveProviderSettings(
-  input: Partial<ProviderSettings>,
+  input: Partial<Omit<ProviderSettings, "modelPrices" | "usageCaps">> & { modelPrices?: unknown; usageCaps?: unknown },
   root = productDataDir(),
 ): Promise<ProviderSettings> {
   await mkdir(root, { recursive: true, mode: 0o700 });
   await chmod(root, 0o700).catch(() => undefined);
   const current = await readProviderSettings(root);
   const next: ProviderSettings = { ...current, updatedAt: new Date().toISOString() };
-  const assign = (key: keyof Omit<ProviderSettings, "updatedAt">) => {
+  const assign = (key: keyof Omit<ProviderSettings, "updatedAt" | "modelPrices" | "usageCaps">) => {
     if (!Object.prototype.hasOwnProperty.call(input, key)) return;
     const val = typeof input[key] === "string" ? input[key]!.trim() : "";
     if (val) next[key] = val;
@@ -243,6 +246,8 @@ export async function saveProviderSettings(
   assign("telegramWebhookSecret");
   assign("slackBotId");
   assign("telegramBotId");
+  if (Object.prototype.hasOwnProperty.call(input, "modelPrices")) next.modelPrices = normalizeModelPrices(input.modelPrices);
+  if (Object.prototype.hasOwnProperty.call(input, "usageCaps")) next.usageCaps = normalizeUsageCaps(input.usageCaps);
   const target = path.join(root, "settings.json");
   await writeFile(target, `${JSON.stringify(next, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
   await chmod(target, 0o600).catch(() => undefined);
@@ -1354,7 +1359,8 @@ export async function runBotSession(
   const resolved = resolveRuntimeCommand(agentRuntime, effectiveEnv);
   const command = resolved.command;
   const args = resolved.args;
-  const runtimeEnv: NodeJS.ProcessEnv = { ...effectiveEnv, OCP_DATA_DIR: dataRoot };
+  const runtimeEnv: NodeJS.ProcessEnv = { ...effectiveEnv, OCP_DATA_DIR: dataRoot, OCP_ACTOR_BOT_ID: bot.id };
+  if (options.taskId) runtimeEnv.OCP_TASK_ID = options.taskId;
   if (agentRuntime && (bot.isolation ?? "docker") === "docker" && !dockerDaemonAvailable(runtimeEnv)) {
     throw new Error("Docker isolation is configured but Docker is not available. Install Docker, or have a human switch this bot to host isolation.");
   }

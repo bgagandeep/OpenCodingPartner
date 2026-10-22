@@ -6,7 +6,10 @@ import { chmod, cp, lstat, mkdir, open, readFile, readdir, realpath, rename, rm,
 import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import type { ConnectorSnapshot } from "./connectors.js";
+import { probeConnectors } from "./connectors.js";
 import type { WorkspaceChangeReview } from "./workspace.js";
+import { deleteMcpSecretsForBot, readMcpSecret } from "./mcp-secrets.js";
 
 export { captureWorkspaceBaseline, collectWorkspaceChanges, type WorkspaceBaseline, type WorkspaceChangeEntry, type WorkspaceChangeReview } from "./workspace.js";
 export { runWorkspaceCommand, runWorkspaceTests, type SandboxCommandResult } from "./sandbox-run.js";
@@ -37,10 +40,7 @@ export interface BotDefinition {
   updatedAt: string;
 }
 
-export interface BotMcpServer {
-  name: string;
-  url: string;
-}
+export interface BotMcpServer extends ConnectorSnapshot {}
 
 export interface ProductTask {
   id: string;
@@ -495,6 +495,7 @@ export async function deleteBot(id: string, root = productDataDir()): Promise<vo
     }
     state.bots.splice(index, 1);
   });
+  await deleteMcpSecretsForBot(root, id);
 }
 
 /** Copy local bot/task state and Hermes profiles to a new, private backup directory. */
@@ -744,6 +745,19 @@ export async function updateBot(
       Object.prototype.hasOwnProperty.call(normalizedUpdate, key) && bot[key as keyof BotDefinition] !== normalizedUpdate[key as keyof typeof normalizedUpdate]);
     Object.assign(bot, normalizedUpdate, { updatedAt: new Date().toISOString() });
     if (resetSession) bot.runtimeSessionId = undefined;
+    updated = bot;
+  });
+  return updated as BotDefinition;
+}
+
+/** Persist connector metadata without the active-task reconfigure guard. Secrets stay out of this record. */
+export async function writeBotMcpServers(id: string, mcpServers: BotMcpServer[], root = productDataDir()): Promise<BotDefinition> {
+  let updated: BotDefinition | undefined;
+  await mutateState(root, (state) => {
+    const bot = state.bots.find((item) => item.id === id);
+    if (!bot) throw new Error(`Unknown bot: ${id}`);
+    bot.mcpServers = mcpServers;
+    bot.updatedAt = new Date().toISOString();
     updated = bot;
   });
   return updated as BotDefinition;
@@ -1226,6 +1240,33 @@ async function selectRuntimeModel(
 }
 
 /** Run a durable bot session through OCP Agent ACP or OCP Coder ACP. */
+async function attachBotMcpServers(
+  bot: BotDefinition,
+  root: string,
+  onUpdate: (update: RuntimeUpdate) => void,
+): Promise<{ endpoints: Array<{ name: string; url: string; headers?: Record<string, string> }>; remote: Array<{ name: string; url: string; headers?: Record<string, string> }> }> {
+  const servers = bot.mcpServers ?? [];
+  if (servers.length === 0) return { endpoints: [], remote: [] };
+  const tokens = new Map<string, string>();
+  for (const server of servers) {
+    const token = await readMcpSecret(root, bot.id, server.name);
+    if (token) tokens.set(server.name, token);
+  }
+  const probed = await probeConnectors(servers, tokens);
+  await writeBotMcpServers(bot.id, probed.servers, root);
+  if (probed.errors.length > 0) {
+    const message = probed.errors.join(" ");
+    onUpdate({ kind: "connector_error", title: message });
+    throw new Error(message);
+  }
+  const remote = probed.endpoints.map((endpoint) => ({
+    name: endpoint.name,
+    url: endpoint.url,
+    ...(endpoint.headers && Object.keys(endpoint.headers).length > 0 ? { headers: endpoint.headers } : {}),
+  }));
+  return { endpoints: remote, remote };
+}
+
 export async function runBotSession(
   bot: BotDefinition,
   prompt: string,
@@ -1429,6 +1470,7 @@ export async function runBotSession(
     const agentCapabilities = initializeRecord.agentCapabilities && typeof initializeRecord.agentCapabilities === "object"
       ? initializeRecord.agentCapabilities as { loadSession?: unknown }
       : {};
+    const attached = (agentRuntime || resolved.fallback) ? await attachBotMcpServers(bot, dataRoot, onUpdate) : { endpoints: [], remote: [] as Array<{ name: string; url: string; headers?: Record<string, string> }> };
     const workspaceTools = (agentRuntime || resolved.fallback) ? [{
       name: "opencodingpartner-workspace",
       command: process.execPath,
@@ -1437,20 +1479,25 @@ export async function runBotSession(
         { name: "OCP_DATA_DIR", value: dataRoot },
         { name: "OCP_ACTOR_BOT_ID", value: bot.id },
         ...(options.taskId ? [{ name: "OCP_TASK_ID", value: options.taskId }] : []),
+        ...(attached.endpoints.length ? [{ name: "OCP_EXTERNAL_MCP", value: JSON.stringify(attached.endpoints) }] : []),
       ],
     }] : [];
+    const sessionMcpServers = [...workspaceTools, ...attached.remote];
+    const connectorNote = attached.remote.length
+      ? "External MCP connectors are attached. Discover their tools with tool_search, read schemas with tool_describe, and invoke them with tool_call using names like mcp:server/tool. Each external call waits for approval unless this task is set to always approve.\n\n"
+      : "";
     const toolGuidance = (agentRuntime || resolved.fallback)
-      ? "For project files, fleet management, and computer use, use the OpenCodingPartner MCP tools: workspace tools (workspace_list, workspace_read, workspace_grep, workspace_glob, workspace_write, workspace_patch), bot & fleet management (bot_list, bot_create, bot_update, bot_delete, bot_delegate, swarm_setup), workspace memory (memory_search / memory_remember), local task history recall (history_search / history_read), and virtual computer control (computer_screen, computer_mouse, computer_keyboard, computer_browser). Use the OCP Agent Docker terminal only for checks explicitly allowed by the user request.\n\n"
+      ? `${connectorNote}For project files, fleet management, and computer use, use the OpenCodingPartner MCP tools: workspace tools (workspace_list, workspace_read, workspace_grep, workspace_glob, workspace_write, workspace_patch), bot & fleet management (bot_list, bot_create, bot_update, bot_delete, bot_delegate, swarm_setup), workspace memory (memory_search / memory_remember), local task history recall (history_search / history_read), and virtual computer control (computer_screen, computer_mouse, computer_keyboard, computer_browser). Use the OCP Agent Docker terminal only for checks explicitly allowed by the user request.\n\n`
       : "";
     const canLoadSession = agentCapabilities.loadSession === true;
     if (bot.runtimeSessionId && !canLoadSession) {
       onUpdate({ kind: "session_reset", title: "Runtime cannot resume this saved session; starting a new session." });
     }
     const sessionResult = bot.runtimeSessionId && canLoadSession
-      ? await request("session/load", { sessionId: bot.runtimeSessionId, cwd: bot.workspace, mcpServers: workspaceTools })
+      ? await request("session/load", { sessionId: bot.runtimeSessionId, cwd: bot.workspace, mcpServers: sessionMcpServers })
       : await request("session/new", {
           cwd: bot.workspace,
-          mcpServers: workspaceTools,
+          mcpServers: sessionMcpServers,
           _meta: { rules: `You are the ${bot.name}, a ${bot.role} teammate.\n\n${bot.instructions}\n\n${toolGuidance}` },
         });
     const sessionRecord = sessionResult && typeof sessionResult === "object"

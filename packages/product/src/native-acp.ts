@@ -6,6 +6,8 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
+import { externalToolNeedsApproval } from "./connectors.js";
+import { listHttpMcpTools, type HttpMcpEndpoint } from "./http-mcp.js";
 
 interface RpcMessage {
   jsonrpc?: string;
@@ -18,9 +20,11 @@ interface RpcMessage {
 
 interface McpServerSpec {
   name: string;
-  command: string;
+  command?: string;
   args?: string[];
   env?: Array<{ name: string; value: string }> | Record<string, string>;
+  url?: string;
+  headers?: Record<string, string>;
 }
 
 interface McpTool {
@@ -154,6 +158,18 @@ class McpClientBridge {
   constructor(private readonly spec: McpServerSpec, private readonly cwd: string) {}
 
   async start(): Promise<McpTool[]> {
+    if (this.spec.url) {
+      const endpoint: HttpMcpEndpoint = { name: this.spec.name, url: this.spec.url, headers: this.spec.headers };
+      const tools = await listHttpMcpTools(endpoint);
+      return tools.map((tool) => ({
+        serverName: this.spec.name,
+        name: tool.name,
+        qualifiedName: tool.name,
+        description: tool.description,
+        inputSchema: tool.inputSchema,
+      }));
+    }
+    if (!this.spec.command) throw new Error(`MCP server "${this.spec.name}" has no command or URL.`);
     const extraEnv: Record<string, string> = {};
     if (Array.isArray(this.spec.env)) {
       for (const item of this.spec.env) {
@@ -279,9 +295,21 @@ export async function runNativeAcpAgent(): Promise<void> {
     });
   }
 
+  function sessionForDisk(state: SessionState): SessionState {
+    return {
+      ...state,
+      mcpServers: state.mcpServers.map((spec) => ({
+        name: spec.name,
+        command: spec.command,
+        args: spec.args,
+        url: spec.url,
+      })),
+    };
+  }
+
   async function saveSession(state: SessionState): Promise<void> {
     await mkdir(sessionsDir, { recursive: true });
-    await writeFile(path.join(sessionsDir, `${state.sessionId}.json`), JSON.stringify(state, null, 2), "utf8");
+    await writeFile(path.join(sessionsDir, `${state.sessionId}.json`), JSON.stringify(sessionForDisk(state), null, 2), "utf8");
   }
 
   async function loadSession(sessionId: string): Promise<SessionState | undefined> {
@@ -433,6 +461,7 @@ export async function runNativeAcpAgent(): Promise<void> {
           const bridge = new McpClientBridge(spec, state.cwd);
           bridges.push(bridge);
           const tools = await bridge.start();
+          if (spec.url) continue;
           for (const tool of tools) {
             toolMap.set(tool.qualifiedName, { bridge, tool });
           }
@@ -577,13 +606,20 @@ export async function runNativeAcpAgent(): Promise<void> {
               },
             });
 
-            if (MUTATING_TOOLS.has(toolName)) {
-              const allowed = await requestPermissionFromClient(`Allow ${toolName}?`, "edit", parsedArgs);
+            const externalTarget = externalToolNeedsApproval(toolName, parsedArgs)
+              ? (toolName === "tool_call" && typeof parsedArgs.name === "string" ? parsedArgs.name : toolName)
+              : undefined;
+            if (MUTATING_TOOLS.has(toolName) || externalTarget) {
+              const allowed = await requestPermissionFromClient(
+                externalTarget ? `Allow external MCP tool ${externalTarget}?` : `Allow ${toolName}?`,
+                externalTarget ? "external-mcp" : "edit",
+                parsedArgs,
+              );
               if (!allowed) {
                 state.messages.push({
                   role: "tool",
                   tool_call_id: call.id,
-                  content: `Permission denied by user for ${toolName}.`,
+                  content: `Permission denied by user for ${externalTarget ?? toolName}.`,
                 });
                 await saveSession(state);
                 send({ jsonrpc: "2.0", id, result: { stopReason: "cancelled" } });

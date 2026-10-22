@@ -17,6 +17,7 @@ import {
   securityGate,
   writeSandboxFile,
 } from "@opencodingpartner/workers";
+import { invokeExternalTool, loadExternalCatalog, parseExternalToolName, type ExternalToolCatalog } from "./connectors.js";
 import {
   captureComputerScreen,
   computerKeyboard,
@@ -98,9 +99,9 @@ const DIRECT_TOOLS = [
 ];
 
 const DISCOVERY_TOOLS = [
-  { name: "tool_search", description: "Search available workspace, memory, history, computer, and bot-management tools by keyword.", inputSchema: { type: "object", properties: { query: { type: "string" } }, required: ["query"] } },
-  { name: "tool_describe", description: "Return JSON schemas and usage guidance for up to 10 tool names.", inputSchema: { type: "object", properties: { names: { type: "array", items: { type: "string" } } }, required: ["names"] } },
-  { name: "tool_call", description: "Invoke a built-in workspace, memory, history, computer, or bot-management tool by name and arguments.", inputSchema: { type: "object", properties: { name: { type: "string" }, arguments: { type: "object" } }, required: ["name"] } },
+  { name: "tool_search", description: "Search built-in workspace tools and attached external MCP connectors by keyword. Connector tools use names like mcp:server/tool. Connector failures are returned, not omitted.", inputSchema: { type: "object", properties: { query: { type: "string" } }, required: ["query"] } },
+  { name: "tool_describe", description: "Return JSON schemas and usage guidance for up to 10 built-in or external MCP tool names.", inputSchema: { type: "object", properties: { names: { type: "array", items: { type: "string" } } }, required: ["names"] } },
+  { name: "tool_call", description: "Invoke a built-in workspace tool or an attached external MCP tool (mcp:server/tool) by name and arguments. External calls are approved by the session before they run.", inputSchema: { type: "object", properties: { name: { type: "string" }, arguments: { type: "object" } }, required: ["name"] } },
 ];
 
 const TOOLS = [...DIRECT_TOOLS, ...DISCOVERY_TOOLS];
@@ -170,11 +171,17 @@ async function handleMcpRequest(root: string, method: string, params: Record<str
   return executeToolCall(root, name, args, false);
 }
 
+async function safeExternalCatalog(): Promise<ExternalToolCatalog> {
+  if (!process.env.OCP_EXTERNAL_MCP) return { tools: [], errors: [], endpoints: [] };
+  return loadExternalCatalog();
+}
+
 async function executeToolCall(root: string, name: string, args: Record<string, unknown>, viaDiscovery: boolean): Promise<unknown> {
   if (name === "tool_search") {
     if (viaDiscovery) return mcpToolResult({ ok: false, detail: "A discovery tool cannot call another discovery tool." });
     const query = (typeof args.query === "string" ? args.query : "").trim().toLowerCase();
-    const scored = DIRECT_TOOLS
+    const catalog = await safeExternalCatalog();
+    const scored = [...DIRECT_TOOLS.map((tool) => ({ name: tool.name, description: tool.description })), ...catalog.tools.map((tool) => ({ name: tool.qualifiedName, description: tool.description }))]
       .map((tool) => {
         const hay = `${tool.name} ${tool.description}`.toLowerCase();
         const score = !query ? 1 : tool.name.toLowerCase() === query ? 3 : tool.name.toLowerCase().includes(query) ? 2 : hay.includes(query) ? 1 : 0;
@@ -184,7 +191,8 @@ async function executeToolCall(root: string, name: string, args: Record<string, 
       .sort((a, b) => b.score - a.score)
       .slice(0, 10)
       .map((entry) => ({ name: entry.tool.name, description: entry.tool.description }));
-    return mcpToolResult({ ok: true, detail: JSON.stringify(scored, null, 2) });
+    const failures = catalog.errors.map((detail) => ({ name: "connector-error", description: detail, error: true }));
+    return mcpToolResult({ ok: failures.length === 0, detail: JSON.stringify([...scored, ...failures], null, 2) });
   }
   if (name === "tool_describe") {
     if (viaDiscovery) return mcpToolResult({ ok: false, detail: "A discovery tool cannot call another discovery tool." });
@@ -194,8 +202,23 @@ async function executeToolCall(root: string, name: string, args: Record<string, 
         ? [args.name]
         : [];
     const names = rawNames.filter((n): n is string => typeof n === "string").slice(0, 10);
-    const described = DIRECT_TOOLS.filter((tool) => names.includes(tool.name));
-    return mcpToolResult({ ok: true, detail: JSON.stringify(described, null, 2) });
+    const catalog = await safeExternalCatalog();
+    const described = [
+      ...DIRECT_TOOLS.filter((tool) => names.includes(tool.name)),
+      ...catalog.tools.filter((tool) => names.includes(tool.qualifiedName)).map((tool) => ({
+        name: tool.qualifiedName,
+        description: tool.description,
+        inputSchema: tool.inputSchema,
+      })),
+    ];
+    const missingExternal = names.filter((toolName) => parseExternalToolName(toolName) && !described.some((tool) => tool.name === toolName));
+    for (const toolName of missingExternal) {
+      const parsed = parseExternalToolName(toolName);
+      const failure = catalog.errors.find((detail) => parsed && detail.includes(`"${parsed.server}"`))
+        ?? `MCP tool ${toolName} is unavailable.`;
+      described.push({ name: toolName, description: failure, inputSchema: { type: "object", properties: {} } });
+    }
+    return mcpToolResult({ ok: missingExternal.length === 0 && catalog.errors.length === 0, detail: JSON.stringify(described, null, 2) });
   }
   if (name === "tool_call") {
     if (viaDiscovery) return mcpToolResult({ ok: false, detail: "A discovery tool cannot call another discovery tool." });
@@ -205,6 +228,10 @@ async function executeToolCall(root: string, name: string, args: Record<string, 
     }
     const targetArgs = args.arguments && typeof args.arguments === "object" && !Array.isArray(args.arguments) ? args.arguments as Record<string, unknown> : {};
     return executeToolCall(root, targetName, targetArgs, true);
+  }
+  if (parseExternalToolName(name)) {
+    const result = await invokeExternalTool(name, args);
+    return mcpToolResult(result);
   }
   if (name === "memory_search") {
     const query = (typeof args.query === "string" ? args.query : "").trim().toLowerCase();

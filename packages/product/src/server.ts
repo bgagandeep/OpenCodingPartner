@@ -1158,6 +1158,7 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
   }
 
   async function startRoutineTask(routine: Awaited<ReturnType<typeof listProductRoutines>>[number]): Promise<void> {
+    if (closing) return;
     const bot = await findBot(routine.botId, root);
     if (!bot) return;
     const task = await createTask({ botId: bot.id, prompt: `[routine ${routine.id}] ${routine.prompt}` }, root);
@@ -1225,25 +1226,37 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
   const actualPort = typeof address === "object" && address ? address.port : port;
   boundPort = actualPort;
   const displayHost = host.includes(":") ? `[${host}]` : host;
+  let background: Promise<void> = Promise.resolve();
+  const trackBackground = (work: Promise<unknown>) => {
+    background = background.then(() => work).then(() => undefined, () => undefined);
+  };
   const queueTimer = setInterval(() => {
-    void (async () => {
+    trackBackground((async () => {
+      if (closing) return;
       const queued = (await listTasks(root)).filter((task) => task.status === "queued");
+      if (closing) return;
       const seen = new Set<string>();
       for (const task of queued) {
+        if (closing) return;
         const owner = await findBot(task.botId, root);
         if (!owner || seen.has(owner.workspace)) continue;
         seen.add(owner.workspace);
         await drainWorkspaceQueue(owner.workspace);
       }
-    })();
+    })());
   }, 400);
   queueTimer.unref?.();
   const routineTimer = setInterval(() => {
-    void (async () => {
+    trackBackground((async () => {
+      if (closing) return;
       const due = await dueProductRoutines(Date.now(), root);
-      for (const routine of due) await startRoutineTask(routine);
+      if (closing) return;
+      for (const routine of due) {
+        if (closing) return;
+        await startRoutineTask(routine);
+      }
       if (due.length) notifySse();
-    })();
+    })());
   }, 1000);
   routineTimer.unref?.();
   return {
@@ -1253,6 +1266,7 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
       closing = true;
       clearInterval(queueTimer);
       clearInterval(routineTimer);
+      await background;
       for (const client of sseClients) {
         try {
           client.end();
@@ -1922,6 +1936,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;font:12.5px/1.45 "JetBrains Mono
 
 <script nonce="${token}">const TOKEN='${token}',DEFAULT_WS='${escapeJs(process.cwd())}';let state={projects:[],bots:[],tasks:[],routines:[],channels:{},channelLog:[],activeBrainLabel:'',activeModel:''},activeWorkspace='',selected='',conversationBot='',computerBot='',computerMeta=null,bootstrapped=false,activeTab='detail',centerView='chat',lastClickPt=null,renderedCompBot='',lastFrameSrc='',lastSyncedUrl='',lastSidebarSig='',lastChatSig='',lastDetailSig='',keyBuffer='',keyTimer=null,lastCompInteract=0,compQueue=Promise.resolve(),paletteIndex=0,sseLive=false,connectorBot='';
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const googleSignInNote='Google sign-in stays in this virtual computer. Take Control and sign in yourself. OCP does not connect a Google account, and there is no Gmail, Calendar, or Drive connection.';
 const isAgentRuntime=r=>r==='ocp-agent'||r==='hermes';
 const runtimeLabel=r=>isAgentRuntime(r)?'OCP Agent':'OCP Coder';
 const roleIcon=r=>({general:'✦',coding:'⚡',qa:'✔',security:'◆',research:'◎',computer:'▣'}[r]||'●');
@@ -2478,14 +2493,14 @@ function drawComputer(pBots){
   lastSyncedUrl=m.lastUrl||'';
 
   // 1. Mini sidebar preview (built once per bot)
-  miniPanel.innerHTML='<div class="row spread mb-sm"><div><h2 id="miniCompTitle">Virtual Computer ('+esc(m.display||':50')+')</h2><div class="meta">Operator: '+esc(preferred.name)+'</div></div><span id="miniCompPill" class="pill live">LIVE</span></div><div class="row mb-sm"><button type="button" id="miniExpandBtn">Expand full screen</button><button type="button" id="miniRefreshBtn" class="secondary">Refresh</button></div><div class="screen-wrap"><img id="miniScreenImg" src="'+frameSrc+'" alt="Virtual computer mini preview"></div><div class="meta" id="miniCompStatus">'+esc(m.detail||(held?'You driving':'Bot driving · '+preferred.name))+'</div>';
+  miniPanel.innerHTML='<div class="row spread mb-sm"><div><h2 id="miniCompTitle">Virtual Computer ('+esc(m.display||':50')+')</h2><div class="meta">Operator: '+esc(preferred.name)+'</div></div><span id="miniCompPill" class="pill live">LIVE</span></div><div class="row mb-sm"><button type="button" id="miniExpandBtn">Expand full screen</button><button type="button" id="miniRefreshBtn" class="secondary">Refresh</button></div><div class="screen-wrap"><img id="miniScreenImg" src="'+frameSrc+'" alt="Virtual computer mini preview"></div><div class="meta" id="miniCompStatus">'+esc(m.detail||(held?'You driving':'Bot driving · '+preferred.name))+'</div><p class="meta">'+googleSignInNote+'</p>';
   document.querySelector('#miniExpandBtn')?.addEventListener('click',()=>setCenterView('computer'));
   document.querySelector('#miniRefreshBtn')?.addEventListener('click',()=>refreshComputer(true));
   document.querySelector('#miniScreenImg')?.addEventListener('click',()=>setCenterView('computer'));
 
   // 2. Large Full-Stage Interactive Virtual Computer (20 FPS live MJPEG stream)
   stagePanel.innerHTML='<div class="comp-toolbar"><div class="row"><strong id="stageCompTitle">Virtual Computer · '+esc(m.display||':50')+' ('+(m.width||1280)+'×'+(m.height||800)+')</strong><span class="pill live">LIVE</span><span id="stageCompPill" class="pill '+(held?'wait':'')+'">'+(held?'You driving':'Bot driving · '+esc(preferred.name))+'</span></div><div class="row"><button type="button" id="stageReturnBtn" class="'+(held?'':'hidden')+'">Return control to '+esc(preferred.name)+'</button><button type="button" class="warn-btn '+(held?'hidden':'')+'" id="stageTakeoverBtn">Take Control</button><button type="button" class="secondary" id="stageRefreshBtn">Reconnect stream</button><button type="button" class="secondary" id="stageScrollUpBtn">Scroll up</button><button type="button" class="secondary" id="stageScrollDownBtn">Scroll down</button><button type="button" class="ghost" id="stageBackChatBtn">Back to chat</button></div></div>'
-    +'<div id="stageCompBanner" class="comp-banner '+(held?'human':'bot')+'"><div id="stageCompBannerText">'+(held?'<strong>You driving:</strong> Click any field on the screen below and type directly. Bots are paused.':'<strong>Bot driving:</strong> <b>'+esc(preferred.name)+'</b> can operate this screen. Need to type a password or complete a sign-in? Click <b>Take Control</b>.')+'</div><div class="row"><button type="button" class="chip" data-stage-url="https://example.com">example.com</button><button type="button" class="chip" data-stage-url="https://github.com">GitHub</button></div></div>'
+    +'<div id="stageCompBanner" class="comp-banner '+(held?'human':'bot')+'"><div id="stageCompBannerText">'+(held?'<strong>You driving:</strong> Click any field on the screen below and type directly. Bots are paused.':'<strong>Bot driving:</strong> <b>'+esc(preferred.name)+'</b> can operate this screen. Need to type a password or complete a sign-in? Click <b>Take Control</b>.')+'</div><p class="meta">'+googleSignInNote+'</p><div class="row"><button type="button" class="chip" data-stage-url="https://example.com">example.com</button><button type="button" class="chip" data-stage-url="https://github.com">GitHub</button></div></div>'
     +'<div class="row nowrap"><input id="stageUrlInput" placeholder="Enter website URL…" value="'+esc(m.lastUrl||'')+'"><button type="button" id="stageOpenUrlBtn">Go to website</button><input id="stageTypeInput" placeholder="Type or paste text, then Enter…"><button type="button" id="stageTypeBtn" class="secondary">Send text</button><button type="button" class="secondary" data-stage-key="Return" title="Press Enter">Enter</button><button type="button" class="secondary" data-stage-key="Tab" title="Press Tab">Tab</button><button type="button" class="secondary" data-stage-key="BackSpace" title="Press Backspace">⌫</button></div>'
     +'<div class="screen-stage-wrap '+(held?'human-mode':'')+'" id="stageScreenWrap" tabindex="0" title="Click anywhere on the screen to focus and type directly with your keyboard"><img id="stageScreenImg" src="'+streamSrc+'" alt="Full size virtual computer screen"><div id="stageTypingHud" class="typing-hud hidden"></div></div>'
     +'<div class="row spread"><div class="status" id="stageCompStatus">'+esc(m.detail||'Live 20 FPS stream active · Click the screen to interact directly.')+'</div><div class="row nowrap"><input id="stageBotPrompt" placeholder="Tell '+esc(preferred.name)+' what to do on this screen next…"><button type="button" id="stageAskBotBtn">Ask '+esc(preferred.name)+' ↵</button></div></div>';

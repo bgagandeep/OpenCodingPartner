@@ -85,7 +85,7 @@ function send(msg: Record<string, unknown>): void {
 
 async function parseHermesConfig(hermesHome: string, env: NodeJS.ProcessEnv): Promise<ProviderConfig> {
   let provider = "openrouter";
-  let model = env.OCP_DEFAULT_MODEL || "openai/gpt-4.1-mini";
+  let model = env.OCP_DEFAULT_MODEL || "";
   let baseUrl = env.OPENAI_BASE_URL || "https://openrouter.ai/api/v1";
   let keyEnv = "OPENROUTER_API_KEY";
 

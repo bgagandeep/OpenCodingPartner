@@ -641,7 +641,7 @@ test("startProductApp serves OCP Agent and OCP Coder UI, health check, model-ove
     });
     assert.equal(badModelRes.status, 400);
     const badModelBody = (await badModelRes.json()) as { error: string };
-    assert.match(badModelBody.error, /A model override requires an explicit OpenRouter or LiteLLM provider profile/);
+    assert.match(badModelBody.error, /A model override requires an explicit OpenRouter or OpenAI-compatible provider profile/);
 
     const createBotRes = await fetch(`${app.url}/api/bots`, {
       method: "POST",

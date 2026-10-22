@@ -1064,7 +1064,7 @@ function safeRuntimeRpcError(value: unknown): Error {
   const code = typeof error.code === "number" || typeof error.code === "string" ? ` (${error.code})` : "";
   const combined = `${message}${details}`;
   const hint = /402\s+Payment\s+Required|usage\s+balance\s+exhausted/i.test(combined)
-    ? " (Tip: edit this bot and set Provider to OpenRouter or LiteLLM to route directly through your own API key or local model.)"
+    ? " (Tip: edit this bot and set Provider to OpenRouter or an OpenAI-compatible local endpoint to route through your own API key or local model.)"
     : "";
   const sanitized = `${combined}${hint}`
     .replace(/\bBearer\s+[A-Za-z0-9._~+/-]+=*/gi, "Bearer [redacted]")

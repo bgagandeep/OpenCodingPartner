@@ -19,23 +19,15 @@ While `.ocp/sdlc/review-hold` exists, orchestration stands up one coding worker.
 
 ## Computer tab
 
-`ocp computer` shows the sandbox desktop: who has control, and the last frame path. There is no live pixel stream in this build. `ocp computer --partner coding` shows that partner's own workspace, including whether its container is running or stopped, and the last frame path `.ocp/fleet/coding/gtm/last-frame.png` and its time. `ocp computer qa --partner coding` checks that file. `ocp computer qa` without a partner also checks it when a frame or a page record is present, and does not open a page. Without a partner id, the path stays `gtm/last-frame.png`. `ocp computer capture` writes `gtm/last-frame.png` in this workspace. A browser run captures the step screenshot into that same file, then Computer QA `computer-frame` checks it. A missing page or a file that is not a PNG fails the turn in the transcript. `ocp computer qa` prints pass or fail and does not open a page. A live pixel stream is still later. `ocp fleet status` lists this partner with the others: workspace, container state, and last frame. It does not start containers. No telemetry is sent. `ocp fleet start --partner coding` starts it when Docker is installed. With this file present, start waits on an Approve card. If Docker is missing, start fails and does not claim the container is running. `ocp computer takeover` gives you the mouse and keyboard handoff. The partner does not run the browser while you hold it. `ocp computer return` gives control back. Starting the browser waits on an Approve card.
+The **web dashboard** Virtual Computer view can stream a live MJPEG feed when a display is running. The CLI `ocp computer` command does **not** stream pixels: it reports who has control and the last frame path (`gtm/last-frame.png`, or `.ocp/fleet/<id>/gtm/` with a partner id). `ocp computer capture` writes that file. `ocp computer qa` prints pass or fail and does not open a page. `ocp computer takeover` / `return` hand off mouse and keyboard. Starting a browser waits on an Approve card when this file is present. `ocp fleet start` requires Docker and fails closed if Docker is missing.
 
 ## Routines and channels
 
-A routine in `.ocp/routines.json` can wake a partner on an interval or an event name while you are away. `ocp routine run` fires the ones that are due. Slack or Telegram text arrives as a partner turn. `approve`, `deny`, and `redirect:` in that text decide the Approve card. Slack posts a reply when `SLACK_BOT_TOKEN` and `SLACK_SIGNING_SECRET` are set. Inbound Slack events are checked with the signing secret. Without those values the offline turn still runs, and the values are not printed. Telegram posts a reply when `TELEGRAM_BOT_TOKEN` and `TELEGRAM_WEBHOOK_SECRET` are set. Inbound Telegram updates are checked with that webhook secret. Without those values the offline turn still runs, and the values are not printed. `ocp channel slack receive` and `ocp channel telegram receive` accept one saved inbound body only when the secret matches. A missing or bad secret does not run the turn. WhatsApp is later.
+A routine in `.ocp/routines.json` can wake a partner on an interval or an event name. `ocp routine run` fires the ones that are due. Slack or Telegram text arrives as a partner turn. `approve`, `deny`, and `redirect:` in that text decide the Approve card. Slack/Telegram post only when their tokens and secrets are set; otherwise the offline turn still runs and secrets are not printed. WhatsApp is later.
 
 ## Swarm manifest
 
-`docs/examples/swarm.json` lists partners and routines. `ocp swarm apply` creates each partner workspace under `.ocp/fleet` and registers the routines. `ocp swarm validate` and `--dry-run` do not write. A short interval is refused. The manifest does not start a container.
-
-## Routines and channels
-
-A routine in `.ocp/routines.json` can wake a partner on an interval or an event name while you are away. `ocp routine run` fires the ones that are due. Slack or Telegram text arrives as a partner turn. `approve` and `deny` in that text decide the Approve card. This build does not call those networks.
-
-## Swarm manifest
-
-`docs/examples/swarm.json` lists partners and routines. `ocp swarm apply` creates each partner workspace under `.ocp/fleet` and registers the routines. `ocp swarm validate` and `--dry-run` do not write. A short interval is refused. The manifest does not start a container.
+`docs/examples/swarm.json` lists partners and routines. `ocp swarm apply` creates each partner workspace under `.ocp/fleet` and registers the routines. `ocp swarm validate` and `--dry-run` do not write. The manifest does not start a container.
 
 ## Partner rules
 

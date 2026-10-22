@@ -89,10 +89,17 @@ for (const file of walk(root)) {
     rel === "PARTNER.md" ||
     rel === "README.md" ||
     rel === "CONTRIBUTING.md";
-  if (userFacing && UPSTREAM.test(text)) {
-    const hits = [...text.matchAll(new RegExp(UPSTREAM.source, "g"))].map((m) => m[0]);
+  const scanned = stripCreditRegions(rel, text);
+  if (userFacing && UPSTREAM.test(scanned)) {
+    const hits = [...scanned.matchAll(new RegExp(UPSTREAM.source, "g"))].map((m) => m[0]);
     failures.push(`${rel}: upstream names in user-facing copy (${[...new Set(hits)].join(", ")}). Move to Credits/NOTICE.`);
   }
+}
+
+function stripCreditRegions(rel, text) {
+  if (rel === "README.md") return text.replace(/## Credits[\s\S]*?(?=\n## |\n*$)/, "");
+  if (rel.endsWith("server.ts")) return text.replace(/id="tab-credits"[\s\S]*?<\/div>/, "");
+  return text;
 }
 
 if (failures.length) {

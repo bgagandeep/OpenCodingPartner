@@ -46,6 +46,8 @@ jobs:
 
       - name: Branding guard
         run: pnpm branding-guard
+        env:
+          OCP_BRANDING_STRICT: "1"
 
       - name: Full test suite
         run: set -o pipefail && pnpm test | tee "${RUNNER_TEMP}/ocp-test-output.txt"

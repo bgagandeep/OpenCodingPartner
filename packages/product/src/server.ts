@@ -5,6 +5,7 @@ import path from "node:path";
 import { readFile, stat } from "node:fs/promises";
 import { readWorkspaceFile } from "./workspace-mcp.js";
 import { correctMemory, createResponsibility, createThread, forgetMemory, listAudit, listDenyRules, listMemory, listResponsibilities, listThreads, reachThread, recordAudit, saveDenyRule, updateResponsibility } from "./teammate.js";
+import { appendWhatsappOutbox, createDirectoryUser, executeAguiRun, listAgents, listDirectory, listPages, loginCompanyAssertion, loginDirectory, registerAgent, savePage, setCompanyAssertionSecret, speakTranscript } from "./category.js";
 import {
   postSlackReply,
   postTelegramReply,
@@ -221,6 +222,11 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
     if (decision === "deny") {
       await updateChannelLog(id, { status: "denied" }, root);
       return { ok: true, status: "denied" };
+    }
+    if (entry.channel === "whatsapp") {
+      await appendWhatsappOutbox(root, entry.text, entry.destination);
+      await updateChannelLog(id, { error: "Nothing was sent. The WhatsApp message stayed in the local outbox." }, root);
+      return { ok: true, status: "draft" };
     }
     if (entry.channel === "gmail" || entry.channel === "outlook") {
       const posted = await deliverMailDraft(root, entry.channel, entry.destination, entry.subject ?? "", entry.text, env);
@@ -541,6 +547,18 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
     }
     if (request.method === "GET" && url.pathname === "/api/rules") {
       sendJson(response, 200, await listDenyRules(root));
+      return;
+    }
+    if (request.method === "GET" && url.pathname === "/api/agents") {
+      sendJson(response, 200, { agents: await listAgents(root) });
+      return;
+    }
+    if (request.method === "GET" && url.pathname === "/api/directory") {
+      sendJson(response, 200, await listDirectory(root));
+      return;
+    }
+    if (request.method === "GET" && url.pathname === "/api/pages") {
+      sendJson(response, 200, { pages: await listPages(root) });
       return;
     }
     if (request.method === "GET" && url.pathname === "/api/memory") {
@@ -1348,9 +1366,9 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
     const reachMatch = /^\/api\/threads\/([^/]+)\/reach$/.exec(url.pathname);
     if (request.method === "POST" && reachMatch) {
       try {
-        const channel = body.channel === "slack" || body.channel === "telegram" ? body.channel : "";
+        const channel = body.channel === "slack" || body.channel === "telegram" || body.channel === "whatsapp" ? body.channel : "";
         if (!channel) {
-          sendJson(response, 400, { error: "Reach needs slack or telegram." });
+          sendJson(response, 400, { error: "Reach needs slack, telegram, or whatsapp." });
           return;
         }
         const thread = await reachThread(root, reachMatch[1] ?? "", channel, typeof body.destination === "string" ? body.destination : "");
@@ -1372,6 +1390,72 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
         sendJson(response, 200, { facts });
       } catch (error) {
         sendJson(response, 400, { error: error instanceof Error ? error.message : "Could not edit memory." });
+      }
+      return;
+    }
+    if (request.method === "POST" && url.pathname === "/api/agents") {
+      try {
+        const agent = await registerAgent(root, typeof body.name === "string" ? body.name : "", typeof body.url === "string" ? body.url : "");
+        sendJson(response, 201, { agent });
+      } catch (error) {
+        sendJson(response, 400, { error: error instanceof Error ? error.message : "Could not register the agent." });
+      }
+      return;
+    }
+    if (request.method === "POST" && url.pathname === "/api/agui") {
+      const run = await executeAguiRun(root, body);
+      response.writeHead(run.status, {
+        "content-type": run.contentType,
+        "cache-control": "no-store",
+        "x-content-type-options": "nosniff",
+      });
+      response.end(run.body);
+      return;
+    }
+    if (request.method === "POST" && url.pathname === "/api/directory/users") {
+      try {
+        const role = body.role === "admin" || body.role === "member" ? body.role : "member";
+        const user = await createDirectoryUser(root, typeof body.name === "string" ? body.name : "", role, typeof body.password === "string" ? body.password : "");
+        sendJson(response, 201, { user });
+      } catch (error) {
+        sendJson(response, 400, { error: error instanceof Error ? error.message : "Could not add that person." });
+      }
+      return;
+    }
+    if (request.method === "POST" && url.pathname === "/api/directory/login") {
+      try {
+        const user = typeof body.assertion === "string" && body.assertion
+          ? await loginCompanyAssertion(root, body.assertion)
+          : await loginDirectory(root, typeof body.name === "string" ? body.name : "", typeof body.password === "string" ? body.password : "");
+        sendJson(response, 200, { user });
+      } catch (error) {
+        sendJson(response, 401, { error: error instanceof Error ? error.message : "Sign-in was refused." });
+      }
+      return;
+    }
+    if (request.method === "POST" && url.pathname === "/api/directory/company") {
+      try {
+        await setCompanyAssertionSecret(root, typeof body.secret === "string" ? body.secret : "");
+        sendJson(response, 200, { companySignIn: true });
+      } catch (error) {
+        sendJson(response, 400, { error: error instanceof Error ? error.message : "Could not enable company sign-in." });
+      }
+      return;
+    }
+    if (request.method === "POST" && url.pathname === "/api/voice") {
+      try {
+        sendJson(response, 200, await speakTranscript(typeof body.transcript === "string" ? body.transcript : ""));
+      } catch (error) {
+        sendJson(response, 400, { error: error instanceof Error ? error.message : "Could not speak that transcript." });
+      }
+      return;
+    }
+    if (request.method === "POST" && url.pathname === "/api/pages") {
+      try {
+        const page = await savePage(root, typeof body.title === "string" ? body.title : "", typeof body.body === "string" ? body.body : "");
+        sendJson(response, 201, { page });
+      } catch (error) {
+        sendJson(response, 400, { error: error instanceof Error ? error.message : "Could not save the page." });
       }
       return;
     }
@@ -2277,6 +2361,7 @@ li{margin:4px 0}
         <div class="tab-group-label">System</div>
         <button type="button" class="tab" data-tab="usage">Usage</button>
         <button type="button" class="tab" data-tab="audit">Audit</button>
+        <button type="button" class="tab" data-tab="category">Category</button>
         <button type="button" class="tab" data-tab="settings">Settings</button>
         <button type="button" class="tab" data-tab="credits">Credits</button>
       </div>
@@ -2347,7 +2432,7 @@ li{margin:4px 0}
         </form>
         <form id="reachForm" class="mt-sm">
           <label>Thread id<input name="threadId" id="reachThread" required></label>
-          <label>Channel<select name="channel"><option value="slack">Slack</option><option value="telegram">Telegram</option></select></label>
+          <label>Channel<select name="channel"><option value="slack">Slack</option><option value="telegram">Telegram</option><option value="whatsapp">WhatsApp</option></select></label>
           <label>Destination<input name="destination" required placeholder="#project or a chat id"></label>
           <button type="submit" class="secondary">Draft reach</button>
         </form>
@@ -2390,6 +2475,43 @@ li{margin:4px 0}
           <button type="submit">Save deny rule</button>
         </form>
         <div id="auditList" class="nav-list mt-sm"></div>
+      </div>
+
+      <div id="tab-category" class="tab-pane hidden">
+        <h2>Category</h2>
+        <p class="sub">A foreign agent on this machine, component replies, a local directory, voice transcripts, and pages. WhatsApp reach stays a draft. Nothing is sent automatically.</p>
+        <form id="agentForm">
+          <label>Agent name<input name="name" required></label>
+          <label>Loopback URL<input name="url" required placeholder="http://127.0.0.1:9/agent"></label>
+          <button type="submit">Register agent</button>
+        </form>
+        <div id="agentList" class="meta mt-sm"></div>
+        <div id="componentList" class="nav-list mt-sm"></div>
+        <h3>Directory</h3>
+        <form id="directoryForm">
+          <label>Name<input name="name" required></label>
+          <label>Role<select name="role"><option value="member">Member</option><option value="admin">Admin</option></select></label>
+          <label>Password<input name="password" type="password" required></label>
+          <button type="submit">Add person</button>
+        </form>
+        <form id="companyForm" class="mt-sm">
+          <label>Company assertion secret<input name="secret" type="password" required></label>
+          <button type="submit" class="secondary">Enable company sign-in</button>
+        </form>
+        <div id="directoryList" class="meta mt-sm"></div>
+        <h3>Voice</h3>
+        <form id="voiceForm">
+          <label>Transcript<input name="transcript" required></label>
+          <button type="submit">Speak</button>
+        </form>
+        <div id="voiceResult" class="meta mt-sm"></div>
+        <h3>Pages</h3>
+        <form id="pageForm">
+          <label>Title<input name="title" required></label>
+          <label>Body<textarea name="body" required></textarea></label>
+          <button type="submit">Save page</button>
+        </form>
+        <div id="pageList" class="nav-list mt-sm"></div>
       </div>
 
       <div id="tab-settings" class="tab-pane hidden">
@@ -2435,6 +2557,7 @@ li{margin:4px 0}
         <p class="credits">User-facing product name: <strong>Open Coding Partner (OCP)</strong>.</p>
         <p class="credits">Third-party components documented in NOTICE / THIRD_PARTY_NOTICES: OpenClaw, Hermes, Grok Build, Laya, LiteLLM, and xAI. They are not product names in the rest of this app.</p>
         <p class="credits">OpenBot (MIT, CopilotKit) is credited for the coworker shape: a computer per coworker, a recorded gate, and taking the controls. This app implements that shape in its own code. No OpenBot source is copied.</p>
+        <p class="credits">AG-UI is the public Agent User Interaction Protocol. This app speaks the HTTP and event-stream binding in its own code. No protocol SDK is copied.</p>
       </div>
 
       <div id="tab-routines" class="tab-pane hidden">
@@ -3682,6 +3805,18 @@ async function refreshTeammate(){
   const threads=await api('/api/threads');
   const tbox=document.querySelector('#threadList');
   if(tbox)tbox.innerHTML=(threads.threads||[]).map(item=>'<div class="meta">'+esc(item.title)+'</div>').join('')||'<div class="meta">No threads yet.</div>';
+  const cards=(threads.threads||[]).flatMap(item=>(item.messages||[]).flatMap(msg=>msg.components||[]));
+  const cbox=document.querySelector('#componentList');
+  if(cbox)cbox.innerHTML=cards.map(card=>'<article class="meta" data-component="'+esc(card.type)+'"><strong>'+esc(card.title)+'</strong> '+esc(card.body)+'</article>').join('')||'<div class="meta">No component replies yet.</div>';
+  const agents=await api('/api/agents');
+  const abox=document.querySelector('#agentList');
+  if(abox)abox.textContent=(agents.agents||[]).map(agent=>agent.name).join(', ')||'No agents yet.';
+  const directory=await api('/api/directory');
+  const dbox=document.querySelector('#directoryList');
+  if(dbox)dbox.textContent=(directory.users||[]).map(user=>user.name+' ('+user.role+')').join(', ')||'No people yet.';
+  const pages=await api('/api/pages');
+  const pbox=document.querySelector('#pageList');
+  if(pbox)pbox.innerHTML=(pages.pages||[]).map(page=>'<article class="meta"><strong>'+esc(page.title)+'</strong> '+esc(page.body)+'</article>').join('')||'<div class="meta">No pages yet.</div>';
   if(activeWorkspace){
     const memory=await api('/api/memory?workspace='+encodeURIComponent(activeWorkspace));
     const mbox=document.querySelector('#memoryList');
@@ -3720,6 +3855,41 @@ document.querySelector('#ruleForm')?.addEventListener('submit',async e=>{
   e.preventDefault();
   const f=e.target;
   await api('/api/rules',{tool:f.elements.tool.value,pathPrefix:f.elements.pathPrefix.value},'POST');
+  f.reset();
+  await refreshTeammate();
+});
+document.querySelector('#agentForm')?.addEventListener('submit',async e=>{
+  e.preventDefault();
+  const f=e.target;
+  await api('/api/agents',{name:f.elements.name.value,url:f.elements.url.value},'POST');
+  f.reset();
+  await refreshTeammate();
+});
+document.querySelector('#directoryForm')?.addEventListener('submit',async e=>{
+  e.preventDefault();
+  const f=e.target;
+  await api('/api/directory/users',{name:f.elements.name.value,role:f.elements.role.value,password:f.elements.password.value},'POST');
+  f.reset();
+  await refreshTeammate();
+});
+document.querySelector('#companyForm')?.addEventListener('submit',async e=>{
+  e.preventDefault();
+  const f=e.target;
+  await api('/api/directory/company',{secret:f.elements.secret.value},'POST');
+  f.reset();
+  await refreshTeammate();
+});
+document.querySelector('#voiceForm')?.addEventListener('submit',async e=>{
+  e.preventDefault();
+  const f=e.target;
+  const spoken=await api('/api/voice',{transcript:f.elements.transcript.value},'POST');
+  const slot=document.querySelector('#voiceResult');
+  if(slot)slot.textContent=spoken.spoken||'';
+});
+document.querySelector('#pageForm')?.addEventListener('submit',async e=>{
+  e.preventDefault();
+  const f=e.target;
+  await api('/api/pages',{title:f.elements.title.value,body:f.elements.body.value},'POST');
   f.reset();
   await refreshTeammate();
 });

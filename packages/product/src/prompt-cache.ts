@@ -30,6 +30,7 @@ export function layoutCachedPrompt<T extends { role: string; content?: string | 
   toolIndex: string;
   pinned: string;
   summary: string;
+  retrieved?: string;
   recent: T[];
   model: string;
 }): {
@@ -52,12 +53,16 @@ export function layoutCachedPrompt<T extends { role: string; content?: string | 
   if (input.summary.trim()) {
     messages.push({ role: "system", content: `Earlier conversation summary:\n${input.summary.trim()}` });
   }
+  if (input.retrieved?.trim()) {
+    messages.push({ role: "system", content: input.retrieved.trim() });
+  }
   for (const turn of input.recent) {
     messages.push({ ...turn, role: turn.role, content: turn.content ?? "" });
   }
   const stableText = stable.map((block) => block.text).join("\n");
   const volatileText = [
     input.summary.trim() ? `Earlier conversation summary:\n${input.summary.trim()}` : "",
+    input.retrieved?.trim() ?? "",
     ...input.recent.map((turn) => turn.content ?? ""),
   ].filter(Boolean).join("\n");
   return {

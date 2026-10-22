@@ -10,6 +10,7 @@ import { externalToolNeedsApproval } from "./connectors.js";
 import { listHttpMcpTools, type HttpMcpEndpoint } from "./http-mcp.js";
 import { formatPins, splitRecent, summarizeTurns, takePins, type PinnedNotes } from "./context.js";
 import { layoutCachedPrompt } from "./prompt-cache.js";
+import { retrieveWorkspaceSnippets } from "./retrieval.js";
 import { recentTokenBudget } from "./provider-presets.js";
 import { classifyPrompt, formatRouteUsage, nextRouteStep, parseRouteLabel, selectStepModel, type RouteStep } from "./routing.js";
 import { presentToolOutput, toolOutputDataDir } from "./tool-trim.js";
@@ -591,6 +592,8 @@ export async function runNativeAcpAgent(): Promise<void> {
             },
           });
         };
+        let retrievalFor = "";
+        let retrievalText = "";
         const messagesForModel = async (cacheModel: string) => {
           const rest = state.messages.slice(1);
           const budget = recentTokenBudget(config.provider, config.baseUrl);
@@ -629,11 +632,21 @@ export async function runNativeAcpAgent(): Promise<void> {
             state.foldedCount = older.length;
           }
           const pinText = formatPins(state.pinned ?? { facts: [], decisions: [], todos: [] });
+          const latestUser = [...state.messages].reverse().find((message) => message.role === "user")?.content ?? "";
+          if (latestUser.trim() && latestUser !== retrievalFor) {
+            retrievalFor = latestUser;
+            retrievalText = await retrieveWorkspaceSnippets({
+              workspace: state.cwd,
+              dataDir: process.env.OCP_DATA_DIR,
+              query: latestUser,
+            }).catch(() => "");
+          }
           return layoutCachedPrompt({
             system: state.rules,
             toolIndex: openAiTools.map((tool) => tool.function.name).join("\n"),
             pinned: pinText,
             summary: state.summary ?? "",
+            retrieved: retrievalText,
             recent,
             model: cacheModel,
           }).messages;

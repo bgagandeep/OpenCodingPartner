@@ -21,6 +21,7 @@ import {
   findBot,
   findTask,
   isOcpAgentRuntime,
+  leadBotInstructions,
   listBots,
   listTasks,
   missingProviderKey,
@@ -225,6 +226,9 @@ test("OCP Agent and OCP Coder runtime helpers, bot CRUD, and task workspace/revi
     assert.equal(botRuntimeLabel("ocp-coder"), "OCP Coder");
     assert.equal(botRuntimeLabel("grok-build"), "OCP Coder");
     assert.match(defaultBotInstructions("coding"), /OCP Coder/);
+    assert.match(defaultBotInstructions("coding"), /plan_submit/);
+    assert.doesNotMatch(defaultBotInstructions("coding"), /do NOT stop at a research plan/);
+    assert.doesNotMatch(leadBotInstructions(), /do NOT stop at a research plan/);
 
     const agentBot = await createBot(
       {
@@ -461,6 +465,9 @@ test("workspace MCP server exposes guarded workspace tools and blocks secrets/es
     assert.equal(names.includes("workspace_write"), true);
     assert.equal(names.includes("workspace_read"), true);
     assert.equal(names.includes("workspace_patch"), true);
+    assert.equal(names.includes("workspace_shell"), true);
+    assert.equal(names.includes("workspace_test"), true);
+    assert.equal(names.includes("plan_submit"), true);
 
     const writeOk = (
       await rpc("tools/call", {
@@ -492,6 +499,24 @@ test("workspace MCP server exposes guarded workspace tools and blocks secrets/es
       arguments: { path: "../escape.txt", content: "nope\n" },
     });
     assert.ok(escapeWrite.error);
+
+    const refusedShell = (
+      await rpc("tools/call", {
+        name: "workspace_shell",
+        arguments: { argv: ["bash", "-c", "rm -rf /"] },
+      })
+    ).result as { isError?: boolean; content: Array<{ text: string }> };
+    assert.equal(refusedShell.isError, true);
+
+    await writeFile(path.join(workspace, "ok.test.js"), "import test from 'node:test';\ntest('ok', () => {});\n", "utf8");
+    const tests = (
+      await rpc("tools/call", {
+        name: "workspace_test",
+        arguments: {},
+      })
+    ).result as { isError?: boolean; content: Array<{ text: string }> };
+    assert.equal(Boolean(tests.isError), false);
+    assert.match(tests.content[0]?.text ?? "", /"ok": true/);
   } finally {
     rl.close();
     child.kill();
@@ -1116,6 +1141,32 @@ test("bots cannot set host isolation or escape approved workspace roots; docker 
       /Docker isolation is configured but Docker is not available/,
     );
     assert.equal(typeof dockerDaemonAvailable(), "boolean");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a second task in the same workspace is queued instead of refused", async () => {
+  const root = await makeTempDir("ocp-task-queue-");
+  const workspace = path.join(root, "ws");
+  await mkdir(workspace, { recursive: true });
+  try {
+    const bot = await createBot(
+      {
+        name: "QueueBot",
+        role: "coding",
+        runtime: "ocp-coder",
+        workspace,
+        instructions: defaultBotInstructions("coding"),
+      },
+      root,
+    );
+    const first = await createTask({ botId: bot.id, prompt: "first" }, root);
+    await updateTask(first.id, { status: "running" }, root);
+    const second = await createTask({ botId: bot.id, prompt: "second" }, root);
+    assert.equal(second.status, "queued");
+    const listed = await listTasks(root);
+    assert.equal(listed.length, 2);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

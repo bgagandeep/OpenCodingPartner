@@ -28,15 +28,14 @@ import {
 import {
   bootstrapFleet,
   createBot,
+  createTask,
   defaultBotInstructions,
   deleteBot,
   findBot,
   listBots,
   listTasks,
   productDataDir,
-  runBotSession,
   updateBot,
-  updateBotSession,
   waitForRecordedApproval,
   validBotNetworkMode,
   validBotProvider,
@@ -48,6 +47,19 @@ import {
   type BotRole,
   type BotRuntime,
 } from "./index.js";
+import { runWorkspaceCommand, runWorkspaceTests } from "./sandbox-run.js";
+
+const acceptedPlans = new Set<string>();
+const WRITE_TOOLS = new Set([
+  "workspace_write",
+  "workspace_patch",
+  "workspace_append",
+  "workspace_delete",
+  "workspace_rename",
+  "workspace_copy",
+  "workspace_mkdir",
+  "workspace_rmdir",
+]);
 
 type RpcId = string | number;
 interface RpcMessage { id?: RpcId; method?: string; params?: Record<string, unknown>; }
@@ -65,6 +77,9 @@ const DIRECT_TOOLS = [
   { name: "workspace_copy", description: "Copy one workspace file without overwriting an existing target.", inputSchema: { type: "object", properties: { from: { type: "string" }, to: { type: "string" } }, required: ["from", "to"] } },
   { name: "workspace_mkdir", description: "Create a directory in the workspace.", inputSchema: { type: "object", properties: { path: { type: "string" } }, required: ["path"] } },
   { name: "workspace_rmdir", description: "Remove one empty directory in the workspace.", inputSchema: { type: "object", properties: { path: { type: "string" } }, required: ["path"] } },
+  { name: "workspace_shell", description: "Run one allow-listed argv command in the workspace (node --test, pnpm test, tsc --noEmit, or read-only git). No shell interpolation.", inputSchema: { type: "object", properties: { argv: { type: "array", items: { type: "string" } } }, required: ["argv"] } },
+  { name: "workspace_test", description: "Run node --test in the assigned workspace and return stdout/stderr.", inputSchema: { type: "object", properties: {} } },
+  { name: "plan_submit", description: "Submit an implementation plan for human approval before coding edits. Required for coding writes.", inputSchema: { type: "object", properties: { plan: { type: "string" } }, required: ["plan"] } },
   { name: "memory_search", description: "Search persistent workspace memory for facts, conventions, and past decisions.", inputSchema: { type: "object", properties: { query: { type: "string", description: "Keyword or phrase to search for; empty returns recent memories." } } } },
   { name: "memory_remember", description: "Save a concise non-secret fact, convention, or architectural decision to persistent workspace memory.", inputSchema: { type: "object", properties: { fact: { type: "string" } }, required: ["fact"] } },
   { name: "memory_forget", description: "Remove entries matching a phrase from persistent workspace memory.", inputSchema: { type: "object", properties: { query: { type: "string" } }, required: ["query"] } },
@@ -453,48 +468,21 @@ async function executeToolCall(root: string, name: string, args: Record<string, 
     if (!targetBot) return mcpToolResult({ ok: false, detail: `Target bot not found: ${targetRef}` });
     const reviewerBot = reviewerRef ? await findBot(reviewerRef, dataDir, root) : undefined;
     try {
-      const actionNote = targetBot.role === "coding"
-        ? "\n\nIMPORTANT: Write the actual working code files to the workspace using `workspace_write` or `workspace_patch` after the user approves the plan."
-        : "";
-      const parentTaskId = process.env.OCP_TASK_ID;
-      const permissionForDelegate = async (req: Parameters<typeof waitForRecordedApproval>[1]) => {
-        if (!parentTaskId) return undefined;
-        return waitForRecordedApproval(parentTaskId, req, dataDir);
-      };
-      const primaryRun = await runBotSession(targetBot, `${targetBot.instructions}\n\nDelegated task:\n${delegatedPrompt}${actionNote}`, {
+      const task = await createTask(
+        { botId: targetBot.id, prompt: delegatedPrompt, reviewerBotId: reviewerBot?.id },
         dataDir,
-        taskId: parentTaskId,
-        onSessionReady: (sessionId) => updateBotSession(targetBot.id, sessionId, dataDir),
-        onPermissionRequest: permissionForDelegate,
-      });
-      let reviewResult: string | undefined;
-      if (reviewerBot) {
-        try {
-          const reviewRun = await runBotSession(
-            reviewerBot,
-            `${reviewerBot.instructions}\n\nReview the work completed by ${targetBot.name} for request:\n${delegatedPrompt}\n\nImplementation report:\n${primaryRun.result}`,
-            {
-              dataDir,
-              taskId: parentTaskId,
-              onSessionReady: (sessionId) => updateBotSession(reviewerBot.id, sessionId, dataDir),
-              onPermissionRequest: permissionForDelegate,
-            },
-          );
-          reviewResult = reviewRun.result;
-        } catch (reviewErr) {
-          reviewResult = `Reviewer note: ${reviewErr instanceof Error ? reviewErr.message : "review skipped"}`;
-        }
-      }
+      );
       return mcpToolResult({
         ok: true,
         detail: JSON.stringify(
           {
             ok: true,
+            queued: true,
+            taskId: task.id,
             bot: targetBot.name,
             role: targetBot.role,
-            sessionId: primaryRun.sessionId,
-            result: primaryRun.result,
-            ...(reviewerBot ? { reviewer: reviewerBot.name, review: reviewResult } : {}),
+            reviewer: reviewerBot?.name,
+            result: `Queued for ${targetBot.name}. The Lead can keep chatting; the product will run this task when the workspace is free.`,
           },
           null,
           2,
@@ -505,7 +493,50 @@ async function executeToolCall(root: string, name: string, args: Record<string, 
     }
   }
 
+  if (name === "plan_submit") {
+    const plan = typeof args.plan === "string" ? args.plan.trim() : "";
+    const taskId = process.env.OCP_TASK_ID;
+    if (!plan) return mcpToolResult({ ok: false, detail: "plan_submit requires a plan string." });
+    if (!taskId) {
+      acceptedPlans.add("ad-hoc");
+      return mcpToolResult({ ok: true, detail: "Plan recorded for this MCP session (no parent task)." });
+    }
+    const allowed = await waitForRecordedApproval(
+      taskId,
+      {
+        title: "Approve implementation plan?",
+        description: plan.slice(0, 4000),
+        subject: { kind: "plan", plan },
+        options: [
+          { optionId: "allow-once", name: "Allow once", kind: "allow_once" },
+          { optionId: "reject-once", name: "Deny", kind: "reject_once" },
+        ],
+      },
+      dataDir,
+    );
+    if (!allowed) return mcpToolResult({ ok: false, detail: "Plan was not approved. No files will be changed." });
+    acceptedPlans.add(taskId);
+    return mcpToolResult({ ok: true, detail: "Plan approved. You may edit files and run workspace_test." });
+  }
+
+  if (name === "workspace_shell") {
+    const argv = Array.isArray(args.argv) ? args.argv.filter((item): item is string => typeof item === "string") : [];
+    const ran = await runWorkspaceCommand(root, argv);
+    return mcpToolResult({ ok: ran.ok, detail: JSON.stringify(ran, null, 2).slice(0, 16_000) });
+  }
+  if (name === "workspace_test") {
+    const ran = await runWorkspaceTests(root);
+    return mcpToolResult({ ok: ran.ok, detail: JSON.stringify(ran, null, 2).slice(0, 16_000) });
+  }
+
   const pathArg = typeof args.path === "string" ? args.path : "";
+  const taskId = process.env.OCP_TASK_ID;
+  if (WRITE_TOOLS.has(name) && taskId && !acceptedPlans.has(taskId)) {
+    return mcpToolResult({
+      ok: false,
+      detail: "Submit a plan with plan_submit and wait for human approval before editing files.",
+    });
+  }
   let result: { ok: boolean; detail: string };
   if (name === "workspace_list") {
     if (pathArg) await assertSafeWorkspacePath(root, pathArg, true);

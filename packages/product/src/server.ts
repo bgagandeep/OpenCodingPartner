@@ -44,7 +44,9 @@ import {
   validBotRole,
   validBotRuntime,
   validBotNetworkMode,
+  workspaceHasBusyTask,
   workspacePathsMatch,
+  nextQueuedTaskForWorkspace,
   type KeyboardActionInput,
   type MouseActionInput,
   type PendingTaskApproval,
@@ -561,19 +563,14 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
         sendJson(response, 503, { error: "OpenCodingPartner is shutting down." });
         return;
       }
-      let task: Awaited<ReturnType<typeof createTask>>;
-      try {
-        task = await createTask({ botId: bot.id, prompt, reviewerBotId: reviewer?.id }, root);
-      } catch (error) {
-        if (error instanceof Error && error.message.includes("workspace already has an active task")) {
-          sendJson(response, 409, { error: error.message });
-          return;
-        }
-        throw error;
-      }
+      const task = await createTask({ botId: bot.id, prompt, reviewerBotId: reviewer?.id }, root);
       const currentBot = await findBot(bot.id, root);
       if (!currentBot) {
         sendJson(response, 409, { error: "The selected bot was removed." });
+        return;
+      }
+      if (await workspaceHasBusyTask(currentBot.workspace, root)) {
+        sendJson(response, 202, { taskId: task.id, queued: true });
         return;
       }
       await updateTask(task.id, { status: "running", processId: process.pid }, root);
@@ -739,8 +736,22 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
             waiter.resolve(undefined);
           }
         }
+        void drainWorkspaceQueue(bot.workspace);
       }
     })();
+  }
+
+  async function drainWorkspaceQueue(workspace: string): Promise<void> {
+    if (closing) return;
+    if (await workspaceHasBusyTask(workspace, root)) return;
+    const next = await nextQueuedTaskForWorkspace(workspace, root);
+    if (!next) return;
+    const nextBot = await findBot(next.botId, root);
+    if (!nextBot) return;
+    const reviewer = next.reviewerBotId ? await findBot(next.reviewerBotId, root) : undefined;
+    const baseline = await captureWorkspaceBaseline(nextBot.workspace);
+    await updateTask(next.id, { status: "running", processId: process.pid }, root);
+    launchTask(next.id, nextBot, reviewer, next.prompt, baseline);
   }
 
   async function waitForApproval(taskId: string, request: RuntimePermissionRequest): Promise<string | undefined> {
@@ -783,11 +794,25 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
   const actualPort = typeof address === "object" && address ? address.port : port;
   boundPort = actualPort;
   const displayHost = host.includes(":") ? `[${host}]` : host;
+  const queueTimer = setInterval(() => {
+    void (async () => {
+      const queued = (await listTasks(root)).filter((task) => task.status === "queued");
+      const seen = new Set<string>();
+      for (const task of queued) {
+        const owner = await findBot(task.botId, root);
+        if (!owner || seen.has(owner.workspace)) continue;
+        seen.add(owner.workspace);
+        await drainWorkspaceQueue(owner.workspace);
+      }
+    })();
+  }, 400);
+  queueTimer.unref?.();
   return {
     server,
     url: `http://${displayHost}:${actualPort}`,
     close: async () => {
       closing = true;
+      clearInterval(queueTimer);
       for (const streamChild of activeStreams) {
         try {
           streamChild.kill("SIGTERM");

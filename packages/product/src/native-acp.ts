@@ -7,6 +7,7 @@ import path from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import { externalToolNeedsApproval } from "./connectors.js";
+import { vaultFillInvocation } from "./vault.js";
 import { listHttpMcpTools, type HttpMcpEndpoint } from "./http-mcp.js";
 import { formatPins, splitRecent, summarizeTurns, takePins, type PinnedNotes } from "./context.js";
 import { layoutCachedPrompt } from "./prompt-cache.js";
@@ -103,6 +104,7 @@ const MUTATING_TOOLS = new Set([
   "computer_mouse",
   "computer_keyboard",
   "computer_browser",
+  "vault_fill",
   "workspace_shell",
   "workspace_test",
 ]);
@@ -862,6 +864,10 @@ export async function runNativeAcpAgent(): Promise<void> {
             } catch {
               parsedArgs = {};
             }
+            const vaultArgs = vaultFillInvocation(toolName, parsedArgs);
+            if (vaultArgs) {
+              parsedArgs = toolName === "tool_call" ? { name: "vault_fill", arguments: vaultArgs } : vaultArgs;
+            }
 
             send({
               jsonrpc: "2.0",
@@ -878,10 +884,10 @@ export async function runNativeAcpAgent(): Promise<void> {
             const externalTarget = externalToolNeedsApproval(toolName, parsedArgs)
               ? (toolName === "tool_call" && typeof parsedArgs.name === "string" ? parsedArgs.name : toolName)
               : undefined;
-            if (MUTATING_TOOLS.has(toolName) || externalTarget) {
+            if (vaultArgs || MUTATING_TOOLS.has(toolName) || externalTarget) {
               const allowed = await requestPermissionFromClient(
-                externalTarget ? `Allow external MCP tool ${externalTarget}?` : `Allow ${toolName}?`,
-                externalTarget ? "external-mcp" : "edit",
+                vaultArgs ? "Allow vault_fill on the virtual computer keyboard?" : externalTarget ? `Allow external MCP tool ${externalTarget}?` : `Allow ${toolName}?`,
+                vaultArgs ? "vault-fill" : externalTarget ? "external-mcp" : "edit",
                 parsedArgs,
               );
               if (!allowed) {

@@ -13,7 +13,9 @@ import {
   computerMouse,
   computerOpenBrowser,
   createBot,
+  createProductRoutine,
   createTask,
+  listProductRoutines,
   defaultBotInstructions,
   deleteBot,
   deleteTask,
@@ -1253,6 +1255,66 @@ test("dashboard hides .ocp and gtm paths, streams SSE, and Always-for-task appro
       options: [{ optionId: "allow-once", name: "Allow once", kind: "allow_once" }],
     }, root);
     assert.equal(auto, "allow-once");
+  } finally {
+    await app.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("product app stores interval and event routines, MCP servers, and channel flags", async () => {
+  const root = await makeTempDir("ocp-routines-");
+  const workspace = path.join(root, "workspace");
+  await mkdir(workspace, { recursive: true });
+  const app = await startProductApp({ root, port: 0 });
+  try {
+    const htmlRes = await fetch(app.url);
+    const token = /script-src 'nonce-([a-f0-9]+)'/.exec(htmlRes.headers.get("content-security-policy") ?? "")?.[1] ?? "";
+    const html = await htmlRes.text();
+    assert.match(html, /Routines/);
+    assert.match(html, /Channels in this app/);
+    const botRes = await fetch(`${app.url}/api/bots`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-ocp-token": token },
+      body: JSON.stringify({
+        name: "Scheduler",
+        role: "general",
+        runtime: "ocp-agent",
+        isolation: "host",
+        workspace,
+        mcpServers: [{ name: "docs", url: "http://127.0.0.1:3100" }],
+      }),
+    });
+    assert.equal(botRes.status, 201);
+    const { bot } = (await botRes.json()) as { bot: { id: string; mcpServers?: { name: string }[] } };
+    assert.equal(bot.mcpServers?.[0]?.name, "docs");
+
+    const created = await fetch(`${app.url}/api/routines`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-ocp-token": token },
+      body: JSON.stringify({ botId: bot.id, prompt: "Ping the team", event: "build-finished" }),
+    });
+    assert.equal(created.status, 201);
+    const fired = await fetch(`${app.url}/api/routines/event`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-ocp-token": token },
+      body: JSON.stringify({ name: "build-finished" }),
+    });
+    assert.equal(fired.status, 202);
+    const fireBody = (await fired.json()) as { fired: number };
+    assert.equal(fireBody.fired, 1);
+
+    await fetch(`${app.url}/api/settings`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-ocp-token": token },
+      body: JSON.stringify({ slackBotToken: "xoxb-test", slackSigningSecret: "sign" }),
+    });
+    const settings = await fetch(`${app.url}/api/settings`);
+    const settingsBody = (await settings.json()) as { slackConfigured: boolean };
+    assert.equal(settingsBody.slackConfigured, true);
+    const listed = await listProductRoutines(root);
+    assert.equal(listed.length, 1);
+    await createProductRoutine({ botId: bot.id, prompt: "Hourly ping", everyMs: 3600_000 }, root);
+    assert.equal((await listProductRoutines(root)).length, 2);
   } finally {
     await app.close();
     await rm(root, { recursive: true, force: true });

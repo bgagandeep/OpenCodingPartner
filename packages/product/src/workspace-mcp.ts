@@ -49,6 +49,7 @@ import {
   type BotRuntime,
 } from "./index.js";
 import { runWorkspaceCommand, runWorkspaceTests } from "./sandbox-run.js";
+import { pageStoredToolOutput, toolOutputDataDir } from "./tool-trim.js";
 
 const acceptedPlans = new Set<string>();
 const WRITE_TOOLS = new Set([
@@ -80,6 +81,7 @@ const DIRECT_TOOLS = [
   { name: "workspace_rmdir", description: "Remove one empty directory in the workspace.", inputSchema: { type: "object", properties: { path: { type: "string" } }, required: ["path"] } },
   { name: "workspace_shell", description: "Run one allow-listed argv command in the workspace (node --test, pnpm test, tsc --noEmit, or read-only git). No shell interpolation.", inputSchema: { type: "object", properties: { argv: { type: "array", items: { type: "string" } } }, required: ["argv"] } },
   { name: "workspace_test", description: "Run node --test in the assigned workspace and return stdout/stderr.", inputSchema: { type: "object", properties: {} } },
+  { name: "tool_output_read", description: "Read a full tool output that was trimmed from the conversation. Pass the handle toolout:ID. Optional offset and limit page a long stored output.", inputSchema: { type: "object", properties: { handle: { type: "string" }, offset: { type: "number" }, limit: { type: "number" } }, required: ["handle"] } },
   { name: "plan_submit", description: "Submit an implementation plan for human approval before coding edits. Required for coding writes.", inputSchema: { type: "object", properties: { plan: { type: "string" } }, required: ["plan"] } },
   { name: "memory_search", description: "Search persistent workspace memory for facts, conventions, and past decisions.", inputSchema: { type: "object", properties: { query: { type: "string", description: "Keyword or phrase to search for; empty returns recent memories." } } } },
   { name: "memory_remember", description: "Save a concise non-secret fact, convention, or architectural decision to persistent workspace memory.", inputSchema: { type: "object", properties: { fact: { type: "string" } }, required: ["fact"] } },
@@ -232,6 +234,14 @@ async function executeToolCall(root: string, name: string, args: Record<string, 
   if (parseExternalToolName(name)) {
     const result = await invokeExternalTool(name, args);
     return mcpToolResult(result);
+  }
+  if (name === "tool_output_read") {
+    const handle = typeof args.handle === "string" ? args.handle : "";
+    const offset = typeof args.offset === "number" ? args.offset : 0;
+    const limit = typeof args.limit === "number" ? args.limit : 8_000;
+    const page = await pageStoredToolOutput(toolOutputDataDir(), handle, offset, limit);
+    if (page === undefined) return mcpToolResult({ ok: false, detail: `No stored output for ${handle}.` });
+    return mcpToolResult({ ok: true, detail: page });
   }
   if (name === "memory_search") {
     const query = (typeof args.query === "string" ? args.query : "").trim().toLowerCase();

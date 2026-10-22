@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { accessSync, constants, existsSync, readFileSync } from "node:fs";
 import { createInterface } from "node:readline";
 import { chmod, cp, lstat, mkdir, open, readFile, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
@@ -89,6 +89,7 @@ export interface TaskApproval {
   description?: string;
   decision: "allow-once" | "cancelled";
   createdAt: string;
+  requestId?: string;
 }
 
 export interface ProductProject {
@@ -360,6 +361,7 @@ export async function bootstrapFleet(
   workspace: string,
   mode: "lead" | "team" = "lead",
   root = productDataDir(),
+  options: { isolation?: BotIsolation } = {},
 ): Promise<{ created: BotDefinition[]; bots: BotDefinition[] }> {
   const resolvedWorkspace = await canonicalWorkspacePath(workspace);
   await createProject({ workspace: resolvedWorkspace }, root).catch(() => undefined);
@@ -376,11 +378,12 @@ export async function bootstrapFleet(
       name: "Ada",
       role: "general",
       runtime: "ocp-agent",
-      isolation: "host",
+      isolation: options.isolation ?? "host",
       instructions: leadBotInstructions(),
     },
   ];
   if (mode === "team") {
+    const isolation = options.isolation ?? "host";
     specs.push(
       {
         name: "Linus",
@@ -392,21 +395,21 @@ export async function bootstrapFleet(
         name: "Grace",
         role: "qa",
         runtime: "ocp-agent",
-        isolation: "host",
+        isolation,
         instructions: defaultBotInstructions("qa"),
       },
       {
         name: "Sentinel",
         role: "security",
         runtime: "ocp-agent",
-        isolation: "host",
+        isolation,
         instructions: defaultBotInstructions("security"),
       },
       {
         name: "Atlas",
         role: "computer",
         runtime: "ocp-agent",
-        isolation: "host",
+        isolation,
         instructions: defaultBotInstructions("computer"),
       },
     );
@@ -617,9 +620,14 @@ async function copyProductDataContents(source: string, target: string): Promise<
 export async function createBot(
   input: Omit<BotDefinition, "id" | "createdAt" | "updatedAt">,
   root = productDataDir(),
+  options: { allowNewRoot?: boolean; actor?: "human" | "bot" } = {},
 ): Promise<BotDefinition> {
   const now = new Date().toISOString();
   const agentRuntime = isOcpAgentRuntime(input.runtime);
+  const actor = options.actor ?? "human";
+  if (actor === "bot" && input.isolation === "host") {
+    throw new Error("Host isolation can only be set by a human. Bots use Docker isolation unless a person changes it.");
+  }
   const isolation = agentRuntime ? input.isolation ?? "docker" : undefined;
   const bot: BotDefinition = {
     ...input,
@@ -631,6 +639,11 @@ export async function createBot(
     updatedAt: now,
   };
   await mutateState(root, (state) => {
+    const knownWorkspaces = new Set((state.projects ?? []).map((p) => p.workspace));
+    for (const existing of state.bots) knownWorkspaces.add(existing.workspace);
+    if (options.allowNewRoot === false && !knownWorkspaces.has(bot.workspace)) {
+      throw new Error("Bot workspaces must stay inside an approved project root. A human must add a new project first.");
+    }
     if (
       state.bots.some(
         (existing) =>
@@ -659,12 +672,16 @@ export async function updateBot(
   id: string,
   update: Partial<Pick<BotDefinition, "name" | "role" | "runtime" | "isolation" | "network" | "workspace" | "instructions" | "provider" | "endpoint" | "apiKeyEnv" | "model">>,
   root = productDataDir(),
+  options: { actor?: "human" | "bot" } = {},
 ): Promise<BotDefinition> {
   let updated: BotDefinition | undefined;
   await mutateState(root, async (state) => {
     recoverAbandonedTaskRecords(state);
     const bot = state.bots.find((item) => item.id === id);
     if (!bot) throw new Error(`Unknown bot: ${id}`);
+    if (options.actor === "bot" && Object.prototype.hasOwnProperty.call(update, "isolation")) {
+      throw new Error("A bot cannot change another bot's isolation. A human must set host isolation explicitly.");
+    }
     const normalizedUpdate = { ...update };
     if (update.workspace) normalizedUpdate.workspace = await canonicalWorkspacePath(update.workspace);
     const targetWorkspace = normalizedUpdate.workspace ?? bot.workspace;
@@ -790,6 +807,51 @@ export async function recordTaskApproval(id: string, approval: TaskApproval, roo
     task.approvals.push(approval);
     task.updatedAt = new Date().toISOString();
   });
+}
+
+/** Cross-process approval: persist pendingApproval and wait until a human records a decision. */
+export async function waitForRecordedApproval(
+  taskId: string,
+  request: RuntimePermissionRequest,
+  root = productDataDir(),
+  signal?: AbortSignal,
+): Promise<string | undefined> {
+  const allow = request.options.find((option) => option.kind === "allow_once");
+  if (!allow) return undefined;
+  const id = randomUUID();
+  const pending: PendingTaskApproval = {
+    id,
+    title: request.title.slice(0, 500),
+    description: request.description?.slice(0, 4000),
+    subject: request.subject,
+    allowOnceOptionId: allow.optionId,
+    requestedAt: new Date().toISOString(),
+  };
+  await updateTask(taskId, { status: "awaiting-approval", pendingApproval: pending }, root);
+  const started = Date.now();
+  while (!signal?.aborted && Date.now() - started < 10 * 60_000) {
+    const task = await findTask(taskId, root);
+    if (!task) return undefined;
+    const recorded = task.approvals?.find((item) => item.requestId === id);
+    if (recorded) return recorded.decision === "allow-once" ? allow.optionId : undefined;
+    if (!task.pendingApproval || task.pendingApproval.id !== id) {
+      const last = task.approvals?.at(-1);
+      if (last?.title === request.title) return last.decision === "allow-once" ? allow.optionId : undefined;
+      return undefined;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 80));
+  }
+  return undefined;
+}
+
+export function dockerDaemonAvailable(env: NodeJS.ProcessEnv = process.env): boolean {
+  if (!executableOnPath("docker", env)) return false;
+  const result = spawnSync("docker", ["info", "--format", "{{.ServerVersion}}"], {
+    env,
+    encoding: "utf8",
+    timeout: 2_500,
+  });
+  return result.status === 0 && Boolean(result.stdout?.trim());
 }
 
 export async function recordTaskEvent(
@@ -920,6 +982,7 @@ export interface RunBotSessionOptions {
   signal?: AbortSignal;
   env?: NodeJS.ProcessEnv;
   dataDir?: string;
+  taskId?: string;
 }
 
 type RuntimeRpcRequest = (method: string, params: unknown) => Promise<unknown>;
@@ -1070,6 +1133,9 @@ export async function runBotSession(
   const command = resolved.command;
   const args = resolved.args;
   const runtimeEnv: NodeJS.ProcessEnv = { ...effectiveEnv, OCP_DATA_DIR: dataRoot };
+  if (agentRuntime && (bot.isolation ?? "docker") === "docker" && !dockerDaemonAvailable(runtimeEnv)) {
+    throw new Error("Docker isolation is configured but Docker is not available. Install Docker, or have a human switch this bot to host isolation.");
+  }
   if (agentRuntime) {
     if ((bot.isolation ?? "docker") === "docker") {
       runtimeEnv.TERMINAL_ENV = "docker";
@@ -1259,7 +1325,11 @@ export async function runBotSession(
       name: "opencodingpartner-workspace",
       command: process.execPath,
       args: [fileURLToPath(new URL("./workspace-mcp.js", import.meta.url)), bot.workspace],
-      env: [{ name: "OCP_DATA_DIR", value: dataRoot }],
+      env: [
+        { name: "OCP_DATA_DIR", value: dataRoot },
+        { name: "OCP_ACTOR_BOT_ID", value: bot.id },
+        ...(options.taskId ? [{ name: "OCP_TASK_ID", value: options.taskId }] : []),
+      ],
     }] : [];
     const toolGuidance = (agentRuntime || resolved.fallback)
       ? "For project files, fleet management, and computer use, use the OpenCodingPartner MCP tools: workspace tools (workspace_list, workspace_read, workspace_grep, workspace_glob, workspace_write, workspace_patch), bot & fleet management (bot_list, bot_create, bot_update, bot_delete, bot_delegate, swarm_setup), workspace memory (memory_search / memory_remember), local task history recall (history_search / history_read), and virtual computer control (computer_screen, computer_mouse, computer_keyboard, computer_browser). Use the OCP Agent Docker terminal only for checks explicitly allowed by the user request.\n\n"

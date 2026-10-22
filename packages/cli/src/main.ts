@@ -381,6 +381,7 @@ export async function main(argv: readonly string[]): Promise<number> {
           }
           const output = await runBotSession(agent, agentPrompt, {
             dataDir: root,
+            taskId: task.id,
             signal: controller.signal,
             onUpdate: (update) => {
               if (update.kind === "agent_message_chunk" && update.text) process.stdout.write(update.text);

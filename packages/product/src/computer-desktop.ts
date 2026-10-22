@@ -2,6 +2,7 @@ import { execFile, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
 import { access, mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 
@@ -60,11 +61,36 @@ const LEGACY_COMPUTER_REL = path.join(".ocp", "computer.json");
 const FRAME_REL = path.join("gtm", "last-frame.png");
 const LAST_RUN_REL = path.join("gtm", "last-run.json");
 
-// Valid 1x1 dark-slate PNG fallback when running in headless CI without X11/ffmpeg
-const FALLBACK_PNG = Buffer.from(
-  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
-  "base64",
-);
+function chromeProfileDir(workspaceRoot: string): string {
+  const hash = createHash("sha256").update(path.resolve(workspaceRoot)).digest("hex").slice(0, 16);
+  const dataHome = process.env.OCP_DATA_DIR
+    ? path.resolve(process.env.OCP_DATA_DIR)
+    : process.env.XDG_DATA_HOME && path.isAbsolute(process.env.XDG_DATA_HOME)
+      ? process.env.XDG_DATA_HOME
+      : path.join(homedir(), ".local", "share");
+  return path.join(dataHome, "opencodingpartner", "chrome-profiles", hash);
+}
+
+function actionFailure(state: ComputerDesktopState, detail: string): ComputerActionResult {
+  return {
+    ok: false,
+    detail,
+    display: state.display,
+    width: state.width,
+    height: state.height,
+    screenshot: "gtm/last-frame.png",
+    control: state.control,
+    status: state.status,
+  };
+}
+
+function hostDisplayOptIn(): boolean {
+  return process.env.OCP_COMPUTER_USE_HOST_DISPLAY === "1";
+}
+
+function hostDesktopOptIn(): boolean {
+  return process.env.OCP_COMPUTER_USE_HOST_DESKTOP === "1";
+}
 
 function desktopStatePath(workspaceRoot: string): string {
   return path.join(workspaceRoot, DESKTOP_STATE_REL);
@@ -131,7 +157,7 @@ export async function readDesktopState(workspaceRoot: string): Promise<ComputerD
     width: typeof state.width === "number" && state.width >= 320 ? state.width : DEFAULT_WIDTH,
     height: typeof state.height === "number" && state.height >= 240 ? state.height : DEFAULT_HEIGHT,
     control: state.control === "human" ? "human" : "partner",
-    approved: state.approved !== false,
+    approved: state.approved === true,
     status: state.control === "human" ? "held" : state.status === "live" ? "live" : "idle",
     lastUrl: typeof state.lastUrl === "string" ? state.lastUrl : undefined,
     updatedAt: typeof state.updatedAt === "string" ? state.updatedAt : new Date().toISOString(),
@@ -174,6 +200,8 @@ async function finishComputerAction(
   note: string,
   fast?: boolean,
 ): Promise<ComputerActionResult> {
+  const displayActive = state.status === "live" || state.status === "held";
+  if (!displayActive) return actionFailure(state, missingDisplayDetail(state));
   if (fast) {
     scheduleBackgroundCapture(workspaceRoot, note);
     return {
@@ -266,17 +294,19 @@ export async function ensureComputerDisplay(workspaceRoot: string): Promise<Comp
           state.width = check.width ?? state.width;
           state.height = check.height ?? state.height;
           if (state.control !== "human") state.status = "live";
-          return writeDesktopState(root, state);
+          await writeDesktopState(root, state);
+          await waitForFirstPaint(root, state);
+          return readDesktopState(root);
         }
       }
     } catch {
-      // Xvnc binary not available; fall back to host DISPLAY if available
+      // Xvnc did not start; do not silently attach to the host desktop.
     }
   }
 
-  // 3. Fallback to process.env.DISPLAY (e.g. :0) if available
+  // 3. Host DISPLAY is opt-in only (never a silent fallback).
   const hostDisplay = process.env.DISPLAY?.trim();
-  if (hostDisplay) {
+  if (hostDisplayOptIn() && state.approved && hostDisplay) {
     const hostCheck = await displayResponds(hostDisplay);
     if (hostCheck.ok) {
       state.display = hostDisplay;
@@ -287,8 +317,8 @@ export async function ensureComputerDisplay(workspaceRoot: string): Promise<Comp
     }
   }
 
-  // 4. Native macOS Quartz / AppKit desktop support when running on a Mac
-  if (isNativeMacDesktop() && (await hasBinary("osascript"))) {
+  // 4. Real macOS desktop is opt-in + previously approved (ask-first).
+  if (hostDesktopOptIn() && state.approved && isNativeMacDesktop() && (await hasBinary("osascript"))) {
     state.display = "macos:0";
     try {
       const { stdout } = await execFileAsync(
@@ -311,7 +341,16 @@ export async function ensureComputerDisplay(workspaceRoot: string): Promise<Comp
     return writeDesktopState(root, state);
   }
 
+  if (state.control !== "human") state.status = "idle";
   return writeDesktopState(root, state);
+}
+
+async function waitForFirstPaint(workspaceRoot: string, state: ComputerDesktopState): Promise<void> {
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    await new Promise((r) => setTimeout(r, 120));
+    const shot = await captureFrameToDisk(workspaceRoot, state);
+    if (shot.bytes >= 800) return;
+  }
 }
 
 export async function getCursorAndWindow(display: string): Promise<{
@@ -367,15 +406,18 @@ export async function getCursorAndWindow(display: string): Promise<{
   return { cursor, windowTitle };
 }
 
-export async function captureComputerScreen(workspaceRoot: string, note = "Captured live computer screen"): Promise<ComputerActionResult> {
+async function captureFrameToDisk(
+  workspaceRoot: string,
+  state: ComputerDesktopState,
+): Promise<{ captured: boolean; bytes: number; framePath: string }> {
   const root = path.resolve(workspaceRoot);
-  const state = await ensureComputerDisplay(root);
   const framePath = path.join(root, FRAME_REL);
   await mkdir(path.dirname(framePath), { recursive: true });
   const displayActive = state.status === "live" || state.status === "held";
+  if (!displayActive) return { captured: false, bytes: 0, framePath };
 
   let captured = false;
-  if (displayActive && state.display.startsWith("macos:") && (await hasBinary("screencapture"))) {
+  if (state.display.startsWith("macos:") && (await hasBinary("screencapture"))) {
     try {
       await execFileAsync("screencapture", ["-x", "-C", framePath], { timeout: 5_000 });
       const info = await stat(framePath).catch(() => undefined);
@@ -383,7 +425,7 @@ export async function captureComputerScreen(workspaceRoot: string, note = "Captu
     } catch {
       captured = false;
     }
-  } else if (displayActive && (await hasBinary("ffmpeg"))) {
+  } else if (await hasBinary("ffmpeg")) {
     try {
       await execFileAsync(
         "ffmpeg",
@@ -400,6 +442,8 @@ export async function captureComputerScreen(workspaceRoot: string, note = "Captu
           state.display,
           "-frames:v",
           "1",
+          "-vf",
+          "format=rgb24",
           framePath,
         ],
         { timeout: 6_000 },
@@ -410,13 +454,39 @@ export async function captureComputerScreen(workspaceRoot: string, note = "Captu
       captured = false;
     }
   }
+  const info = await stat(framePath).catch(() => undefined);
+  return { captured, bytes: info?.size ?? 0, framePath };
+}
 
-  if (!captured) {
-    await writeFile(framePath, FALLBACK_PNG);
+function missingDisplayDetail(state: ComputerDesktopState): string {
+  if (hostDisplayOptIn() && !state.approved) {
+    return "Host display use is opt-in and still needs a one-time human approval before OCP will attach to DISPLAY.";
+  }
+  if (hostDesktopOptIn() && !state.approved) {
+    return "Host desktop use is opt-in and still needs a one-time human approval before OCP will control the real desktop.";
+  }
+  return "Virtual computer display is not available. Start Xvnc for this workspace, or set OCP_COMPUTER_USE_HOST_DISPLAY=1 / OCP_COMPUTER_USE_HOST_DESKTOP=1 and approve host desktop use. OCP will not invent a screenshot or attach to the host desktop silently.";
+}
+
+export async function captureComputerScreen(workspaceRoot: string, note = "Captured live computer screen"): Promise<ComputerActionResult> {
+  const root = path.resolve(workspaceRoot);
+  const state = await ensureComputerDisplay(root);
+  const displayActive = state.status === "live" || state.status === "held";
+  if (!displayActive) {
+    return actionFailure(state, missingDisplayDetail(state));
   }
 
-  const { cursor, windowTitle } = displayActive ? await getCursorAndWindow(state.display) : {};
-  const info = await stat(framePath).catch(() => undefined);
+  const shot = await captureFrameToDisk(root, state);
+  if (!shot.captured) {
+    return actionFailure(
+      state,
+      "Could not capture a live frame from the virtual display (ffmpeg/screencapture missing or the first paint never arrived). No placeholder screenshot was recorded.",
+    );
+  }
+
+  const { cursor, windowTitle } = await getCursorAndWindow(state.display);
+  const info = await stat(shot.framePath).catch(() => undefined);
+  await mkdir(path.dirname(path.join(root, LAST_RUN_REL)), { recursive: true });
   await writeFile(
     path.join(root, LAST_RUN_REL),
     `${JSON.stringify(
@@ -510,6 +580,9 @@ export async function computerMouse(workspaceRoot: string, input: MouseActionInp
   const displayActive = state.status === "live" || state.status === "held";
   const macReady = displayActive && state.display.startsWith("macos:") && (await hasBinary("osascript"));
   const xdotoolReady = displayActive && !state.display.startsWith("macos:") && (await hasBinary("xdotool"));
+  if (!macReady && !xdotoolReady) {
+    return actionFailure(state, missingDisplayDetail(state));
+  }
 
   try {
     if (input.action === "position") {
@@ -637,11 +710,10 @@ export async function computerMouse(workspaceRoot: string, input: MouseActionInp
       status: state.status,
     };
   } catch (error) {
-    const captured = await captureComputerScreen(root, `Mouse ${input.action} completed with fallback`);
-    return {
-      ...captured,
-      detail: `${captured.detail} (${error instanceof Error ? error.message : "mouse warning"})`,
-    };
+    return actionFailure(
+      state,
+      `Mouse ${input.action} failed: ${error instanceof Error ? error.message : "unknown error"}.`,
+    );
   }
 }
 
@@ -717,6 +789,9 @@ export async function computerKeyboard(workspaceRoot: string, input: KeyboardAct
   const displayActive = state.status === "live" || state.status === "held";
   const macReady = displayActive && state.display.startsWith("macos:") && (await hasBinary("osascript"));
   const xdotoolReady = displayActive && !state.display.startsWith("macos:") && (await hasBinary("xdotool"));
+  if (!macReady && !xdotoolReady) {
+    return actionFailure(state, missingDisplayDetail(state));
+  }
   try {
     if (input.action === "type") {
       const text = typeof input.text === "string" ? input.text : "";
@@ -802,11 +877,10 @@ export async function computerKeyboard(workspaceRoot: string, input: KeyboardAct
     }
     return finishComputerAction(root, state, `Pressed key ${normalized}`, input.fast);
   } catch (error) {
-    const captured = await captureComputerScreen(root, `Keyboard ${input.action} completed with fallback`);
-    return {
-      ...captured,
-      detail: `${captured.detail} (${error instanceof Error ? error.message : "keyboard warning"})`,
-    };
+    return actionFailure(
+      state,
+      `Keyboard ${input.action} failed: ${error instanceof Error ? error.message : "unknown error"}.`,
+    );
   }
 }
 
@@ -850,7 +924,7 @@ export async function computerOpenBrowser(
     };
   }
 
-  const profileDir = path.join(root, ".ocp", "chrome-profile");
+  const profileDir = chromeProfileDir(root);
   await mkdir(profileDir, { recursive: true });
 
   if (state.chromePid && isProcessAlive(state.chromePid)) {
@@ -877,6 +951,9 @@ export async function computerOpenBrowser(
           : undefined;
 
   const displayActive = state.status === "live" || state.status === "held";
+  if (!displayActive) {
+    return actionFailure(state, missingDisplayDetail(state));
+  }
   if (displayActive && chromeBin) {
     try {
       const child = spawn(
@@ -907,9 +984,11 @@ export async function computerOpenBrowser(
       await writeDesktopState(root, state);
       // Give Chrome a moment to render before capturing the frame
       await new Promise((r) => setTimeout(r, 1_500));
-    } catch {
-      state.lastUrl = parsed.toString();
-      await writeDesktopState(root, state);
+    } catch (error) {
+      return actionFailure(
+        state,
+        `Could not launch Chrome on the virtual computer: ${error instanceof Error ? error.message : "unknown error"}.`,
+      );
     }
   } else if (displayActive && state.display.startsWith("macos:") && (await hasBinary("open"))) {
     try {
@@ -917,13 +996,19 @@ export async function computerOpenBrowser(
       state.lastUrl = parsed.toString();
       await writeDesktopState(root, state);
       await new Promise((r) => setTimeout(r, 1_000));
-    } catch {
-      state.lastUrl = parsed.toString();
-      await writeDesktopState(root, state);
+    } catch (error) {
+      return actionFailure(
+        state,
+        `Could not open the URL on the host desktop: ${error instanceof Error ? error.message : "unknown error"}.`,
+      );
     }
   } else {
-    state.lastUrl = parsed.toString();
-    await writeDesktopState(root, state);
+    return actionFailure(
+      state,
+      displayActive
+        ? "No Chrome/Chromium browser is available for the virtual computer."
+        : missingDisplayDetail(state),
+    );
   }
 
   return captureComputerScreen(root, `Opened ${parsed.toString()} in virtual computer browser`);

@@ -11,6 +11,8 @@ import { listHttpMcpTools, type HttpMcpEndpoint } from "./http-mcp.js";
 import { formatPins, splitRecent, summarizeTurns, takePins, type PinnedNotes } from "./context.js";
 import { layoutCachedPrompt } from "./prompt-cache.js";
 import { recentTokenBudget } from "./provider-presets.js";
+import { presentToolOutput, toolOutputDataDir } from "./tool-trim.js";
+import type { ReadStamp } from "./tool-trim.js";
 import { noteModelUsage, usageCapReason, usageProviderKind } from "./usage.js";
 
 interface RpcMessage {
@@ -60,6 +62,7 @@ interface SessionState {
   summary?: string;
   foldedCount?: number;
   pinned?: PinnedNotes;
+  reads?: ReadStamp[];
 }
 
 interface ProviderConfig {
@@ -745,10 +748,22 @@ export async function runNativeAcpAgent(): Promise<void> {
               continue;
             }
             const toolResult = await entry.bridge.callTool(toolName, parsedArgs);
+            let content = toolResult.text;
+            if (toolName !== "tool_output_read") {
+              const presented = await presentToolOutput({
+                dataDir: toolOutputDataDir(process.env, hermesHome),
+                toolName,
+                args: parsedArgs,
+                text: toolResult.text,
+                reads: state.reads ?? [],
+              });
+              state.reads = presented.reads;
+              content = presented.display;
+            }
             state.messages.push({
               role: "tool",
               tool_call_id: call.id,
-              content: toolResult.text.slice(0, 16_000),
+              content: content.length > 16_000 ? content.slice(0, 16_000) : content,
             });
           }
         }

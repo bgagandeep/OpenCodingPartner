@@ -1008,6 +1008,12 @@ export async function recordTaskApproval(id: string, approval: TaskApproval, roo
   });
 }
 
+function permissionKind(subject: unknown): string {
+  if (!subject || typeof subject !== "object") return "";
+  const kind = (subject as { kind?: unknown }).kind;
+  return typeof kind === "string" ? kind : "";
+}
+
 /** Cross-process approval: persist pendingApproval and wait until a human records a decision. */
 export async function waitForRecordedApproval(
   taskId: string,
@@ -1015,30 +1021,31 @@ export async function waitForRecordedApproval(
   root = productDataDir(),
   signal?: AbortSignal,
 ): Promise<string | undefined> {
+  const kind = permissionKind(request.subject);
   const allow = request.options.find((option) => option.kind === "allow_once");
-  if (!allow) return undefined;
+  if (!allow && kind !== "usage-hard-cap") return undefined;
   const id = randomUUID();
   const pending: PendingTaskApproval = {
     id,
     title: request.title.slice(0, 500),
     description: request.description?.slice(0, 4000),
     subject: request.subject,
-    allowOnceOptionId: allow.optionId,
+    allowOnceOptionId: allow?.optionId ?? "",
     requestedAt: new Date().toISOString(),
   };
   const existing = await findTask(taskId, root);
-  if (existing?.autoApproveRemaining) return allow.optionId;
+  if (allow && existing?.autoApproveRemaining && kind !== "usage-cap" && kind !== "usage-hard-cap") return allow.optionId;
   await updateTask(taskId, { status: "awaiting-approval", pendingApproval: pending }, root);
   const started = Date.now();
   while (!signal?.aborted && Date.now() - started < 10 * 60_000) {
     const task = await findTask(taskId, root);
     if (!task) return undefined;
-    if (task.autoApproveRemaining) return allow.optionId;
+    if (allow && task.autoApproveRemaining && kind !== "usage-cap" && kind !== "usage-hard-cap") return allow.optionId;
     const recorded = task.approvals?.find((item) => item.requestId === id);
-    if (recorded) return recorded.decision === "allow-once" || recorded.decision === "always" ? allow.optionId : undefined;
+    if (recorded) return allow && (recorded.decision === "allow-once" || recorded.decision === "always") ? allow.optionId : undefined;
     if (!task.pendingApproval || task.pendingApproval.id !== id) {
       const last = task.approvals?.at(-1);
-      if (last?.title === request.title) return last.decision === "allow-once" || last.decision === "always" ? allow.optionId : undefined;
+      if (last?.title === request.title) return allow && (last.decision === "allow-once" || last.decision === "always") ? allow.optionId : undefined;
       return undefined;
     }
     await new Promise((resolve) => setTimeout(resolve, 80));
@@ -1506,8 +1513,9 @@ export async function runBotSession(
       : toolCall
         ? JSON.stringify({ kind: toolCall.kind, input: toolCall.rawInput, content: toolCall.content }).slice(0, 4000)
         : undefined;
+    const kind = typeof toolCall?.kind === "string" ? toolCall.kind : "";
     const allowOnce = choices.find((choice) => choice.kind === "allow_once");
-    const selected = allowOnce && options.onPermissionRequest
+    const selected = (allowOnce || kind === "usage-hard-cap") && options.onPermissionRequest
       ? await options.onPermissionRequest({ title, description, subject: params.subject ?? toolCall, options: choices })
       : undefined;
     const allowed = allowOnce !== undefined && selected === allowOnce.optionId;

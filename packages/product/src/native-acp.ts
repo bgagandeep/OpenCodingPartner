@@ -25,7 +25,8 @@ import {
 } from "./response-cache.js";
 import { presentToolOutput, toolOutputDataDir } from "./tool-trim.js";
 import type { ReadStamp } from "./tool-trim.js";
-import { noteModelUsage, usageCapReason, usageProviderKind } from "./usage.js";
+import { BIG_TASK_ESTIMATED_TOKENS, budgetDecision, projectSpend, spentTotals } from "./budget.js";
+import { noteModelUsage, readUsageCalls, readUsagePolicy, usageCapReason, usageProviderKind } from "./usage.js";
 
 interface RpcMessage {
   jsonrpc?: string;
@@ -295,8 +296,14 @@ export async function runNativeAcpAgent(): Promise<void> {
   const pendingClientRpc = new Map<number, (result: Record<string, unknown>) => void>();
   let nextClientRpcId = 10_000;
 
-  function requestPermissionFromClient(title: string, kind: string, rawInput: unknown): Promise<boolean> {
+  function requestPermissionFromClient(title: string, kind: string, rawInput: unknown, allowContinue = true): Promise<boolean> {
     const id = nextClientRpcId++;
+    const options = allowContinue
+      ? [
+          { optionId: "allow-once", name: "Allow once", kind: "allow_once" },
+          { optionId: "reject-once", name: "Deny", kind: "reject_once" },
+        ]
+      : [{ optionId: "reject-once", name: "Leave paused", kind: "reject_once" }];
     return new Promise((resolve) => {
       pendingClientRpc.set(id, (msg) => {
         const res = msg.result && typeof msg.result === "object" ? (msg.result as { outcome?: { outcome?: string; optionId?: string } }) : {};
@@ -309,10 +316,7 @@ export async function runNativeAcpAgent(): Promise<void> {
         params: {
           title,
           toolCall: { title, kind, rawInput },
-          options: [
-            { optionId: "allow-once", name: "Allow once", kind: "allow_once" },
-            { optionId: "reject-once", name: "Deny", kind: "reject_once" },
-          ],
+          options,
         },
       });
     });
@@ -711,21 +715,65 @@ export async function runNativeAcpAgent(): Promise<void> {
         };
         let routeStep: RouteStep = routeMode === "cheap" ? "answer" : "edit";
         let classified = false;
+        let budgetChecked = false;
+        const stopBeforeModel = async (reason: string): Promise<void> => {
+          const reply = `${reason} No further model call was made.`;
+          state.messages.push({ role: "assistant", content: reply });
+          send({
+            jsonrpc: "2.0",
+            method: "session/update",
+            params: { sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: reply } } },
+          });
+          await saveSession(state);
+          send({ jsonrpc: "2.0", id, result: { stopReason: "cancelled" } });
+        };
         for (let turn = 0; turn < 12; turn += 1) {
+          if (process.env.OCP_DATA_DIR && process.env.OCP_ACTOR_BOT_ID) {
+            const policy = await readUsagePolicy(process.env.OCP_DATA_DIR);
+            const calls = await readUsageCalls(process.env.OCP_DATA_DIR);
+            const day = new Date().toISOString().slice(0, 10);
+            const botId = process.env.OCP_ACTOR_BOT_ID;
+            const projection = projectSpend({
+              promptText: state.messages.map((message) => message.content ?? "").join("\n"),
+              model: routeMode === "cheap" && cheapModel ? cheapModel : activeModel,
+              provider: usageProviderKind(config.provider, config.baseUrl),
+              prices: policy.prices,
+            });
+            const decision = budgetDecision({
+              projection,
+              includeProjection: !budgetChecked,
+              scopes: [
+                { name: "This bot", cap: policy.caps.perBot.find((item) => item.botId === botId), ...spentTotals(calls.filter((call) => call.botId === botId)) },
+                { name: "Today", cap: policy.caps.perDay, ...spentTotals(calls.filter((call) => call.createdAt.slice(0, 10) === day)) },
+              ],
+            });
+            if (!budgetChecked && (projection.estimatedInputTokens >= BIG_TASK_ESTIMATED_TOKENS || decision.stop !== "ok")) {
+              send({
+                jsonrpc: "2.0",
+                method: "session/update",
+                params: { sessionId, update: { sessionUpdate: "usage", title: `Projected cost: ${projection.label}` } },
+              });
+            }
+            if (decision.stop === "hard" && decision.reason) {
+              await requestPermissionFromClient(decision.reason, "usage-hard-cap", { reason: decision.reason }, false);
+              await stopBeforeModel(decision.reason);
+              return;
+            }
+            if (!budgetChecked && decision.stop === "soft" && decision.reason) {
+              const allowed = await requestPermissionFromClient(decision.reason, "usage-cap", { reason: decision.reason });
+              if (!allowed) {
+                await stopBeforeModel(decision.reason);
+                return;
+              }
+            }
+            budgetChecked = true;
+          }
           if (!usageContinued && process.env.OCP_DATA_DIR && process.env.OCP_ACTOR_BOT_ID) {
             const reason = await usageCapReason(process.env.OCP_DATA_DIR, process.env.OCP_ACTOR_BOT_ID);
             if (reason) {
               const allowed = await requestPermissionFromClient(reason, "usage-cap", { reason });
               if (!allowed) {
-                const reply = `${reason} No further model call was made.`;
-                state.messages.push({ role: "assistant", content: reply });
-                send({
-                  jsonrpc: "2.0",
-                  method: "session/update",
-                  params: { sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: reply } } },
-                });
-                await saveSession(state);
-                send({ jsonrpc: "2.0", id, result: { stopReason: "cancelled" } });
+                await stopBeforeModel(reason);
                 return;
               }
               usageContinued = true;

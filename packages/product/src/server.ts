@@ -951,6 +951,10 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
         sendJson(response, 409, { error: "That approval request is no longer pending." });
         return;
       }
+      if (permissionSubjectKind(task.pendingApproval.subject) === "usage-hard-cap" && decision !== "cancelled") {
+        sendJson(response, 400, { error: "A hard cap pauses the task. Leave it paused." });
+        return;
+      }
       if (waiter && waiter.taskId !== taskId) {
         sendJson(response, 409, { error: "That approval request is no longer pending." });
         return;
@@ -999,7 +1003,7 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
       await updateTask(taskId, {
         status: "running",
         pendingApproval: undefined,
-        autoApproveRemaining: decision === "always" && pendingKind !== "usage-cap" ? true : task.autoApproveRemaining,
+        autoApproveRemaining: decision === "always" && pendingKind !== "usage-cap" && pendingKind !== "usage-hard-cap" ? true : task.autoApproveRemaining,
       }, root);
       waiter?.resolve(allow ? waiter.optionId : undefined);
       notifySse();
@@ -1183,24 +1187,24 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
   }
 
   async function waitForApproval(taskId: string, request: RuntimePermissionRequest): Promise<string | undefined> {
-    const allow = request.options.find((option) => option.kind === "allow_once");
-    if (!allow) return undefined;
-    const current = await findTask(taskId, root);
     const requestKind = permissionSubjectKind(request.subject);
-    if (current?.autoApproveRemaining && requestKind !== "usage-cap") return allow.optionId;
+    const allow = request.options.find((option) => option.kind === "allow_once");
+    if (!allow && requestKind !== "usage-hard-cap") return undefined;
+    const current = await findTask(taskId, root);
+    if (allow && current?.autoApproveRemaining && requestKind !== "usage-cap" && requestKind !== "usage-hard-cap") return allow.optionId;
     const id = randomUUID();
     const pending: PendingTaskApproval = {
       id,
       title: request.title.slice(0, 500),
       description: request.description?.slice(0, 4000),
       subject: boundedJson(request.subject),
-      allowOnceOptionId: allow.optionId,
+      allowOnceOptionId: allow?.optionId ?? "",
       requestedAt: new Date().toISOString(),
     };
     await updateTask(taskId, { status: "awaiting-approval", pendingApproval: pending }, root);
     notifySse();
     return new Promise((resolve) => {
-      const waiter = { taskId, optionId: allow.optionId, resolve };
+      const waiter = { taskId, optionId: allow?.optionId ?? "", resolve };
       approvalWaiters.set(id, waiter);
       const signal = activeRuns.get(taskId)?.controller.signal;
       if (signal?.aborted) {
@@ -1622,6 +1626,8 @@ button.chip{background:rgba(255,255,255,.04);color:#d7e3f4;border:1px solid var(
 .composer{padding:12px 18px;border-top:1px solid var(--line);background:rgba(8,6,18,.55);flex-shrink:0}
 .composer-bar{display:flex;gap:10px;align-items:center;margin-bottom:7px;font-size:12px;color:var(--muted);flex-wrap:wrap}
 .composer-bar select{width:auto;padding:4px 8px;font-size:12px;background:#131c2b}
+.cheap-toggle{display:flex;align-items:center;gap:6px;margin:0;color:var(--text);font-weight:650}
+.cheap-toggle input{width:auto}
 .composer-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:stretch}
 .composer-row textarea{min-height:46px;max-height:140px;margin:0}
 .composer-row button{padding:0 18px}
@@ -1777,6 +1783,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;font:12.5px/1.45 "JetBrains Mono
             <select name="botId" id="botSelect" required></select>
             <span>Auto-Review by:</span>
             <select name="reviewerBotId" id="reviewerSelect"><option value="">No automatic review</option></select>
+            <label class="cheap-toggle" for="cheapModeToggle"><input type="checkbox" id="cheapModeToggle"> Cheap mode</label>
             <span id="taskStatus" class="status"></span>
           </div>
           <div class="composer-row">
@@ -1972,7 +1979,7 @@ function hiddenPath(p){return String(p||'').replace(/\\\\/g,'/').split('/').some
 function visibleFiles(files){return (files||[]).filter(f=>!hiddenPath(f.path))}
 function orbClass(bot,tasks){const t=tasks.find(x=>x.botId===bot.id&&['queued','running','awaiting-approval'].includes(x.status));if(!t)return 'orb idle';if(t.status==='awaiting-approval')return 'orb wait';if((t.events||[]).length)return 'orb tool';return 'orb thinking'}
 function pendingApprovals(){return (state.tasks||[]).filter(t=>t.pendingApproval)}
-function approvalCard(t,p){const title=String(p.title||'').toLowerCase();const risk=/delete|shell|browser|mouse|key/.test(title)?'High':'Normal';const bot=state.bots.find(x=>x.id===t.botId);const preview=p.description?'<pre>'+esc(typeof p.description==='string'?p.description:JSON.stringify(p.description,null,2))+'</pre>':'';const opts=projectBots().filter(b=>b.id!==t.botId).map(b=>'<option value="'+esc(b.id)+'">'+esc(b.name)+'</option>').join('');const usageCap=p.subject&&p.subject.kind==='usage-cap';const allowLabel=usageCap?'Continue':'Allow once <span class="kbd">⌘↵</span>';const denyLabel=usageCap?'Leave paused':'Deny <span class="kbd">Esc</span>';const alwaysBtn=usageCap?'':'<button type="button" class="secondary" data-appr="always" data-tid="'+esc(t.id)+'" data-req="'+esc(p.id)+'">Always for task</button>';const redirect=usageCap?'':'<div class="row mt-sm"><select data-redirect-select="'+esc(t.id)+'"><option value="">Redirect to…</option>'+opts+'</select><button type="button" class="secondary" data-appr="redirect" data-tid="'+esc(t.id)+'" data-req="'+esc(p.id)+'">Redirect</button></div>';return '<div class="approval" role="alertdialog" aria-label="Approval needed"><h3>'+esc(p.title||'Permission requested')+'</h3><div class="meta mb-sm">Bot: '+esc(bot?.name||t.botId)+' · Action: '+esc(p.title||'')+(usageCap?'':' · Risk: '+risk)+'</div>'+preview+'<div class="row"><button type="button" data-appr="allow-once" data-tid="'+esc(t.id)+'" data-req="'+esc(p.id)+'">'+allowLabel+'</button>'+alwaysBtn+'<button type="button" class="danger" data-appr="cancelled" data-tid="'+esc(t.id)+'" data-req="'+esc(p.id)+'">'+denyLabel+'</button></div>'+redirect+'</div>'}
+function approvalCard(t,p){const title=String(p.title||'').toLowerCase();const risk=/delete|shell|browser|mouse|key/.test(title)?'High':'Normal';const bot=state.bots.find(x=>x.id===t.botId);const preview=p.description?'<pre>'+esc(typeof p.description==='string'?p.description:JSON.stringify(p.description,null,2))+'</pre>':'';const opts=projectBots().filter(b=>b.id!==t.botId).map(b=>'<option value="'+esc(b.id)+'">'+esc(b.name)+'</option>').join('');const kind=p.subject&&p.subject.kind;const usageCap=kind==='usage-cap';const hardCap=kind==='usage-hard-cap';const allowLabel=usageCap?'Continue':'Allow once <span class="kbd">⌘↵</span>';const denyLabel=(usageCap||hardCap)?'Leave paused':'Deny <span class="kbd">Esc</span>';const allowBtn=hardCap?'':'<button type="button" data-appr="allow-once" data-tid="'+esc(t.id)+'" data-req="'+esc(p.id)+'">'+allowLabel+'</button>';const alwaysBtn=(usageCap||hardCap)?'':'<button type="button" class="secondary" data-appr="always" data-tid="'+esc(t.id)+'" data-req="'+esc(p.id)+'">Always for task</button>';const redirect=(usageCap||hardCap)?'':'<div class="row mt-sm"><select data-redirect-select="'+esc(t.id)+'"><option value="">Redirect to…</option>'+opts+'</select><button type="button" class="secondary" data-appr="redirect" data-tid="'+esc(t.id)+'" data-req="'+esc(p.id)+'">Redirect</button></div>';return '<div class="approval" role="alertdialog" aria-label="Approval needed"><h3>'+esc(p.title||'Permission requested')+'</h3><div class="meta mb-sm">Bot: '+esc(bot?.name||t.botId)+' · Action: '+esc(p.title||'')+(usageCap||hardCap?'':' · Risk: '+risk)+'</div>'+preview+'<div class="row">'+allowBtn+alwaysBtn+'<button type="button" class="danger" data-appr="cancelled" data-tid="'+esc(t.id)+'" data-req="'+esc(p.id)+'">'+denyLabel+'</button></div>'+redirect+'</div>'}
 function bindApprovals(){document.querySelectorAll('[data-appr]').forEach(el=>el.addEventListener('click',async e=>{e.stopPropagation();const decision=el.dataset.appr;const body={requestId:el.dataset.req,decision,approved:decision==='allow-once'||decision==='always'};if(decision==='redirect'){const sel=document.querySelector('[data-redirect-select="'+el.dataset.tid+'"]');body.redirectBotId=sel&&sel.value}try{await api('/api/tasks/'+encodeURIComponent(el.dataset.tid)+'/approval',body);await load()}catch(err){alert(err.message)}}))}
 function channelDrafts(){return (state.channelLog||[]).filter(m=>m.direction==='out'&&m.status==='draft')}
 function draftCard(m){const bot=state.bots.find(b=>b.id===m.botId);return '<div class="approval" role="alertdialog" aria-label="Reply draft"><h3>Send '+esc(m.channel)+' reply?</h3><div class="meta mb-sm">'+(bot?esc(bot.name)+' · ':'')+esc(m.destination)+'</div><pre>'+esc(m.text||'')+'</pre><div class="row"><button type="button" data-draft="allow" data-draft-id="'+esc(m.id)+'">Send reply</button><button type="button" class="danger" data-draft="deny" data-draft-id="'+esc(m.id)+'">Do not send</button></div></div>'}
@@ -2021,10 +2028,10 @@ function renderUsage(pBots){
   }).join('')||'<div class="meta">No model calls yet.</div>';
   const priceRows=prices.map(p=>'<div class="nav-item"><div class="nav-main"><strong>'+esc(p.model)+'</strong><div class="meta">$'+esc(String(p.inputPerMillion))+' in / $'+esc(String(p.outputPerMillion))+' out per 1M tokens</div></div><button type="button" class="ghost" data-price-remove="'+esc(p.model)+'">Remove</button></div>').join('')||'<div class="meta">No prices entered.</div>';
   const day=caps.perDay||{};
-  const capList=(caps.perBot||[]).map(c=>'<div class="meta">'+esc(botName(c.botId))+(c.maxTokens!==undefined?' · '+esc(String(c.maxTokens))+' tokens':'')+(c.maxCostUsd!==undefined?' · $'+esc(String(c.maxCostUsd))+' cost':'')+'</div>').join('')||'<div class="meta">No bot caps.</div>';
+  const capText=c=>{const bits=[];if(!c)return '';if(c.maxTokens!==undefined)bits.push(c.maxTokens+' token ask cap');if(c.maxCostUsd!==undefined)bits.push('$'+c.maxCostUsd+' cost ask cap');if(c.softMaxTokens!==undefined)bits.push(c.softMaxTokens+' soft token cap');if(c.softMaxCostUsd!==undefined)bits.push('$'+c.softMaxCostUsd+' soft cost cap');if(c.hardMaxTokens!==undefined)bits.push(c.hardMaxTokens+' hard token cap');if(c.hardMaxCostUsd!==undefined)bits.push('$'+c.hardMaxCostUsd+' hard cost cap');return bits.join(' · ')};const capList=(caps.perDay&&capText(caps.perDay)?'<div class="meta">Today · '+esc(capText(caps.perDay))+'</div>':'')+(caps.perBot||[]).map(c=>'<div class="meta">'+esc(botName(c.botId))+(capText(c)?' · '+esc(capText(c)):'')+'</div>').join('')||'<div class="meta">No bot caps.</div>';
   const botOptions=pBots.map(b=>'<option value="'+esc(b.id)+'">'+esc(b.name)+'</option>').join('');
   const botRows=(usage.byBot||[]).map(b=>usageRow(botName(b.key),b)).join('')||'<div class="meta">No bot usage yet.</div>';
-  box.innerHTML=usageRow('Today',usage.today)+'<h3>Per bot</h3>'+botRows+(tasks?'<h3>Per task</h3>'+tasks:'')+'<h3>Recent calls</h3>'+recent+'<h3>Prices</h3><p class="meta">Enter USD per 1M tokens. Local models stay at the $0 default until you enter a price. A call with no matching price stays labeled no price entered.</p>'+priceRows+'<form id="usagePriceForm" class="mt-sm"><label>Model id<input name="model" required placeholder="openai/gpt-4.1 or a local model id"></label><label>Input USD per 1M<input name="inputPerMillion" type="number" min="0" step="any" required></label><label>Output USD per 1M<input name="outputPerMillion" type="number" min="0" step="any" required></label><button type="submit">Save price</button></form><h3>Caps</h3><p class="meta">A cap pauses before the next model call and asks you. It does not stop an edit that already started. Always for task does not skip this question.</p>'+capList+'<form id="usageCapForm"><label>Per-day token cap<input name="dayTokens" type="number" min="0" step="1" value="'+(day.maxTokens??'')+'" placeholder="blank means no cap"></label><label>Per-day cost cap USD<input name="dayCost" type="number" min="0" step="any" value="'+(day.maxCostUsd??'')+'" placeholder="blank means no cap"></label><label>Bot<select name="botId"><option value="">No bot cap</option>'+botOptions+'</select></label><label>Bot token cap<input name="botTokens" type="number" min="0" step="1" placeholder="blank means no cap"></label><label>Bot cost cap USD<input name="botCost" type="number" min="0" step="any" placeholder="blank means no cap"></label><button type="submit">Save caps</button></form><div id="usageStatus" class="status"></div>';
+  box.innerHTML=usageRow('Today',usage.today)+'<h3>Per bot</h3>'+botRows+(tasks?'<h3>Per task</h3>'+tasks:'')+'<h3>Recent calls</h3>'+recent+'<h3>Prices</h3><p class="meta">Enter USD per 1M tokens. Local models stay at the $0 default until you enter a price. A call with no matching price stays labeled no price entered.</p>'+priceRows+'<form id="usagePriceForm" class="mt-sm"><label>Model id<input name="model" required placeholder="openai/gpt-4.1 or a local model id"></label><label>Input USD per 1M<input name="inputPerMillion" type="number" min="0" step="any" required></label><label>Output USD per 1M<input name="outputPerMillion" type="number" min="0" step="any" required></label><button type="submit">Save price</button></form><h3>Caps</h3><p class="meta">A soft cap asks before the next model call. A hard cap pauses and does not offer continue. Neither stops an edit that already started. Always for task does not skip a soft cap or a hard cap. A projected cost is estimated from input characters and labeled estimated. A missing price stays no price entered.</p>'+capList+'<form id="usageCapForm"><label>Per-day token ask cap<input name="dayTokens" type="number" min="0" step="1" value="'+(day.maxTokens??'')+'" placeholder="blank means no cap"></label><label>Per-day cost ask cap USD<input name="dayCost" type="number" min="0" step="any" value="'+(day.maxCostUsd??'')+'" placeholder="blank means no cap"></label><label>Soft per-day token cap<input name="daySoftTokens" type="number" min="0" step="1" value="'+(day.softMaxTokens??'')+'" placeholder="asks, blank means no cap"></label><label>Soft per-day cost cap USD<input name="daySoftCost" type="number" min="0" step="any" value="'+(day.softMaxCostUsd??'')+'" placeholder="asks, blank means no cap"></label><label>Hard per-day token cap<input name="dayHardTokens" type="number" min="0" step="1" value="'+(day.hardMaxTokens??'')+'" placeholder="pauses, blank means no cap"></label><label>Hard per-day cost cap USD<input name="dayHardCost" type="number" min="0" step="any" value="'+(day.hardMaxCostUsd??'')+'" placeholder="pauses, blank means no cap"></label><label>Bot<select name="botId"><option value="">No bot cap</option>'+botOptions+'</select></label><label>Bot token ask cap<input name="botTokens" type="number" min="0" step="1" placeholder="blank means no cap"></label><label>Bot cost ask cap USD<input name="botCost" type="number" min="0" step="any" placeholder="blank means no cap"></label><label>Bot soft token cap<input name="botSoftTokens" type="number" min="0" step="1" placeholder="asks, blank means no cap"></label><label>Bot soft cost cap USD<input name="botSoftCost" type="number" min="0" step="any" placeholder="asks, blank means no cap"></label><label>Bot hard token cap<input name="botHardTokens" type="number" min="0" step="1" placeholder="pauses, blank means no cap"></label><label>Bot hard cost cap USD<input name="botHardCost" type="number" min="0" step="any" placeholder="pauses, blank means no cap"></label><button type="submit">Save caps</button></form><div id="usageStatus" class="status"></div>';
   box.querySelectorAll('[data-price-remove]').forEach(el=>el.addEventListener('click',async()=>{
     try{await api('/api/settings',{modelPrices:prices.filter(p=>p.model!==el.dataset.priceRemove)});lastUsageSig='';await load()}catch(err){const status=document.querySelector('#usageStatus');if(status)status.textContent=err.message}
   }));
@@ -2040,24 +2047,30 @@ function renderUsage(pBots){
   if(capForm)capForm.addEventListener('submit',async e=>{
     e.preventDefault();
     const f=new FormData(e.target);
-    const dayTokens=String(f.get('dayTokens')||'');
-    const dayCost=String(f.get('dayCost')||'');
+    const num=(name)=>String(f.get(name)||'');
+    const fill=(target,name,key)=>{const raw=num(name);if(raw!=='')target[key]=Number(raw)};
     const perDay={};
-    if(dayTokens!=='')perDay.maxTokens=Number(dayTokens);
-    if(dayCost!=='')perDay.maxCostUsd=Number(dayCost);
+    fill(perDay,'dayTokens','maxTokens');
+    fill(perDay,'dayCost','maxCostUsd');
+    fill(perDay,'daySoftTokens','softMaxTokens');
+    fill(perDay,'daySoftCost','softMaxCostUsd');
+    fill(perDay,'dayHardTokens','hardMaxTokens');
+    fill(perDay,'dayHardCost','hardMaxCostUsd');
     const botId=String(f.get('botId')||'');
     let perBot=(caps.perBot||[]).slice();
     if(botId){
-      const botTokens=String(f.get('botTokens')||'');
-      const botCost=String(f.get('botCost')||'');
       const entry={botId};
-      if(botTokens!=='')entry.maxTokens=Number(botTokens);
-      if(botCost!=='')entry.maxCostUsd=Number(botCost);
+      fill(entry,'botTokens','maxTokens');
+      fill(entry,'botCost','maxCostUsd');
+      fill(entry,'botSoftTokens','softMaxTokens');
+      fill(entry,'botSoftCost','softMaxCostUsd');
+      fill(entry,'botHardTokens','hardMaxTokens');
+      fill(entry,'botHardCost','hardMaxCostUsd');
       perBot=perBot.filter(item=>item.botId!==botId);
-      if(entry.maxTokens!==undefined||entry.maxCostUsd!==undefined)perBot.push(entry);
+      if(Object.keys(entry).length>1)perBot.push(entry);
     }
     const body={perBot};
-    if(perDay.maxTokens!==undefined||perDay.maxCostUsd!==undefined)body.perDay=perDay;
+    if(Object.keys(perDay).length)body.perDay=perDay;
     try{await api('/api/settings',{usageCaps:body});lastUsageSig='';const status=document.querySelector('#usageStatus');if(status)status.textContent='Caps saved.';await load()}catch(err){const status=document.querySelector('#usageStatus');if(status)status.textContent=err.message}
   });
 }
@@ -2276,7 +2289,7 @@ function draw(){
   const pBots=projectBots();
   const pTasks=projectTasks();
   const select=document.querySelector('#botSelect'),reviewerSelect=document.querySelector('#reviewerSelect'),chosenBot=select.value,chosenReviewer=reviewerSelect.value;
-  const sidebarSig=JSON.stringify([activeWorkspace,conversationBot,selected,chosenBot,projects.map(p=>[p.workspace,p.name]),pBots.map(b=>[b.id,b.name,b.role]),pTasks.map(t=>[t.id,t.botId,t.status,t.prompt])]);
+  const sidebarSig=JSON.stringify([activeWorkspace,conversationBot,selected,chosenBot,projects.map(p=>[p.workspace,p.name]),pBots.map(b=>[b.id,b.name,b.role,b.routeMode||'auto']),pTasks.map(t=>[t.id,t.botId,t.status,t.prompt])]);
 
   if(sidebarSig!==lastSidebarSig){
     lastSidebarSig=sidebarSig;
@@ -2307,6 +2320,12 @@ function draw(){
     select.innerHTML=pBots.map(b=>'<option value="'+esc(b.id)+'">'+roleIcon(b.role)+' '+esc(b.name)+' ('+esc(roleFriendly(b.role))+')</option>').join('');
     if(conversationBot&&pBots.some(b=>b.id===conversationBot))select.value=conversationBot;
     else if(pBots.some(b=>b.id===chosenBot))select.value=chosenBot;
+    const cheapBox=document.querySelector('#cheapModeToggle');
+    if(cheapBox){
+      const cheapBot=pBots.find(b=>b.id===select.value);
+      cheapBox.checked=cheapBot?.routeMode==='cheap';
+      cheapBox.dataset.botId=cheapBot?.id||'';
+    }
 
     const primary=pBots.find(b=>b.id===select.value);
     const reviewers=pBots.filter(b=>(b.role==='qa'||b.role==='security')&&b.id!==primary?.id);
@@ -2782,6 +2801,14 @@ document.querySelector('#botForm').addEventListener('submit',async e=>{
   }catch(err){document.querySelector('#botStatus').textContent=err.message}
 });
 
+document.querySelector('#cheapModeToggle')?.addEventListener('change',async e=>{
+  const botId=e.target.dataset.botId;
+  if(!botId){e.target.checked=false;document.querySelector('#taskStatus').textContent='Choose a bot before turning on cheap mode.';return}
+  try{
+    await api('/api/bots/'+encodeURIComponent(botId),{routeMode:e.target.checked?'cheap':'auto'});
+    await load();
+  }catch(err){e.target.checked=!e.target.checked;document.querySelector('#taskStatus').textContent=err.message}
+});
 document.querySelector('#promptInput').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();document.querySelector('#taskForm').requestSubmit()}});
 document.querySelector('#taskForm').addEventListener('submit',async e=>{
   e.preventDefault();
@@ -2858,7 +2885,7 @@ window.addEventListener('keydown',e=>{
   if(paletteVisible())return;
   const pending=pendingApprovals()[0];
   if(!pending?.pendingApproval)return;
-  if((e.metaKey||e.ctrlKey)&&e.key==='Enter'){e.preventDefault();api('/api/tasks/'+encodeURIComponent(pending.id)+'/approval',{requestId:pending.pendingApproval.id,decision:'allow-once',approved:true}).then(load).catch(err=>alert(err.message))}
+  if((e.metaKey||e.ctrlKey)&&e.key==='Enter'){e.preventDefault();if(pending.pendingApproval.subject&&pending.pendingApproval.subject.kind==='usage-hard-cap')return;api('/api/tasks/'+encodeURIComponent(pending.id)+'/approval',{requestId:pending.pendingApproval.id,decision:'allow-once',approved:true}).then(load).catch(err=>alert(err.message))}
   if(e.key==='Escape'&&!['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName)){e.preventDefault();api('/api/tasks/'+encodeURIComponent(pending.id)+'/approval',{requestId:pending.pendingApproval.id,decision:'cancelled',approved:false}).then(load).catch(err=>alert(err.message))}
 });
 async function showHealth(){

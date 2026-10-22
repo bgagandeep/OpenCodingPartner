@@ -11,11 +11,13 @@ import {
   botRuntimeLabel,
   computerKeyboard,
   computerMouse,
+  computerOpenBrowser,
   createBot,
   createTask,
   defaultBotInstructions,
   deleteBot,
   deleteTask,
+  dockerDaemonAvailable,
   findBot,
   findTask,
   isOcpAgentRuntime,
@@ -862,15 +864,15 @@ test("workspace MCP server supports persistent memory, bounded task history reca
     assert.equal(recursiveCall.isError, true);
     assert.match(recursiveCall.content[0]?.text ?? "", /cannot call another discovery tool/);
 
-    // 4. Virtual computer MCP tools: computer_screen, computer_mouse, computer_keyboard
+    // 4. Virtual computer MCP tools fail closed when Xvnc/display is missing (no fake screenshots).
     const screenRes = (
       await rpc("tools/call", {
         name: "computer_screen",
         arguments: {},
       })
     ).result as { isError?: boolean; content: Array<{ text: string }> };
-    assert.equal(Boolean(screenRes.isError), false);
-    assert.match(screenRes.content[0]?.text ?? "", /gtm\/last-frame\.png/);
+    assert.equal(screenRes.isError, true);
+    assert.match(screenRes.content[0]?.text ?? "", /not available|not invent a screenshot/i);
 
     const mouseRes = (
       await rpc("tools/call", {
@@ -878,8 +880,7 @@ test("workspace MCP server supports persistent memory, bounded task history reca
         arguments: { action: "move", x: 500, y: 350 },
       })
     ).result as { isError?: boolean; content: Array<{ text: string }> };
-    assert.equal(Boolean(mouseRes.isError), false);
-    assert.match(mouseRes.content[0]?.text ?? "", /500/);
+    assert.equal(mouseRes.isError, true);
 
     const keyRes = (
       await rpc("tools/call", {
@@ -887,7 +888,7 @@ test("workspace MCP server supports persistent memory, bounded task history reca
         arguments: { action: "key", key: "Return" },
       })
     ).result as { isError?: boolean; content: Array<{ text: string }> };
-    assert.equal(Boolean(keyRes.isError), false);
+    assert.equal(keyRes.isError, true);
   } finally {
     rl.close();
     child.kill();
@@ -944,42 +945,31 @@ test("Lead Orchestrator bot creates other bots, manages the fleet, delegates wor
       OCP_DISABLE_LOCAL_OLLAMA: "1",
     };
 
-    // 2. Ask Ada (Lead Bot) in natural language to create two specialist bots: Linus (coding) and Grace (qa)
-    const createTurn = await runBotSession(ada, "Create a coding bot named Linus and a QA bot named Grace", {
+    // 2. Offline/no-model mode must not keyword-guess fleet changes (repro: "remove Linus" used to delete a bot).
+    const offlineTurn = await runBotSession(ada, "remove Linus changes from the diff", {
       dataDir,
       env: runEnv,
     });
-    assert.match(createTurn.result, /Linus/);
-    assert.match(createTurn.result, /Grace/);
+    assert.match(offlineTurn.result, /No model is configured/i);
+    assert.equal((await listBots(dataDir)).length, 1);
+    assert.equal((await listBots(dataDir))[0]?.name, "Ada");
 
-    const botsAfterCreate = await listBots(dataDir);
-    assert.equal(botsAfterCreate.some((b) => b.name === "Linus" && b.role === "coding"), true);
-    assert.equal(botsAfterCreate.some((b) => b.name === "Grace" && b.role === "qa"), true);
-
-    // 3. Ask Ada to spin up the rest of the full starter team
-    const swarmTurn = await runBotSession(ada, "Spin up a full team of bots", {
+    const qaHandoff = await runBotSession(ada, "Review the work completed by Coder. Implementation agent report: wrote hello.txt", {
       dataDir,
       env: runEnv,
     });
-    assert.match(swarmTurn.result, /Sentinel/);
-    assert.match(swarmTurn.result, /Atlas/);
+    assert.match(qaHandoff.result, /No model is configured/i);
+    assert.doesNotMatch(qaHandoff.result, /No blocking security or regression defects detected/);
+    assert.equal((await listBots(dataDir)).length, 1);
+
+    // 3. Human API still creates the rest of the fleet (bot tools are not guessed without a model).
+    const teamRes = await fetch(`${app.url}/api/bootstrap`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-ocp-token": token },
+      body: JSON.stringify({ mode: "team", workspace }),
+    });
+    assert.equal(teamRes.status, 200);
     assert.equal((await listBots(dataDir)).length, 5);
-
-    // 4. Ask Ada to delegate a task to Linus to read README.md
-    const delegateTurn = await runBotSession(ada, "Ask Linus to read README.md", {
-      dataDir,
-      env: runEnv,
-    });
-    assert.match(delegateTurn.result, /Delegated to \*\*Linus\*\*/);
-    assert.match(delegateTurn.result, /Hello from OpenCodingPartner Swarm!/);
-
-    // 5. Ask Ada to delete bot Sentinel and list remaining bots
-    const deleteTurn = await runBotSession(ada, "Delete bot Sentinel", {
-      dataDir,
-      env: runEnv,
-    });
-    assert.match(deleteTurn.result, /Deleted bot \*\*Sentinel\*\*/);
-    assert.equal((await listBots(dataDir)).length, 4);
 
     // 6. Verify /api/settings saves and applies provider keys without server restart
     const saveSettingsRes = await fetch(`${app.url}/api/settings`, {
@@ -1021,7 +1011,7 @@ test("Lead Orchestrator bot creates other bots, manages the fleet, delegates wor
     assert.equal(projData.ok, true);
     assert.equal(projData.project.name, "Second Product");
     assert.equal(projData.bots.length, 5);
-    assert.equal((await listBots(dataDir, workspace)).length, 4);
+    assert.equal((await listBots(dataDir, workspace)).length, 5);
     assert.equal((await listBots(dataDir, secondWorkspace)).length, 5);
 
     // 8. Verify Virtual Computer human takeover blocks bot actions while allowing human actions, then returns control
@@ -1032,17 +1022,121 @@ test("Lead Orchestrator bot creates other bots, manages the fleet, delegates wor
     assert.equal(blockedBotMouse.ok, false);
     assert.match(blockedBotMouse.detail, /held by human takeover/);
     const allowedHumanMouse = await computerMouse(workspace, { action: "click", x: 200, y: 200, actor: "human" });
-    assert.equal(allowedHumanMouse.ok, true);
+    if (!allowedHumanMouse.ok) {
+      assert.match(allowedHumanMouse.detail, /not available|not invent|failed/i);
+    }
     const allowedHumanKey = await computerKeyboard(workspace, { action: "type", text: "hello", actor: "human" });
-    assert.equal(allowedHumanKey.ok, true);
+    if (!allowedHumanKey.ok) {
+      assert.match(allowedHumanKey.detail, /not available|not invent|failed|must be 1 to 2,000/i);
+    }
     const returned = await setComputerControl(workspace, "return");
     assert.equal(returned.control, "partner");
-    assert.equal(returned.status, "live");
     const allowedBotMouseAfter = await computerMouse(workspace, { action: "click", x: 200, y: 200, actor: "partner" });
-    assert.equal(allowedBotMouseAfter.ok, true);
+    assert.doesNotMatch(allowedBotMouseAfter.detail, /held by human takeover/);
   } finally {
     await stopComputerDesktop(workspace).catch(() => undefined);
     await app.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("bots cannot set host isolation or escape approved workspace roots; docker isolation fails closed", async () => {
+  const root = await makeTempDir("ocp-safety-isolation-");
+  const workspace = path.join(root, "ws");
+  const outside = path.join(root, "outside");
+  await mkdir(workspace, { recursive: true });
+  await mkdir(outside, { recursive: true });
+  try {
+    const humanBot = await createBot(
+      {
+        name: "Lead",
+        role: "general",
+        runtime: "ocp-agent",
+        isolation: "host",
+        workspace,
+        instructions: defaultBotInstructions("general"),
+      },
+      root,
+      { actor: "human" },
+    );
+    await assert.rejects(
+      () =>
+        createBot(
+          {
+            name: "Escape",
+            role: "coding",
+            runtime: "ocp-agent",
+            isolation: "host",
+            workspace: outside,
+            instructions: defaultBotInstructions("coding"),
+          },
+          root,
+          { actor: "bot", allowNewRoot: false },
+        ),
+      /Host isolation can only be set by a human/,
+    );
+    await assert.rejects(
+      () =>
+        createBot(
+          {
+            name: "Escape",
+            role: "coding",
+            runtime: "ocp-agent",
+            isolation: "docker",
+            workspace: outside,
+            instructions: defaultBotInstructions("coding"),
+          },
+          root,
+          { actor: "bot", allowNewRoot: false },
+        ),
+      /approved project root/,
+    );
+    await assert.rejects(
+      () => updateBot(humanBot.id, { isolation: "docker" }, root, { actor: "bot" }),
+      /cannot change another bot's isolation/,
+    );
+
+    const dockerBot = await createBot(
+      {
+        name: "Boxed",
+        role: "general",
+        runtime: "ocp-agent",
+        isolation: "docker",
+        workspace,
+        instructions: defaultBotInstructions("general"),
+      },
+      root,
+    );
+    await assert.rejects(
+      () =>
+        runBotSession(dockerBot, "hello", {
+          dataDir: root,
+          env: { ...process.env, PATH: path.dirname(process.execPath), OCP_DATA_DIR: root },
+        }),
+      /Docker isolation is configured but Docker is not available/,
+    );
+    assert.equal(typeof dockerDaemonAvailable(), "boolean");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Chrome profile lives outside the workspace and browser fails without a display", async () => {
+  const root = await makeTempDir("ocp-chrome-profile-");
+  const workspace = path.join(root, "ws");
+  await mkdir(workspace, { recursive: true });
+  const previousPath = process.env.PATH;
+  process.env.PATH = "";
+  try {
+    const result = await computerOpenBrowser(workspace, "https://example.com/", "human");
+    assert.equal(result.ok, false);
+    assert.match(result.detail, /not available|No Chrome|not invent/i);
+    const workspaceProfile = path.join(workspace, ".ocp", "chrome-profile");
+    await assert.rejects(() => readFile(path.join(workspaceProfile, "Local State"), "utf8"), /ENOENT/);
+  } finally {
+    if (previousPath === undefined) delete process.env.PATH;
+    else process.env.PATH = previousPath;
+    await stopComputerDesktop(workspace).catch(() => undefined);
     await rm(root, { recursive: true, force: true });
   }
 });

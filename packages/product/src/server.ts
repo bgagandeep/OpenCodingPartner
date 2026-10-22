@@ -593,13 +593,24 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
       const requestId = typeof body.requestId === "string" ? body.requestId : "";
       const approved = body.approved === true;
       const waiter = approvalWaiters.get(requestId);
-      if (!task?.pendingApproval || task.pendingApproval.id !== requestId || waiter?.taskId !== taskId) {
+      if (!task?.pendingApproval || task.pendingApproval.id !== requestId) {
+        sendJson(response, 409, { error: "That approval request is no longer pending." });
+        return;
+      }
+      if (waiter && waiter.taskId !== taskId) {
         sendJson(response, 409, { error: "That approval request is no longer pending." });
         return;
       }
       approvalWaiters.delete(requestId);
+      await recordTaskApproval(taskId, {
+        title: task.pendingApproval.title,
+        description: task.pendingApproval.description,
+        decision: approved ? "allow-once" : "cancelled",
+        createdAt: new Date().toISOString(),
+        requestId,
+      }, root);
       await updateTask(taskId, { status: "running", pendingApproval: undefined }, root);
-      waiter.resolve(approved ? waiter.optionId : undefined);
+      waiter?.resolve(approved ? waiter.optionId : undefined);
       sendJson(response, 200, { ok: true });
       return;
     }
@@ -671,6 +682,7 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
           const result = await runBotSession(agent, agentPrompt, {
             env,
             dataDir: root,
+            taskId,
             signal: controller.signal,
             onUpdate: (update) => {
               if (update.kind === "agent_message_chunk" && update.text) {

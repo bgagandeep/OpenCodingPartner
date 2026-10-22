@@ -37,6 +37,7 @@ import {
   runBotSession,
   updateBot,
   updateBotSession,
+  waitForRecordedApproval,
   validBotNetworkMode,
   validBotProvider,
   validBotRole,
@@ -340,7 +341,7 @@ async function executeToolCall(root: string, name: string, args: Record<string, 
   }
   if (name === "swarm_setup") {
     try {
-      const res = await bootstrapFleet(root, "team", dataDir);
+      const res = await bootstrapFleet(root, "team", dataDir, { isolation: "docker" });
       return mcpToolResult({
         ok: true,
         detail: JSON.stringify(
@@ -364,7 +365,10 @@ async function executeToolCall(root: string, name: string, args: Record<string, 
     const role: BotRole = validBotRole(rawRole) ? rawRole : "general";
     const rawRuntime = typeof args.runtime === "string" ? args.runtime.trim().toLowerCase() : role === "coding" ? "ocp-coder" : "ocp-agent";
     const runtime: BotRuntime = validBotRuntime(rawRuntime) ? rawRuntime : "ocp-agent";
-    const isolation: BotIsolation = args.isolation === "docker" ? "docker" : "host";
+    if (args.isolation === "host") {
+      return mcpToolResult({ ok: false, detail: "Host isolation can only be set by a human. Created bots use Docker isolation." });
+    }
+    const isolation: BotIsolation = "docker";
     const network: BotNetworkMode = validBotNetworkMode(String(args.network ?? "disabled")) ? (args.network as BotNetworkMode) : "disabled";
     const rawProvider: BotProvider | undefined = typeof args.provider === "string" && validBotProvider(args.provider) ? args.provider : undefined;
     const providerKeyAvailable = rawProvider === "openrouter"
@@ -396,6 +400,7 @@ async function executeToolCall(root: string, name: string, args: Record<string, 
           instructions,
         },
         dataDir,
+        { allowNewRoot: false, actor: "bot" },
       );
       return mcpToolResult({ ok: true, detail: JSON.stringify({ ok: true, bot }, null, 2) });
     } catch (error) {
@@ -410,7 +415,9 @@ async function executeToolCall(root: string, name: string, args: Record<string, 
     if (typeof args.name === "string" && args.name.trim()) patch.name = args.name.trim();
     if (typeof args.role === "string" && validBotRole(args.role)) patch.role = args.role;
     if (typeof args.runtime === "string" && validBotRuntime(args.runtime)) patch.runtime = args.runtime;
-    if (args.isolation === "docker" || args.isolation === "host") patch.isolation = args.isolation;
+    if (args.isolation === "docker" || args.isolation === "host") {
+      return mcpToolResult({ ok: false, detail: "A bot cannot change another bot's isolation. A human must set host isolation explicitly." });
+    }
     if (typeof args.network === "string" && validBotNetworkMode(args.network)) patch.network = args.network;
     if (typeof args.provider === "string") patch.provider = validBotProvider(args.provider) ? args.provider : undefined;
     if (typeof args.model === "string") patch.model = args.model.trim() || undefined;
@@ -418,7 +425,7 @@ async function executeToolCall(root: string, name: string, args: Record<string, 
     if (typeof args.apiKeyEnv === "string") patch.apiKeyEnv = args.apiKeyEnv.trim() || undefined;
     if (typeof args.instructions === "string" && args.instructions.trim()) patch.instructions = args.instructions.trim();
     try {
-      const bot = await updateBot(existing.id, patch, dataDir);
+      const bot = await updateBot(existing.id, patch, dataDir, { actor: "bot" });
       return mcpToolResult({ ok: true, detail: JSON.stringify({ ok: true, bot }, null, 2) });
     } catch (error) {
       return mcpToolResult({ ok: false, detail: error instanceof Error ? error.message : "Could not update bot." });
@@ -447,12 +454,18 @@ async function executeToolCall(root: string, name: string, args: Record<string, 
     const reviewerBot = reviewerRef ? await findBot(reviewerRef, dataDir, root) : undefined;
     try {
       const actionNote = targetBot.role === "coding"
-        ? "\n\nIMPORTANT: Write the actual working code files to the workspace using `workspace_write` or `workspace_patch` (do not stop at an outline or plan)."
+        ? "\n\nIMPORTANT: Write the actual working code files to the workspace using `workspace_write` or `workspace_patch` after the user approves the plan."
         : "";
+      const parentTaskId = process.env.OCP_TASK_ID;
+      const permissionForDelegate = async (req: Parameters<typeof waitForRecordedApproval>[1]) => {
+        if (!parentTaskId) return undefined;
+        return waitForRecordedApproval(parentTaskId, req, dataDir);
+      };
       const primaryRun = await runBotSession(targetBot, `${targetBot.instructions}\n\nDelegated task:\n${delegatedPrompt}${actionNote}`, {
         dataDir,
+        taskId: parentTaskId,
         onSessionReady: (sessionId) => updateBotSession(targetBot.id, sessionId, dataDir),
-        onPermissionRequest: async (req) => req.options.find((o) => o.kind === "allow_once")?.optionId,
+        onPermissionRequest: permissionForDelegate,
       });
       let reviewResult: string | undefined;
       if (reviewerBot) {
@@ -462,8 +475,9 @@ async function executeToolCall(root: string, name: string, args: Record<string, 
             `${reviewerBot.instructions}\n\nReview the work completed by ${targetBot.name} for request:\n${delegatedPrompt}\n\nImplementation report:\n${primaryRun.result}`,
             {
               dataDir,
+              taskId: parentTaskId,
               onSessionReady: (sessionId) => updateBotSession(reviewerBot.id, sessionId, dataDir),
-              onPermissionRequest: async (req) => req.options.find((o) => o.kind === "allow_once")?.optionId,
+              onPermissionRequest: permissionForDelegate,
             },
           );
           reviewResult = reviewRun.result;

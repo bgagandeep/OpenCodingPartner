@@ -15,6 +15,7 @@ Open Coding Partner is a local agentic coding partner. You run it on your machin
 - A hosted account, a public website, or a signup. The server refuses to bind to anything except `127.0.0.1`, `localhost`, or `::1`.
 - A bundled OAuth client. Google and Microsoft connectors use a client you create. See [OAuth setup](oauth-setup.md).
 - Voice, WhatsApp, or a pages surface. Those are still on the roadmap.
+- A computer per bot, a readable audit log, and the rest of the teammate shape. [The path](parity-path.md) lists what is true today and what still has to land before a comparison with another product is fair.
 
 Ads are off. Payments are off. Seats and credit packs in Settings are design only. No charge is made.
 

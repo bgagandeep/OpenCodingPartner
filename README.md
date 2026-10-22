@@ -6,7 +6,7 @@ Teammates powered by **OCP Agent** and **OCP Coder** (optional external ACP bina
 
 The core is free forever and open source. The operator owns the meter. The full coding partner (**OCP Coder**) is included. Seats and credit packs in Settings are design only. Billing is inert. No charge is made. Ads are off. Payments are off in the core.
 
-Start with [Onboarding](docs/onboarding.md). That guide is the first-run path: install, choose a model, spawn a team, and learn the limits. [ARCHITECTURE.md](ARCHITECTURE.md) is the design, and [ROADMAP.md](ROADMAP.md) is what is in this tree and what is still ahead.
+Start with [Onboarding](docs/onboarding.md). That guide is the first-run path: install, choose a model, spawn a team, and learn the limits. [The teammate path](docs/parity-path.md) is what still has to be built before this project is in the same category as other open coworkers. The sentence that is true today is the one in the next paragraphs. [ARCHITECTURE.md](ARCHITECTURE.md) is the design, and [ROADMAP.md](ROADMAP.md) is what is in this tree and what is still ahead.
 
 The app binds to loopback (`127.0.0.1`) only. There is no default model and no hosted signup. You bring an OpenRouter key or a local OpenAI-compatible server. Dark is the first theme. Light and System are in the header.
 

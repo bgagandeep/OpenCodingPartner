@@ -24,12 +24,19 @@ export interface Responsibility {
   createdAt: string;
 }
 
+export interface UiComponent {
+  type: "card" | "diff" | "table";
+  title: string;
+  body: string;
+}
+
 export interface ThreadMessage {
   id: string;
   botId?: string;
   role: "person" | "bot" | "system";
   text: string;
   at: string;
+  components?: UiComponent[];
 }
 
 export interface TeamThread {
@@ -145,12 +152,14 @@ export async function createThread(root: string, botIds: string[], text: string)
   const messages: ThreadMessage[] = [{ id: randomUUID(), role: "person", text: prompt.slice(0, 4_000), at: now }];
   for (const id of ids) {
     const bot = await findBot(id, root);
+    const text = `No model is configured. ${bot?.name ?? "Bot"} is in this thread and will not invent an action.`;
     messages.push({
       id: randomUUID(),
       botId: id,
       role: "bot",
-      text: `No model is configured. ${bot?.name ?? "Bot"} is in this thread and will not invent an action.`,
+      text,
       at: now,
+      components: [{ type: "card", title: bot?.name ?? "Bot", body: text }],
     });
   }
   const thread: TeamThread = { id: randomUUID(), title: prompt.slice(0, 80), botIds: ids, messages, createdAt: now };
@@ -160,7 +169,7 @@ export async function createThread(root: string, botIds: string[], text: string)
   return thread;
 }
 
-export async function reachThread(root: string, threadId: string, channel: "slack" | "telegram", destination: string): Promise<TeamThread> {
+export async function reachThread(root: string, threadId: string, channel: "slack" | "telegram" | "whatsapp", destination: string): Promise<TeamThread> {
   const rows = await listThreads(root);
   const thread = rows.find((item) => item.id === threadId);
   if (!thread) throw new Error("Unknown thread.");

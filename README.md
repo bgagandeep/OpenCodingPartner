@@ -10,7 +10,7 @@ Start with [Onboarding](docs/onboarding.md). That guide is the first-run path: i
 
 The app binds to loopback (`127.0.0.1`) only. There is no default model and no hosted signup. You bring an OpenRouter key or a local OpenAI-compatible server. Dark is the first theme. Light and System are in the header.
 
-A bot can have a computer of its own. Consequential actions are recorded, a person can take the controls, and the model is one you run locally or one you bring. That is the teammate shape. It is not a claim to be another product. The proof list is in [the teammate path](docs/parity-path.md).
+A bot can have a computer of its own. Consequential actions are recorded, a person can take the controls, and the model is one you run locally or one you bring. A foreign agent on this machine, component replies, a local directory, voice transcripts, WhatsApp drafts, and pages are in this tree. That is the teammate shape. The category introduction is in [the teammate path](docs/parity-path.md).
 
 ---
 
@@ -222,6 +222,7 @@ The repository also retains its earlier sandbox and connected-stack CLI (`ocp de
 | LiteLLM | MIT | BerriAI — https://github.com/BerriAI/litellm |
 | Hermes Agent | MIT | Nous Research — https://github.com/NousResearch/hermes-agent — powers the OCP Agent ACP runtime; install separately |
 | OpenBot | MIT | CopilotKit — https://github.com/CopilotKit/OpenBot — the open coworker shape (a computer per coworker, a recorded gate, take the controls) that this project implements in its own code. No OpenBot source is copied. |
+| AG-UI | MIT | Public Agent User Interaction Protocol — https://docs.ag-ui.com — event names and the HTTP event-stream binding. This repository implements that binding in its own code. No protocol SDK is copied. |
 | OpenCodingPartner (OCP Agent & OCP Coder) | Apache-2.0 | OpenCodingPartner contributors |
 
 Full wording is in [NOTICE](NOTICE) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

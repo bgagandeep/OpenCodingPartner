@@ -191,7 +191,7 @@ export interface ChannelOrigin {
 export interface ChannelLogEntry {
   id: string;
   externalId?: string;
-  channel: "slack" | "telegram" | "gmail" | "outlook";
+  channel: "slack" | "telegram" | "gmail" | "outlook" | "whatsapp";
   direction: "in" | "out";
   text: string;
   subject?: string;
@@ -1512,7 +1512,16 @@ export async function runBotSession(
   let resolveChildClose!: (exit: { code: number | null; signal: NodeJS.Signals | null }) => void;
   const childClosePromise = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => { resolveChildClose = resolve; });
   let forceKillTimer: NodeJS.Timeout | undefined;
-  const child = spawn(command, args, { cwd: bot.workspace, env: runtimeEnv, shell: false, stdio: ["pipe", "pipe", "pipe"] });
+  let launchCommand = command;
+  let launchArgs = args;
+  if (!agentRuntime && runtimeEnv.OCP_CODER_CONFINEMENT === "workspace") {
+    const { confineCoderLaunch } = await import("./category.js");
+    const bwrap = (runtimeEnv.PATH ?? "").split(path.delimiter).map((dir) => path.join(dir, "bwrap")).find((candidate) => existsSync(candidate));
+    const confined = confineCoderLaunch({ workspace: bot.workspace, command, args, bwrap });
+    launchCommand = confined.command;
+    launchArgs = confined.args;
+  }
+  const child = spawn(launchCommand, launchArgs, { cwd: bot.workspace, env: runtimeEnv, shell: false, stdio: ["pipe", "pipe", "pipe"] });
   const abortChild = () => {
     if (closed || forceKillTimer) return;
     child.kill("SIGTERM");

@@ -6,7 +6,9 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
+import { resolveAction } from "./action-rules.js";
 import { externalToolNeedsApproval } from "./connectors.js";
+import { appendProductHandoff } from "./index.js";
 import { vaultFillInvocation } from "./vault.js";
 import { accountToolNeedsApproval, accountWriteTool } from "./accounts.js";
 import { listHttpMcpTools, type HttpMcpEndpoint } from "./http-mcp.js";
@@ -889,7 +891,27 @@ export async function runNativeAcpAgent(): Promise<void> {
             const externalTarget = externalToolNeedsApproval(toolName, parsedArgs)
               ? (toolName === "tool_call" && typeof parsedArgs.name === "string" ? parsedArgs.name : toolName)
               : undefined;
-            if (vaultArgs || accountGate || MUTATING_TOOLS.has(toolName) || externalTarget) {
+            const actionName = vaultArgs ? "vault_fill" : accountToolName || externalTarget || toolName;
+            const consequential = Boolean(vaultArgs || accountGate || MUTATING_TOOLS.has(toolName) || externalTarget);
+            const mode = consequential
+              ? await resolveAction(process.env.OCP_DATA_DIR, process.env.OCP_ACTOR_BOT_ID, actionName)
+              : "perform";
+            if (mode === "handoff") {
+              if (process.env.OCP_DATA_DIR) {
+                await appendProductHandoff({
+                  ...(process.env.OCP_ACTOR_BOT_ID ? { botId: process.env.OCP_ACTOR_BOT_ID } : {}),
+                  action: actionName,
+                  summary: `${actionName} was not performed.`,
+                }, process.env.OCP_DATA_DIR);
+              }
+              state.messages.push({
+                role: "tool",
+                tool_call_id: call.id,
+                content: `Handed off ${actionName}. A person needs to do this. It was not performed.`,
+              });
+              continue;
+            }
+            if (mode === "ask") {
               const allowed = await requestPermissionFromClient(
                 vaultArgs ? "Allow vault_fill on the virtual computer keyboard?" : accountGate ? `Allow ${accountToolName} on the connected account?` : externalTarget ? `Allow external MCP tool ${externalTarget}?` : `Allow ${toolName}?`,
                 vaultArgs ? "vault-fill" : accountGate ? "account" : externalTarget ? "external-mcp" : "edit",

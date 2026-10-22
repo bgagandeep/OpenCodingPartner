@@ -24,7 +24,7 @@ Scopes OCP requests:
 
 - `openid` and `email`, so the connected address can be shown
 - `https://www.googleapis.com/auth/gmail.readonly` for Gmail read and search
-- `https://www.googleapis.com/auth/gmail.compose` for Gmail drafts. OCP does not call send
+- `https://www.googleapis.com/auth/gmail.compose` for Gmail drafts. A person sends from a draft card. OCP does not request `gmail.send`
 - `https://www.googleapis.com/auth/calendar.readonly` for Calendar read
 - `https://www.googleapis.com/auth/calendar.events` for Calendar create, which still asks for approval
 - `https://www.googleapis.com/auth/drive.readonly` for Drive search and read
@@ -43,12 +43,13 @@ Scopes OCP requests:
 - `offline_access`, so a refresh token can be stored in the vault
 - `User.Read` for the signed-in address
 - `Mail.Read` for Outlook read and search
-- `Mail.ReadWrite` for Outlook drafts. OCP does not call send
+- `Mail.ReadWrite` for Outlook drafts
+- `Mail.Send` for Outlook send. Only a person sends, from a draft card
 - `Calendars.Read` for Outlook calendar read
 - `Calendars.ReadWrite` for Outlook calendar create, which still asks for approval
 - `Files.Read` for OneDrive search and read
 
-OCP does not request `Mail.Send` or `Files.ReadWrite`.
+OCP does not request `Files.ReadWrite`. Sending mail happens only after a person clicks Send on a draft card.
 
 ## After consent
 

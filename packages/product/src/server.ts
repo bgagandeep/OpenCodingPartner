@@ -28,6 +28,7 @@ import {
   captureWorkspaceBaseline,
   collectWorkspaceChanges,
   appendChannelLog,
+  listProductHandoffs,
   createProductRoutine,
   createTask,
   findChannelExternal,
@@ -77,7 +78,8 @@ import { probeConnectors, publicConnector, upsertConnectorSnapshot, validateConn
 import { usageSnapshot } from "./usage.js";
 import { deleteMcpSecret, listMcpSecretKeys, mcpSecretKey, readMcpSecret, writeMcpSecret } from "./mcp-secrets.js";
 import { createVaultItem, deleteVaultItem, publicVault, VaultError } from "./vault.js";
-import { AccountError, completeAccountLogin, disconnectAccount, GOOGLE_SCOPES, MICROSOFT_SCOPES, publicAccounts, saveAccountClient, startAccountLogin } from "./accounts.js";
+import { parseActionRules } from "./action-rules.js";
+import { AccountError, completeAccountLogin, deliverMailDraft, disconnectAccount, GOOGLE_SCOPES, MICROSOFT_SCOPES, publicAccounts, saveAccountClient, startAccountLogin } from "./accounts.js";
 
 interface AppOptions {
   host?: string;
@@ -213,6 +215,16 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
     if (decision === "deny") {
       await updateChannelLog(id, { status: "denied" }, root);
       return { ok: true, status: "denied" };
+    }
+    if (entry.channel === "gmail" || entry.channel === "outlook") {
+      const posted = await deliverMailDraft(root, entry.channel, entry.destination, entry.subject ?? "", entry.text, env);
+      if (!posted.ok) {
+        const detail = posted.detail ?? "Send failed.";
+        await updateChannelLog(id, { status: "failed", error: detail }, root);
+        return { ok: false, status: "failed", error: detail };
+      }
+      await updateChannelLog(id, { status: "sent" }, root);
+      return { ok: true, status: "sent" };
     }
     const settings = await readProviderSettings(root);
     const posted = entry.channel === "slack"
@@ -447,6 +459,7 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
         activeModel: effectiveEnv.OCP_DEFAULT_MODEL || settings.defaultModel || "",
         routines,
         channelLog: await listChannelLog(root),
+        handoffs: await listProductHandoffs(root),
         vault: await publicVault(root, env),
         accounts: await publicAccounts(root, env),
         usage: await usageSnapshot(root),
@@ -1411,6 +1424,8 @@ async function saveBotFromRequest(body: Record<string, unknown>, root: string, i
     ? normalizeCheapModel(body.cheapModel)
     : existing?.cheapModel;
   if (typeof body.cheapModel === "string" && body.cheapModel.trim() && !cheapModel) return { error: "Cheap model id must be 1 to 200 characters." };
+  const parsedRules = parseActionRules(body, existing?.actionRules);
+  if (parsedRules.error) return { error: parsedRules.error };
   const mcpServers = parseMcpServers(body.mcpServers, existing?.mcpServers);
   const botInput = {
       name,
@@ -1424,6 +1439,7 @@ async function saveBotFromRequest(body: Record<string, unknown>, root: string, i
       model: model || undefined,
       cheapModel: cheapModel || undefined,
       routeMode,
+      ...(parsedRules.touched ? { actionRules: parsedRules.rules } : {}),
       mcpServers,
       endpoint,
       apiKeyEnv,
@@ -1460,7 +1476,7 @@ function normalizeCheapModel(value: unknown): string | undefined {
 }
 
 function publicBot(bot: NonNullable<Awaited<ReturnType<typeof findBot>>>, env: NodeJS.ProcessEnv = process.env, secretKeys: ReadonlySet<string> = new Set()) {
-  const { id, name, role, runtime, isolation, network, workspace, provider, endpoint, apiKeyEnv, model, cheapModel, routeMode, instructions, mcpServers, createdAt, updatedAt } = bot;
+  const { id, name, role, runtime, isolation, network, workspace, provider, endpoint, apiKeyEnv, model, cheapModel, routeMode, actionRules, instructions, mcpServers, createdAt, updatedAt } = bot;
   const effectiveIsolation = isOcpAgentRuntime(runtime) ? isolation ?? "docker" : undefined;
   const providerKeyConfigured = provider ? missingProviderKey(bot, env) === undefined : undefined;
   return {
@@ -1477,6 +1493,7 @@ function publicBot(bot: NonNullable<Awaited<ReturnType<typeof findBot>>>, env: N
     model,
     ...(cheapModel ? { cheapModel } : {}),
     ...(routeMode ? { routeMode } : {}),
+    actionRules: actionRules ?? { defaultRule: "ask", byAction: {}, preapproved: [] },
     instructions,
     mcpServers: (mcpServers ?? []).map((server) => publicConnector(server, secretKeys.has(mcpSecretKey(bot.id, server.name)))),
     providerKeyConfigured,
@@ -1894,6 +1911,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;font:12.5px/1.45 "JetBrains Mono
       <button type="button" class="tab" data-tab="routines">Routines</button>
       <button type="button" class="tab" data-tab="connectors">Connectors</button>
       <button type="button" class="tab" data-tab="channels">Channels</button>
+      <button type="button" class="tab" data-tab="drafts">Drafts</button>
       <button type="button" class="tab" data-tab="vault">Vault</button>
       <button type="button" class="tab" data-tab="accounts">Accounts</button>
     </div>
@@ -1931,6 +1949,10 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;font:12.5px/1.45 "JetBrains Mono
             <label class="provider-field hidden">Model ID<input name="model" placeholder="Model id you configured"></label>
             <label>Cheap model id<input name="cheapModel" placeholder="Blank uses the strong model for cheap steps"></label>
             <label>Route<select name="routeMode"><option value="auto">Auto: cheap for classify, summary, and lint-fix</option><option value="cheap">Cheap model for every step</option><option value="strong">Strong model for every step</option></select></label>
+            <label>Default action<select name="actionRule"><option value="ask">Ask before each action</option><option value="act">Act</option><option value="act-if-preapproved">Act if pre-approved</option><option value="handoff">Hand off</option></select></label>
+            <label>Pre-approved actions<input name="preapproved" placeholder="calendar_create, vault_fill"></label>
+            <label>Per-action rules<textarea name="actionBy" placeholder="calendar_create=act"></textarea></label>
+            <p class="meta">Outbound email and chat stay draft cards. Act does not send them.</p>
             <label class="provider-field hidden">OpenAI-compatible endpoint<input name="endpoint" placeholder="http://127.0.0.1:11434/v1"></label>
             <label class="provider-field hidden">API Key Env<input name="apiKeyEnv" value="LITELLM_API_KEY"></label>
             <label>MCP servers (JSON name + url only; tokens belong in Connectors)<textarea name="mcpServers" placeholder='[{"name":"docs","url":"http://127.0.0.1:3100"}]'></textarea></label>
@@ -2038,6 +2060,12 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;font:12.5px/1.45 "JetBrains Mono
         <div id="channelPanel"></div>
       </div>
 
+      <div id="tab-drafts" class="tab-pane hidden">
+        <h2>Drafts</h2>
+        <p class="sub">Every outbound email or message stays here until you send it. Nothing is sent automatically.</p>
+        <div id="draftsPanel"></div>
+      </div>
+
       <div id="tab-vault" class="tab-pane hidden">
         <h2>Vault</h2>
         <p class="sub">Logins, tokens, and OAuth secrets stay in this vault. A bot fills a virtual-computer login by item name. The secret is not sent to the model and is not written in the task log. A sign-in, 2FA, or captcha asks you to Take Control.</p>
@@ -2069,7 +2097,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;font:12.5px/1.45 "JetBrains Mono
   <div id="paletteList" role="listbox"></div>
 </div>
 
-<script nonce="${token}">const TOKEN='${token}',DEFAULT_WS='${escapeJs(process.cwd())}';let state={projects:[],bots:[],tasks:[],routines:[],channels:{},channelLog:[],vault:{items:[]},accounts:{},activeBrainLabel:'',activeModel:''},activeWorkspace='',selected='',conversationBot='',computerBot='',computerMeta=null,bootstrapped=false,activeTab='detail',centerView='chat',lastClickPt=null,renderedCompBot='',lastFrameSrc='',lastSyncedUrl='',lastSidebarSig='',lastChatSig='',lastDetailSig='',keyBuffer='',keyTimer=null,lastCompInteract=0,compQueue=Promise.resolve(),paletteIndex=0,sseLive=false,connectorBot='';
+<script nonce="${token}">const TOKEN='${token}',DEFAULT_WS='${escapeJs(process.cwd())}';let state={projects:[],bots:[],tasks:[],routines:[],channels:{},channelLog:[],handoffs:[],vault:{items:[]},accounts:{},activeBrainLabel:'',activeModel:''},activeWorkspace='',selected='',conversationBot='',computerBot='',computerMeta=null,bootstrapped=false,activeTab='detail',centerView='chat',lastClickPt=null,renderedCompBot='',lastFrameSrc='',lastSyncedUrl='',lastSidebarSig='',lastChatSig='',lastDetailSig='',keyBuffer='',keyTimer=null,lastCompInteract=0,compQueue=Promise.resolve(),paletteIndex=0,sseLive=false,connectorBot='';
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const googleSignInNote='Google and Microsoft connectors use an OAuth client you paste in Accounts. OCP ships no OAuth client. Take Control on this virtual computer to sign in on a page yourself.';
 const isAgentRuntime=r=>r==='ocp-agent'||r==='hermes';
@@ -2083,8 +2111,22 @@ function pendingApprovals(){return (state.tasks||[]).filter(t=>t.pendingApproval
 function approvalCard(t,p){const title=String(p.title||'').toLowerCase();const risk=/delete|shell|browser|mouse|key/.test(title)?'High':'Normal';const bot=state.bots.find(x=>x.id===t.botId);const preview=p.description?'<pre>'+esc(typeof p.description==='string'?p.description:JSON.stringify(p.description,null,2))+'</pre>':'';const opts=projectBots().filter(b=>b.id!==t.botId).map(b=>'<option value="'+esc(b.id)+'">'+esc(b.name)+'</option>').join('');const kind=p.subject&&p.subject.kind;const usageCap=kind==='usage-cap';const hardCap=kind==='usage-hard-cap';const allowLabel=usageCap?'Continue':'Allow once <span class="kbd">⌘↵</span>';const denyLabel=(usageCap||hardCap)?'Leave paused':'Deny <span class="kbd">Esc</span>';const allowBtn=hardCap?'':'<button type="button" data-appr="allow-once" data-tid="'+esc(t.id)+'" data-req="'+esc(p.id)+'">'+allowLabel+'</button>';const alwaysBtn=(usageCap||hardCap)?'':'<button type="button" class="secondary" data-appr="always" data-tid="'+esc(t.id)+'" data-req="'+esc(p.id)+'">Always for task</button>';const redirect=(usageCap||hardCap)?'':'<div class="row mt-sm"><select data-redirect-select="'+esc(t.id)+'"><option value="">Redirect to…</option>'+opts+'</select><button type="button" class="secondary" data-appr="redirect" data-tid="'+esc(t.id)+'" data-req="'+esc(p.id)+'">Redirect</button></div>';return '<div class="approval" role="alertdialog" aria-label="Approval needed"><h3>'+esc(p.title||'Permission requested')+'</h3><div class="meta mb-sm">Bot: '+esc(bot?.name||t.botId)+' · Action: '+esc(p.title||'')+(usageCap||hardCap?'':' · Risk: '+risk)+'</div>'+preview+'<div class="row">'+allowBtn+alwaysBtn+'<button type="button" class="danger" data-appr="cancelled" data-tid="'+esc(t.id)+'" data-req="'+esc(p.id)+'">'+denyLabel+'</button></div>'+redirect+'</div>'}
 function bindApprovals(){document.querySelectorAll('[data-appr]').forEach(el=>el.addEventListener('click',async e=>{e.stopPropagation();const decision=el.dataset.appr;const body={requestId:el.dataset.req,decision,approved:decision==='allow-once'||decision==='always'};if(decision==='redirect'){const sel=document.querySelector('[data-redirect-select="'+el.dataset.tid+'"]');body.redirectBotId=sel&&sel.value}try{await api('/api/tasks/'+encodeURIComponent(el.dataset.tid)+'/approval',body);await load()}catch(err){alert(err.message)}}))}
 function channelDrafts(){return (state.channelLog||[]).filter(m=>m.direction==='out'&&m.status==='draft')}
-function draftCard(m){const bot=state.bots.find(b=>b.id===m.botId);return '<div class="approval" role="alertdialog" aria-label="Reply draft"><h3>Send '+esc(m.channel)+' reply?</h3><div class="meta mb-sm">'+(bot?esc(bot.name)+' · ':'')+esc(m.destination)+'</div><pre>'+esc(m.text||'')+'</pre><div class="row"><button type="button" data-draft="allow" data-draft-id="'+esc(m.id)+'">Send reply</button><button type="button" class="danger" data-draft="deny" data-draft-id="'+esc(m.id)+'">Do not send</button></div></div>'}
-function bindDrafts(){document.querySelectorAll('[data-draft]').forEach(el=>el.addEventListener('click',async()=>{try{await api('/api/channels/drafts/'+encodeURIComponent(el.dataset.draftId),{decision:el.dataset.draft});await load()}catch(err){alert(err.message)}}))}
+function draftCard(m){const bot=state.bots.find(b=>b.id===m.botId);const subject=m.subject?'<div class="meta">'+esc(m.subject)+'</div>':'';return '<div class="approval" role="alertdialog" aria-label="Reply draft"><h3>Send '+esc(m.channel)+' reply?</h3><div class="meta mb-sm">'+(bot?esc(bot.name)+' · ':'')+esc(m.destination)+'</div>'+subject+'<pre>'+esc(m.text||'')+'</pre><div class="row"><button type="button" data-draft="allow" data-draft-id="'+esc(m.id)+'">Send reply</button><button type="button" class="danger" data-draft="deny" data-draft-id="'+esc(m.id)+'">Do not send</button></div></div>'}
+function bindDrafts(){document.querySelectorAll('[data-draft]').forEach(el=>{el.onclick=async()=>{try{await api('/api/channels/drafts/'+encodeURIComponent(el.dataset.draftId),{decision:el.dataset.draft});lastDraftsSig='';await load()}catch(err){alert(err.message)}}})}
+let lastDraftsSig='';
+function renderDrafts(){
+  const box=document.querySelector('#draftsPanel');
+  if(!box)return;
+  const drafts=channelDrafts();
+  const handoffs=state.handoffs||[];
+  const sig=JSON.stringify([drafts,handoffs]);
+  if(sig===lastDraftsSig)return;
+  lastDraftsSig=sig;
+  const cards=drafts.map(draftCard).join('')||'<div class="meta">No drafts waiting.</div>';
+  const handed=handoffs.slice().reverse().map(h=>{const bot=state.bots.find(b=>b.id===h.botId);return '<div class="approval"><h3>Handed off '+esc(h.action)+'</h3><div class="meta">'+(bot?esc(bot.name)+' · ':'')+esc(h.createdAt||'')+'</div><p>'+esc(h.summary||'')+'</p><p class="meta">A person needs to do this. It was not performed.</p></div>'}).join('');
+  box.innerHTML=cards+(handed?'<h3>Handoffs</h3>'+handed:'');
+  bindDrafts();
+}
 let lastChannelSig='';
 let lastUsageSig='';
 function usd(n){const r=Math.round(Number(n)*1e6)/1e6;return String(r)}
@@ -2442,6 +2484,9 @@ function editBot(id){
   form.elements.model.value=bot.model||'';
   form.elements.cheapModel.value=bot.cheapModel||'';
   form.elements.routeMode.value=bot.routeMode||'auto';
+  form.elements.actionRule.value=bot.actionRules?.defaultRule||'ask';
+  form.elements.preapproved.value=(bot.actionRules?.preapproved||[]).join(', ');
+  form.elements.actionBy.value=Object.entries(bot.actionRules?.byAction||{}).map(pair=>pair[0]+'='+pair[1]).join('\\n');
   form.elements.endpoint.value=bot.endpoint||'';
   form.elements.apiKeyEnv.value=bot.apiKeyEnv||'LITELLM_API_KEY';
   form.elements.instructions.value=bot.instructions||'';
@@ -2535,6 +2580,7 @@ function draw(){
   }
 
   renderChannels(pBots);
+  renderDrafts();
   renderVault();
   renderAccounts();
   renderUsage(pBots);
@@ -3026,6 +3072,7 @@ const paletteCommands=[
   {id:'routines',label:'Routines',run:()=>setTab('routines')},
   {id:'connectors',label:'Connectors',run:()=>setTab('connectors')},
   {id:'channels',label:'Channels',run:()=>setTab('channels')},
+  {id:'drafts',label:'Drafts',run:()=>setTab('drafts')},
   {id:'vault',label:'Vault',run:()=>setTab('vault')},
   {id:'accounts',label:'Accounts',run:()=>setTab('accounts')},
   {id:'inbox',label:'Approvals inbox',run:()=>{setTab('detail');lastDetailSig='';drawDetail()}}

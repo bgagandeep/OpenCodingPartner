@@ -6,6 +6,7 @@ import { chmod, cp, lstat, mkdir, open, readFile, readdir, realpath, rename, rm,
 import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import type { ActionRules } from "./action-rules.js";
 import type { ConnectorSnapshot } from "./connectors.js";
 import { probeConnectors } from "./connectors.js";
 import { normalizeModelPrices, normalizeUsageCaps, type ModelPrice, type UsageCaps } from "./usage.js";
@@ -37,6 +38,7 @@ export interface BotDefinition {
   model?: string;
   cheapModel?: string;
   routeMode?: "auto" | "cheap" | "strong";
+  actionRules?: ActionRules;
   runtimeSessionId?: string;
   mcpServers?: BotMcpServer[];
   createdAt: string;
@@ -133,6 +135,7 @@ interface ProductState {
   tasks: ProductTask[];
   routines?: ProductRoutine[];
   channelLog?: ChannelLogEntry[];
+  handoffs?: ProductHandoff[];
 }
 
 const EMPTY_STATE: ProductState = { schemaVersion: 1, projects: [], bots: [], tasks: [], routines: [] };
@@ -184,15 +187,24 @@ export interface ChannelOrigin {
 export interface ChannelLogEntry {
   id: string;
   externalId?: string;
-  channel: "slack" | "telegram";
+  channel: "slack" | "telegram" | "gmail" | "outlook";
   direction: "in" | "out";
   text: string;
+  subject?: string;
   botId?: string;
   taskId?: string;
   destination: string;
   thread?: string;
   status: "received" | "draft" | "sent" | "denied" | "failed";
   error?: string;
+  createdAt: string;
+}
+
+export interface ProductHandoff {
+  id: string;
+  botId?: string;
+  action: string;
+  summary: string;
   createdAt: string;
 }
 
@@ -736,7 +748,7 @@ export async function createBot(
 
 export async function updateBot(
   id: string,
-  update: Partial<Pick<BotDefinition, "name" | "role" | "runtime" | "isolation" | "network" | "workspace" | "instructions" | "provider" | "endpoint" | "apiKeyEnv" | "model" | "cheapModel" | "routeMode" | "mcpServers">>,
+  update: Partial<Pick<BotDefinition, "name" | "role" | "runtime" | "isolation" | "network" | "workspace" | "instructions" | "provider" | "endpoint" | "apiKeyEnv" | "model" | "cheapModel" | "routeMode" | "actionRules" | "mcpServers">>,
   root = productDataDir(),
   options: { actor?: "human" | "bot" } = {},
 ): Promise<BotDefinition> {
@@ -938,6 +950,29 @@ export async function updateProductRoutine(
 
 const CHANNEL_LOG_LIMIT = 100;
 
+export async function listProductHandoffs(root = productDataDir()): Promise<ProductHandoff[]> {
+  return [...((await readState(root)).handoffs ?? [])];
+}
+
+export async function appendProductHandoff(
+  entry: Omit<ProductHandoff, "id" | "createdAt">,
+  root = productDataDir(),
+): Promise<ProductHandoff> {
+  const record: ProductHandoff = {
+    ...entry,
+    action: entry.action.slice(0, 80),
+    summary: entry.summary.slice(0, 500),
+    id: randomUUID(),
+    createdAt: new Date().toISOString(),
+  };
+  await mutateState(root, (state) => {
+    state.handoffs ??= [];
+    state.handoffs.push(record);
+    if (state.handoffs.length > 50) state.handoffs.splice(0, state.handoffs.length - 50);
+  });
+  return record;
+}
+
 export async function listChannelLog(root = productDataDir()): Promise<ChannelLogEntry[]> {
   return [...((await readState(root)).channelLog ?? [])];
 }
@@ -953,6 +988,7 @@ export async function appendChannelLog(
   const record: ChannelLogEntry = {
     ...entry,
     text: entry.text.slice(0, 4_000),
+    subject: entry.subject?.slice(0, 200),
     error: entry.error?.slice(0, 500),
     id: randomUUID(),
     createdAt: new Date().toISOString(),
@@ -1578,7 +1614,7 @@ export async function runBotSession(
       ? "External MCP connectors are attached. Discover their tools with tool_search, read schemas with tool_describe, and invoke them with tool_call using names like mcp:server/tool. Each external call waits for approval unless this task is set to always approve.\n\n"
       : "";
     const toolGuidance = (agentRuntime || resolved.fallback)
-      ? `${connectorNote}For project files, fleet management, and computer use, use the OpenCodingPartner MCP tools: workspace tools (workspace_list, workspace_read, workspace_grep, workspace_glob, workspace_write, workspace_patch), bot & fleet management (bot_list, bot_create, bot_update, bot_delete, bot_delegate, swarm_setup), workspace memory (memory_search / memory_remember), local task history recall (history_search / history_read), virtual computer control (computer_screen, computer_mouse, computer_keyboard, computer_browser), and vault_fill (item name only; never pass a secret; a sign-in, 2FA, or captcha sets challenge so the human can Take Control). Connected Google and Microsoft accounts use gmail_search, gmail_read, gmail_draft, calendar_list, calendar_create, drive_search, drive_read, outlook_search, outlook_read, outlook_draft, outlook_calendar_list, outlook_calendar_create, onedrive_search, and onedrive_read. Drafts are not sent. Calendar create asks before it creates an event. Use the OCP Agent Docker terminal only for checks explicitly allowed by the user request.\n\n`
+      ? `${connectorNote}For project files, fleet management, and computer use, use the OpenCodingPartner MCP tools: workspace tools (workspace_list, workspace_read, workspace_grep, workspace_glob, workspace_write, workspace_patch), bot & fleet management (bot_list, bot_create, bot_update, bot_delete, bot_delegate, swarm_setup), workspace memory (memory_search / memory_remember), local task history recall (history_search / history_read), virtual computer control (computer_screen, computer_mouse, computer_keyboard, computer_browser), and vault_fill (item name only; never pass a secret; a sign-in, 2FA, or captcha sets challenge so the human can Take Control). Connected Google and Microsoft accounts use gmail_search, gmail_read, gmail_draft, calendar_list, calendar_create, drive_search, drive_read, outlook_search, outlook_read, outlook_draft, outlook_calendar_list, outlook_calendar_create, onedrive_search, and onedrive_read. gmail_draft and outlook_draft save a draft card for a person to send. Nothing is sent automatically. Other actions follow the bot rule: act, act if pre-approved, ask, or hand off. Use the OCP Agent Docker terminal only for checks explicitly allowed by the user request.\n\n`
       : "";
     const canLoadSession = agentCapabilities.loadSession === true;
     if (bot.runtimeSessionId && !canLoadSession) {

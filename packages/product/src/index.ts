@@ -54,6 +54,7 @@ export interface ProductTask {
   processId?: number;
   processIdentity?: string;
   approvals?: TaskApproval[];
+  channelOrigin?: ChannelOrigin;
   events?: ProductTaskEvent[];
   pendingApproval?: PendingTaskApproval;
   autoApproveRemaining?: boolean;
@@ -128,6 +129,7 @@ interface ProductState {
   bots: BotDefinition[];
   tasks: ProductTask[];
   routines?: ProductRoutine[];
+  channelLog?: ChannelLogEntry[];
 }
 
 const EMPTY_STATE: ProductState = { schemaVersion: 1, projects: [], bots: [], tasks: [], routines: [] };
@@ -169,6 +171,28 @@ export function validBotNetworkMode(value: string): value is BotNetworkMode {
   return value === "disabled" || value === "enabled";
 }
 
+export interface ChannelOrigin {
+  channel: "slack" | "telegram";
+  destination: string;
+  thread?: string;
+  externalId: string;
+}
+
+export interface ChannelLogEntry {
+  id: string;
+  externalId?: string;
+  channel: "slack" | "telegram";
+  direction: "in" | "out";
+  text: string;
+  botId?: string;
+  taskId?: string;
+  destination: string;
+  thread?: string;
+  status: "received" | "draft" | "sent" | "denied" | "failed";
+  error?: string;
+  createdAt: string;
+}
+
 export interface ProviderSettings {
   openrouterApiKey?: string;
   litellmApiKey?: string;
@@ -179,6 +203,8 @@ export interface ProviderSettings {
   slackSigningSecret?: string;
   telegramBotToken?: string;
   telegramWebhookSecret?: string;
+  slackBotId?: string;
+  telegramBotId?: string;
   updatedAt?: string;
 }
 
@@ -215,6 +241,8 @@ export async function saveProviderSettings(
   assign("slackSigningSecret");
   assign("telegramBotToken");
   assign("telegramWebhookSecret");
+  assign("slackBotId");
+  assign("telegramBotId");
   const target = path.join(root, "settings.json");
   await writeFile(target, `${JSON.stringify(next, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
   await chmod(target, 0o600).catch(() => undefined);
@@ -764,7 +792,7 @@ export async function writeBotMcpServers(id: string, mcpServers: BotMcpServer[],
 }
 
 export async function createTask(
-  input: Pick<ProductTask, "botId" | "prompt"> & Partial<Pick<ProductTask, "reviewerBotId">>,
+  input: Pick<ProductTask, "botId" | "prompt"> & Partial<Pick<ProductTask, "reviewerBotId" | "channelOrigin">>,
   root = productDataDir(),
 ): Promise<ProductTask> {
   const now = new Date().toISOString();
@@ -899,6 +927,51 @@ export async function updateProductRoutine(
     updated = routine;
   });
   return updated as ProductRoutine;
+}
+
+const CHANNEL_LOG_LIMIT = 100;
+
+export async function listChannelLog(root = productDataDir()): Promise<ChannelLogEntry[]> {
+  return [...((await readState(root)).channelLog ?? [])];
+}
+
+export async function findChannelExternal(channel: ChannelLogEntry["channel"], externalId: string, root = productDataDir()): Promise<ChannelLogEntry | undefined> {
+  return (await listChannelLog(root)).find((entry) => entry.channel === channel && entry.externalId === externalId);
+}
+
+export async function appendChannelLog(
+  entry: Omit<ChannelLogEntry, "id" | "createdAt">,
+  root = productDataDir(),
+): Promise<ChannelLogEntry> {
+  const record: ChannelLogEntry = {
+    ...entry,
+    text: entry.text.slice(0, 4_000),
+    error: entry.error?.slice(0, 500),
+    id: randomUUID(),
+    createdAt: new Date().toISOString(),
+  };
+  await mutateState(root, (state) => {
+    state.channelLog ??= [];
+    state.channelLog.push(record);
+    if (state.channelLog.length > CHANNEL_LOG_LIMIT) state.channelLog.splice(0, state.channelLog.length - CHANNEL_LOG_LIMIT);
+  });
+  return record;
+}
+
+export async function updateChannelLog(
+  id: string,
+  patch: Partial<Pick<ChannelLogEntry, "status" | "error">>,
+  root = productDataDir(),
+): Promise<ChannelLogEntry> {
+  let updated: ChannelLogEntry | undefined;
+  await mutateState(root, (state) => {
+    const entry = (state.channelLog ?? []).find((item) => item.id === id);
+    if (!entry) throw new Error("Unknown channel message.");
+    if (patch.status) entry.status = patch.status;
+    if (patch.error !== undefined) entry.error = patch.error.slice(0, 500);
+    updated = entry;
+  });
+  return updated as ChannelLogEntry;
 }
 
 export async function deleteProductRoutine(id: string, root = productDataDir()): Promise<void> {

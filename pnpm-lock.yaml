@@ -91,6 +91,9 @@ importers:
 
   packages/product:
     dependencies:
+      '@opencodingpartner/gateway':
+        specifier: workspace:*
+        version: link:../gateway
       '@opencodingpartner/workers':
         specifier: workspace:*
         version: link:../workers

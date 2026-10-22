@@ -79,6 +79,7 @@ import { usageSnapshot } from "./usage.js";
 import { deleteMcpSecret, listMcpSecretKeys, mcpSecretKey, readMcpSecret, writeMcpSecret } from "./mcp-secrets.js";
 import { createVaultItem, deleteVaultItem, publicVault, VaultError } from "./vault.js";
 import { parseActionRules } from "./action-rules.js";
+import { createSkill, deleteSkill, exportSkillPack, importSkillGit, importSkillZip, listSkills, SkillError, updateSkill } from "./skills.js";
 import { AccountError, completeAccountLogin, deliverMailDraft, disconnectAccount, GOOGLE_SCOPES, MICROSOFT_SCOPES, publicAccounts, saveAccountClient, startAccountLogin } from "./accounts.js";
 
 interface AppOptions {
@@ -460,6 +461,7 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
         routines,
         channelLog: await listChannelLog(root),
         handoffs: await listProductHandoffs(root),
+        skills: await listSkills(root),
         vault: await publicVault(root, env),
         accounts: await publicAccounts(root, env),
         usage: await usageSnapshot(root),
@@ -511,6 +513,25 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
     }
     if (request.method === "GET" && url.pathname === "/api/routines") {
       sendJson(response, 200, { routines: await listProductRoutines(root) });
+      return;
+    }
+    if (request.method === "GET" && url.pathname === "/api/skills/export") {
+      try {
+        const zip = await exportSkillPack(root);
+        response.writeHead(200, {
+          "content-type": "application/zip",
+          "content-disposition": "attachment; filename=\"ocp-skills.zip\"",
+          "cache-control": "no-store",
+          "x-content-type-options": "nosniff",
+        });
+        response.end(zip);
+      } catch (error) {
+        sendJson(response, error instanceof SkillError ? error.status : 400, { error: error instanceof Error ? error.message : "The skill pack could not be written." });
+      }
+      return;
+    }
+    if (request.method === "GET" && url.pathname === "/api/skills") {
+      sendJson(response, 200, { skills: await listSkills(root) });
       return;
     }
     if (request.method === "GET" && url.pathname === "/api/vault") {
@@ -753,6 +774,49 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
       const provider = url.pathname.includes("google") ? "google" : "microsoft";
       await disconnectAccount(root, provider, env);
       sendJson(response, 200, { ok: true });
+      return;
+    }
+    if (request.method === "POST" && url.pathname === "/api/skills/import") {
+      try {
+        const imported = typeof body.zipBase64 === "string"
+          ? await importSkillZip(root, Buffer.from(body.zipBase64, "base64"))
+          : await importSkillGit(root, typeof body.gitUrl === "string" ? body.gitUrl : "");
+        sendJson(response, 200, imported);
+      } catch (error) {
+        const status = error instanceof SkillError ? error.status : 400;
+        sendJson(response, status, { error: error instanceof Error ? error.message : "Nothing was imported." });
+      }
+      return;
+    }
+    if (request.method === "POST" && url.pathname === "/api/skills") {
+      try {
+        const skill = await createSkill(root, body);
+        sendJson(response, 201, { skill });
+      } catch (error) {
+        const status = error instanceof SkillError ? error.status : 400;
+        sendJson(response, status, { error: error instanceof Error ? error.message : "Skill was not saved." });
+      }
+      return;
+    }
+    const skillMatch = /^\/api\/skills\/([^/]+)$/.exec(url.pathname);
+    if (skillMatch && request.method === "PATCH") {
+      try {
+        const skill = await updateSkill(root, decodeURIComponent(skillMatch[1] ?? ""), body);
+        sendJson(response, 200, { skill });
+      } catch (error) {
+        const status = error instanceof SkillError ? error.status : 400;
+        sendJson(response, status, { error: error instanceof Error ? error.message : "Skill was not saved." });
+      }
+      return;
+    }
+    if (skillMatch && request.method === "DELETE") {
+      try {
+        await deleteSkill(root, decodeURIComponent(skillMatch[1] ?? ""));
+        sendJson(response, 200, { ok: true });
+      } catch (error) {
+        const status = error instanceof SkillError ? error.status : 400;
+        sendJson(response, status, { error: error instanceof Error ? error.message : "Skill was not deleted." });
+      }
       return;
     }
     if (request.method === "POST" && url.pathname === "/api/vault") {
@@ -1912,6 +1976,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;font:12.5px/1.45 "JetBrains Mono
       <button type="button" class="tab" data-tab="connectors">Connectors</button>
       <button type="button" class="tab" data-tab="channels">Channels</button>
       <button type="button" class="tab" data-tab="drafts">Drafts</button>
+      <button type="button" class="tab" data-tab="skills">Skills</button>
       <button type="button" class="tab" data-tab="vault">Vault</button>
       <button type="button" class="tab" data-tab="accounts">Accounts</button>
     </div>
@@ -2066,6 +2131,31 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;font:12.5px/1.45 "JetBrains Mono
         <div id="draftsPanel"></div>
       </div>
 
+      <div id="tab-skills" class="tab-pane hidden">
+        <h2>Skills</h2>
+        <p class="sub">Reusable multi-step skills. A bot loads one on demand through tool search. Packs import from a zip or a git URL.</p>
+        <form id="skillForm">
+          <input type="hidden" name="skillId">
+          <label>Name<input name="name" required placeholder="Review a diff"></label>
+          <label>When to use<input name="whenToUse" required placeholder="Review a code change before a person opens a pull request."></label>
+          <label>Steps<textarea name="body" required placeholder="1. Read the diff."></textarea></label>
+          <div class="row">
+            <button type="submit">Save skill</button>
+            <button type="button" id="skillReset" class="secondary">Clear</button>
+          </div>
+        </form>
+        <form id="skillImportForm" class="mt-sm">
+          <label>Git URL<input name="gitUrl" placeholder="Local path or https git URL"></label>
+          <label>Zip pack<input type="file" name="zip" accept=".zip,application/zip"></label>
+          <div class="row">
+            <button type="submit">Import pack</button>
+            <button type="button" id="skillExport" class="secondary">Export zip</button>
+          </div>
+        </form>
+        <div id="skillStatus" class="status"></div>
+        <div id="skillList" class="nav-list mt-sm"></div>
+      </div>
+
       <div id="tab-vault" class="tab-pane hidden">
         <h2>Vault</h2>
         <p class="sub">Logins, tokens, and OAuth secrets stay in this vault. A bot fills a virtual-computer login by item name. The secret is not sent to the model and is not written in the task log. A sign-in, 2FA, or captcha asks you to Take Control.</p>
@@ -2097,7 +2187,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;font:12.5px/1.45 "JetBrains Mono
   <div id="paletteList" role="listbox"></div>
 </div>
 
-<script nonce="${token}">const TOKEN='${token}',DEFAULT_WS='${escapeJs(process.cwd())}';let state={projects:[],bots:[],tasks:[],routines:[],channels:{},channelLog:[],handoffs:[],vault:{items:[]},accounts:{},activeBrainLabel:'',activeModel:''},activeWorkspace='',selected='',conversationBot='',computerBot='',computerMeta=null,bootstrapped=false,activeTab='detail',centerView='chat',lastClickPt=null,renderedCompBot='',lastFrameSrc='',lastSyncedUrl='',lastSidebarSig='',lastChatSig='',lastDetailSig='',keyBuffer='',keyTimer=null,lastCompInteract=0,compQueue=Promise.resolve(),paletteIndex=0,sseLive=false,connectorBot='';
+<script nonce="${token}">const TOKEN='${token}',DEFAULT_WS='${escapeJs(process.cwd())}';let state={projects:[],bots:[],tasks:[],routines:[],channels:{},channelLog:[],handoffs:[],skills:[],vault:{items:[]},accounts:{},activeBrainLabel:'',activeModel:''},activeWorkspace='',selected='',conversationBot='',computerBot='',computerMeta=null,bootstrapped=false,activeTab='detail',centerView='chat',lastClickPt=null,renderedCompBot='',lastFrameSrc='',lastSyncedUrl='',lastSidebarSig='',lastChatSig='',lastDetailSig='',keyBuffer='',keyTimer=null,lastCompInteract=0,compQueue=Promise.resolve(),paletteIndex=0,sseLive=false,connectorBot='';
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const googleSignInNote='Google and Microsoft connectors use an OAuth client you paste in Accounts. OCP ships no OAuth client. Take Control on this virtual computer to sign in on a page yourself.';
 const isAgentRuntime=r=>r==='ocp-agent'||r==='hermes';
@@ -2126,6 +2216,30 @@ function renderDrafts(){
   const handed=handoffs.slice().reverse().map(h=>{const bot=state.bots.find(b=>b.id===h.botId);return '<div class="approval"><h3>Handed off '+esc(h.action)+'</h3><div class="meta">'+(bot?esc(bot.name)+' · ':'')+esc(h.createdAt||'')+'</div><p>'+esc(h.summary||'')+'</p><p class="meta">A person needs to do this. It was not performed.</p></div>'}).join('');
   box.innerHTML=cards+(handed?'<h3>Handoffs</h3>'+handed:'');
   bindDrafts();
+}
+let lastSkillsSig='';
+function renderSkills(){
+  const box=document.querySelector('#skillList');
+  if(!box)return;
+  const skills=state.skills||[];
+  const sig=JSON.stringify(skills);
+  if(sig===lastSkillsSig)return;
+  lastSkillsSig=sig;
+  box.innerHTML=skills.map(skill=>'<div class="nav-item"><div class="nav-main"><strong>'+esc(skill.name)+'</strong><div class="meta">'+(skill.builtin?'Starter · ':'')+esc(skill.whenToUse)+'</div></div><button type="button" class="ghost" data-skill-edit="'+esc(skill.id)+'">Edit</button><button type="button" class="ghost" data-skill-delete="'+esc(skill.id)+'">Delete</button></div>').join('')||'<div class="meta">No skills yet.</div>';
+  box.querySelectorAll('[data-skill-edit]').forEach(el=>el.addEventListener('click',()=>{
+    const skill=(state.skills||[]).find(item=>item.id===el.dataset.skillEdit);
+    const form=document.querySelector('#skillForm');
+    if(!skill||!form)return;
+    form.elements.skillId.value=skill.id;
+    form.elements.name.value=skill.name;
+    form.elements.whenToUse.value=skill.whenToUse;
+    form.elements.body.value=skill.body||'';
+    setTab('skills');
+  }));
+  box.querySelectorAll('[data-skill-delete]').forEach(el=>el.addEventListener('click',async()=>{
+    const status=document.querySelector('#skillStatus');
+    try{await api('/api/skills/'+encodeURIComponent(el.dataset.skillDelete),{},'DELETE');lastSkillsSig='';if(status)status.textContent='Deleted.';await load()}catch(err){if(status)status.textContent=err.message}
+  }));
 }
 let lastChannelSig='';
 let lastUsageSig='';
@@ -2581,6 +2695,7 @@ function draw(){
 
   renderChannels(pBots);
   renderDrafts();
+  renderSkills();
   renderVault();
   renderAccounts();
   renderUsage(pBots);
@@ -3001,6 +3116,58 @@ document.querySelector('#botForm').elements.isolation.addEventListener('change',
   form.elements.network.parentElement.classList.toggle('hidden',!isAgentRuntime(form.elements.runtime.value)||e.target.value!=='docker');
 });
 document.querySelector('#botEditCancel').addEventListener('click',clearBotForm);
+document.querySelector('#skillForm')?.addEventListener('submit',async e=>{
+  e.preventDefault();
+  const form=e.target;
+  const f=new FormData(form);
+  const status=document.querySelector('#skillStatus');
+  const skillId=String(f.get('skillId')||'');
+  const body={name:String(f.get('name')||''),whenToUse:String(f.get('whenToUse')||''),body:String(f.get('body')||'')};
+  try{
+    await api(skillId?'/api/skills/'+encodeURIComponent(skillId):'/api/skills',body,skillId?'PATCH':'POST');
+    lastSkillsSig='';
+    form.reset();
+    if(status)status.textContent=skillId?'Skill updated.':'Skill saved.';
+    await load();
+  }catch(err){if(status)status.textContent=err.message}
+});
+document.querySelector('#skillReset')?.addEventListener('click',()=>{document.querySelector('#skillForm')?.reset()});
+document.querySelector('#skillExport')?.addEventListener('click',async()=>{
+  const status=document.querySelector('#skillStatus');
+  try{
+    const r=await fetch('/api/skills/export');
+    if(!r.ok){const data=await r.json();throw Error(data.error||'Export failed')}
+    const blob=await r.blob();
+    const link=document.createElement('a');
+    link.href=URL.createObjectURL(blob);
+    link.download='ocp-skills.zip';
+    link.click();
+    if(status)status.textContent='Exported the skill pack.';
+  }catch(err){if(status)status.textContent=err.message}
+});
+document.querySelector('#skillImportForm')?.addEventListener('submit',async e=>{
+  e.preventDefault();
+  const form=e.target;
+  const status=document.querySelector('#skillStatus');
+  const file=form.elements.zip.files&&form.elements.zip.files[0];
+  const gitUrl=String(new FormData(form).get('gitUrl')||'').trim();
+  const body={};
+  try{
+    if(file){
+      if(file.size>700000)throw Error('The zip pack must be under 700 KB. Nothing was imported.');
+      const bytes=new Uint8Array(await file.arrayBuffer());
+      let binary='';
+      for(let i=0;i<bytes.length;i++)binary+=String.fromCharCode(bytes[i]);
+      body.zipBase64=btoa(binary);
+    }else if(gitUrl)body.gitUrl=gitUrl;
+    else throw Error('Choose a zip pack or a git URL. Nothing was imported.');
+    const result=await api('/api/skills/import',body);
+    lastSkillsSig='';
+    form.reset();
+    if(status)status.textContent='Imported '+result.imported+' skill'+(result.imported===1?'':'s')+'.';
+    await load();
+  }catch(err){if(status)status.textContent=err.message}
+});
 document.querySelector('#botForm').addEventListener('submit',async e=>{
   e.preventDefault();
   const f=new FormData(e.target),provider=f.get('provider');
@@ -3073,6 +3240,7 @@ const paletteCommands=[
   {id:'connectors',label:'Connectors',run:()=>setTab('connectors')},
   {id:'channels',label:'Channels',run:()=>setTab('channels')},
   {id:'drafts',label:'Drafts',run:()=>setTab('drafts')},
+  {id:'skills',label:'Skills',run:()=>setTab('skills')},
   {id:'vault',label:'Vault',run:()=>setTab('vault')},
   {id:'accounts',label:'Accounts',run:()=>setTab('accounts')},
   {id:'inbox',label:'Approvals inbox',run:()=>{setTab('detail');lastDetailSig='';drawDetail()}}

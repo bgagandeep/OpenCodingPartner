@@ -19,7 +19,7 @@ test("coder confinement refuses to run without bubblewrap and binds only the wor
   assert.equal(plan.args.includes("/work/other"), false);
 });
 
-test("category surfaces stay local: agents, components, directory, voice, pages, and WhatsApp drafts", async () => {
+test("category surfaces stay local: agents, components, directory, pages, and WhatsApp drafts", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "ocp-category-"));
   const workspace = await mkdtemp(path.join(tmpdir(), "ocp-category-ws-"));
   const previous = process.env.OCP_DATA_DIR;
@@ -42,7 +42,10 @@ test("category surfaces stay local: agents, components, directory, voice, pages,
     assert.match(html, /Register agent/);
     assert.match(html, /Add person/);
     assert.match(html, /Enable company sign-in/);
+    assert.match(html, /does not contact a company directory/);
+    assert.match(html, /Allowing that draft still sends nothing/);
     assert.match(html, /Save page/);
+    assert.doesNotMatch(html, /voiceForm|\/api\/voice|id="voiceResult"/);
     assert.match(html, /value="whatsapp"/);
     const token = /script-src 'nonce-([a-f0-9]+)'/.exec(page.headers.get("content-security-policy") ?? "")?.[1] ?? "";
     const headers = { "content-type": "application/json", "x-ocp-token": token };
@@ -99,10 +102,8 @@ test("category surfaces stay local: agents, components, directory, voice, pages,
     assert.equal(directory.includes(secret), false);
     assert.equal(directory.includes("hash"), false);
 
-    const voice = await (await fetch(`${app.url}/api/voice`, { method: "POST", headers, body: JSON.stringify({ transcript: "token=sk-voice-secret please ship it" }) })).json() as { spoken: string };
-    assert.match(voice.spoken, /No model is configured/);
-    assert.match(voice.spoken, /will not invent an action/);
-    assert.equal(voice.spoken.includes("sk-voice-secret"), false);
+    const missingVoice = await fetch(`${app.url}/api/voice`, { method: "POST", headers, body: JSON.stringify({ transcript: "hello" }) });
+    assert.equal(missingVoice.status, 404);
 
     const saved = await (await fetch(`${app.url}/api/pages`, { method: "POST", headers, body: JSON.stringify({ title: "Launch note", body: "The app binds to loopback. secret=sk-page-secret" }) })).json() as { page: { body: string } };
     assert.match(saved.page.body, /loopback/);

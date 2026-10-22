@@ -1,14 +1,14 @@
 # Path to the teammate claim
 
-The announcement window is 1 November 2026 through 19 December 2026. Waiting for that date does not make Open Coding Partner into [OpenBot](https://github.com/CopilotKit/OpenBot), Dot, or Grok Bot. This page records the proofs that earned the category introduction, and the surfaces that are still false.
+The announcement window is 1 November 2026 through 19 December 2026. Waiting for that date does not make Open Coding Partner into [OpenBot](https://github.com/CopilotKit/OpenBot), Dot, or Grok Bot. This page records what is true for the local coding partner, and the surfaces that are still false.
 
 Open Coding Partner is independent of those projects. This path does not copy their internals, their license, or their accounts.
 
 ## The sentence that is true now
 
-Open Coding Partner is ready to be introduced in the category people mean by OpenBot, Dot, and Grok Bot. It is a local, open-source coding partner for one operator and the people that operator adds on this machine. The model is fully local or brought by you. A bot can have a computer of its own. Consequential actions are recorded, a person can take the controls, and the model is one you run locally or one you bring. A foreign agent process on this machine can register over the public agent event stream. Replies can be cards. Voice accepts a transcript. WhatsApp stays a draft. Pages live in the app. Nothing in the box is a hosted signup, and the app binds to loopback only.
+Open Coding Partner is a local, open-source coding partner for one operator and the people that operator adds on this machine. The model is fully local or brought by you. A bot can have a computer of its own. Consequential actions are recorded, a person can take the controls, and the model is one you run locally or one you bring. A foreign agent process on this machine can register over the public agent event stream. Replies can be cards. WhatsApp reach stays a draft, and allowing that draft still sends nothing. Company sign-in checks a signed assertion on this machine and does not contact a company directory. Pages live in the app. Nothing in the box is a hosted signup, and the app binds to loopback only.
 
-That sentence is the public announcement. The name on the product is Open Coding Partner. [Onboarding](onboarding.md) is the install path.
+That sentence is the public announcement. [Onboarding](onboarding.md) is the install path.
 
 ## What OpenBot actually is
 
@@ -30,11 +30,10 @@ Each item has a test. None of them starts Xvnc, dials a model, or sends a channe
 8. **Doctor tells the truth about the model path.** `ocp doctor` prints `Model: local <base url>` for a loopback base URL, `Model: hosted` when the base URL or a key is present and the base URL is not loopback, or `Model: not configured`. It does not print the key and it does not dial the network. A local base URL wins over a hosted key. Userinfo is stripped from the printed URL.
 9. **A foreign agent on this machine.** Registration accepts only a loopback URL. A run speaks `RUN_STARTED`, text message events, a component event, and `RUN_FINISHED`. With no agent and no model, the run says it will not invent an action.
 10. **Component replies.** A bot message in a thread carries a card the page can render.
-11. **A local directory.** An operator can add an admin or a member. Passwords are hashed. Company sign-in is a signed assertion checked on this machine. The directory response contains neither the password nor the assertion secret.
-12. **Voice transcripts.** A transcript comes back as speech text. No model means the turn will not invent an action. No audio service is called.
-13. **WhatsApp drafts.** Reach into WhatsApp writes a draft and a local outbox. Allowing the draft still sends nothing.
-14. **Pages.** A person can save a page. A secret-shaped token is redacted before it is stored.
-15. **Coder confinement on request.** `OCP_CODER_CONFINEMENT=workspace` builds a bubblewrap launch that bind-mounts the workspace and drops the network. If bubblewrap is missing, the launch refuses. The default launch still uses the operator's OS permissions.
+11. **A local directory.** An operator can add an admin or a member. Passwords are hashed. Company sign-in is a signed assertion checked on this machine. It does not contact a company directory. The directory response contains neither the password nor the assertion secret.
+12. **WhatsApp drafts.** Reach into WhatsApp writes a draft and a local outbox. Allowing the draft still sends nothing.
+13. **Pages.** A person can save a page. A secret-shaped token is redacted before it is stored.
+14. **Coder confinement on request.** `OCP_CODER_CONFINEMENT=workspace` builds a bubblewrap launch that bind-mounts the workspace and drops the network. If bubblewrap is missing, the launch refuses. The default launch still uses the operator's OS permissions.
 
 ## Where we already match
 
@@ -50,9 +49,13 @@ Each item has a test. None of them starts Xvnc, dials a model, or sends a channe
 | Reach, as a draft | Slack and Telegram drafts stay in the channel log until a person sends them. Mail waits on a draft card. |
 | Loopback | The process refuses `0.0.0.0`. A foreign `Origin` or `Host` is refused. |
 
+## Not now
+
+Voice and meetings are not now. They are off the roadmap for this stretch. There is no voice route, no speech form, and no meeting surface.
+
 ## What is still false
 
-These hosted-operations surfaces are not yet in this tree. They are not required to introduce the local product in that category.
+These hosted-operations surfaces are not yet in this tree.
 
 - A container runtime harder than bubblewrap, such as gVisor.
 - A Helm chart.
@@ -62,7 +65,9 @@ These hosted-operations surfaces are not yet in this tree. They are not required
 
 ## What we will not say
 
-- That the product name is OpenBot, Dot, or Grok Bot. Introduce it in that category under the name Open Coding Partner.
+- That Open Coding Partner is ready for the OpenBot, Dot, or Grok Bot category. It is a local open-source coding partner.
+- That a WhatsApp draft was sent. Allowing the draft still sends nothing.
+- That company sign-in contacts a company directory. The check is a signed assertion on this machine.
 - That it reproduces their proprietary behavior.
 - That a local model is configured when the header still says **No model configured**.
 - That a shared workspace screen is a computer per bot. The dashboard computer is per bot. The unnamed workspace computer is the older shared path.

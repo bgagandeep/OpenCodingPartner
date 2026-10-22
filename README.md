@@ -10,7 +10,7 @@ Start with [Onboarding](docs/onboarding.md). That guide is the first-run path: i
 
 The app binds to loopback (`127.0.0.1`) only. There is no default model and no hosted signup. You bring an OpenRouter key or a local OpenAI-compatible server. Dark is the first theme. Light and System are in the header.
 
-A bot can have a computer of its own. Consequential actions are recorded, a person can take the controls, and the model is one you run locally or one you bring. A foreign agent on this machine, component replies, a local directory, voice transcripts, WhatsApp drafts, and pages are in this tree. That is the teammate shape. The category introduction is in [the teammate path](docs/parity-path.md).
+A bot can have a computer of its own. Consequential actions are recorded, a person can take the controls, and the model is one you run locally or one you bring. A foreign agent on this machine, component replies, a local directory, WhatsApp drafts, and pages are in this tree. A WhatsApp draft is not sent, even after a person allows it. Company sign-in checks a signed assertion on this machine and does not contact a company directory. The limits are in [the teammate path](docs/parity-path.md).
 
 ---
 

@@ -39,12 +39,17 @@ corepack pnpm install
 # 2. Build all TypeScript packages
 corepack pnpm build
 
-# 3. Run the full unit, integration, and invariant test suite
-corepack pnpm test
+# 3. Whitespace / format lint
+corepack pnpm lint
 
-# 4. Check formatting and whitespace hygiene
-git diff --check
+# 4. Branding guard (OCP-only user-facing copy)
+corepack pnpm branding-guard
+
+# 5. Run the full unit, integration, and invariant test suite
+corepack pnpm test
 ```
+
+GitHub Actions (`.github/workflows/ci.yml`) runs build, lint, branding-guard, and the full test suite on every pull request and on `main`. **Recommend protecting `main`**: require the CI job to pass, disallow direct pushes, and require a pull request before merge.
 
 ### Run the Local Web Dashboard in Development
 
@@ -86,7 +91,8 @@ Every contribution must preserve these core project invariants (enforced by `tes
 Before submitting a pull request, verify that:
 
 - [ ] `corepack pnpm build` compiles cleanly with zero TypeScript errors.
-- [ ] `corepack pnpm test` passes all unit, integration, CLI E2E, and documentation invariant tests.
+- [ ] `corepack pnpm lint` and `corepack pnpm branding-guard` pass.
+- [ ] `corepack pnpm test` passes all unit, integration, CLI E2E, and documentation invariant tests. The spec reporter must print the full test count (CLI tests forward captured stdout so TAP/spec lines are not swallowed).
 - [ ] `git diff --check` reports no trailing whitespace or conflict markers.
 - [ ] New features or bug fixes include focused tests in the corresponding `*.test.ts` file.
 - [ ] No hardcoded local paths, `.env` files, or API keys are included in the diff.

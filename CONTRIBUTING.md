@@ -58,7 +58,7 @@ export OPENROUTER_API_KEY="sk-or-v1-..."   # or LITELLM_API_KEY
 corepack pnpm app
 ```
 
-The dashboard starts on <http://127.0.0.1:4317>.
+The dashboard starts on <http://127.0.0.1:4317>. It refuses any bind that is not loopback. [Onboarding](docs/onboarding.md) is the operator guide. Keep it honest when behavior changes: no default model, no hosted signup, and **Take Control** for a sign-in on the virtual computer.
 
 ---
 

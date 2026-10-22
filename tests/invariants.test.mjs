@@ -20,7 +20,7 @@ function walk(dir, out = []) {
   return out;
 }
 
-const docs = ["README.md", "ARCHITECTURE.md", "ROADMAP.md", "CONTRIBUTING.md", "THIRD_PARTY_NOTICES.md", "NOTICE", "docs/legacy-sandbox.md"].map(read).join("\n");
+const docs = ["README.md", "ARCHITECTURE.md", "ROADMAP.md", "CONTRIBUTING.md", "THIRD_PARTY_NOTICES.md", "NOTICE", "docs/legacy-sandbox.md", "docs/onboarding.md"].map(read).join("\n");
 
 test("product docs name the tools and keep ads and payments off", () => {
   assert.match(read("THIRD_PARTY_NOTICES.md"), /openclaw\/openclaw/);
@@ -54,6 +54,23 @@ test("product docs name the tools and keep ads and payments off", () => {
   assert.doesNotMatch(docs, /\bcursor\b/i);
   assert.doesNotMatch(docs, /CBRE/);
   assert.doesNotMatch(docs, /monument/i);
+});
+
+test("onboarding states the public limits in plain language", () => {
+  const page = read("docs/onboarding.md");
+  assert.match(page, /127\.0\.0\.1:4317/);
+  assert.match(page, /no default model/i);
+  assert.match(page, /No model configured/);
+  assert.match(page, /Take Control/);
+  assert.match(page, /loopback/i);
+  assert.match(page, /\bDark\b/);
+  assert.match(page, /five-field cron|five numeric fields/);
+  assert.doesNotMatch(page, /OpenClaw|Hermes|Grok Build|LiteLLM|\bLaya\b|Grok Bot|\bxAI\b|CBRE|Claude Code|Trinity|\bcursor\b/i);
+  assert.match(read("README.md"), /docs\/onboarding\.md/);
+  assert.match(read("ROADMAP.md"), /1 November 2026/);
+  assert.match(read("ROADMAP.md"), /19 December 2026/);
+  assert.match(read("ROADMAP.md"), /Ads are off/);
+  assert.match(read("ROADMAP.md"), /Payments are off/);
 });
 
 test("worker source does not spawn a process", () => {

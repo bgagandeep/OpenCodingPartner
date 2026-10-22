@@ -6,7 +6,9 @@ Teammates powered by **OCP Agent** and **OCP Coder** (optional external ACP bina
 
 The core is free forever and open source. The operator owns the meter. The full coding partner (**OCP Coder**) is included. Seats and credit packs in Settings are design only. Billing is inert. No charge is made. Ads are off. Payments are off in the core.
 
-See [ARCHITECTURE.md](ARCHITECTURE.md) for the full architecture and [ROADMAP.md](ROADMAP.md) for staged milestones.
+Start with [Onboarding](docs/onboarding.md). That guide is the first-run path: install, choose a model, spawn a team, and learn the limits. [ARCHITECTURE.md](ARCHITECTURE.md) is the design, and [ROADMAP.md](ROADMAP.md) is what is in this tree and what is still ahead.
+
+The app binds to loopback (`127.0.0.1`) only. There is no default model and no hosted signup. You bring an OpenRouter key or a local OpenAI-compatible server. Dark is the first theme. Light and System are in the header.
 
 ---
 
@@ -22,7 +24,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the full architecture and [ROADMAP.md
   - **Linux**: Boots an isolated `1280x800` virtual X11 computer display per workspace (`Xvnc` + `xdotool` + Google Chrome + `ffmpeg` live frame capture).
   - **macOS**: Uses built-in macOS Quartz (`CGEvent`), `System Events`, `screencapture`, and Chrome/`open` (`macos:0`) with zero external packages required.
   - Bots can inspect the screen (`computer_screen`), move/click/drag/scroll the mouse (`computer_mouse`), type text or press key combinations (`computer_keyboard`), and open pages in Chrome (`computer_browser`).
-  - From the Web Dashboard, humans can watch the live screen, click directly on the canvas to send mouse clicks, type text or keys, or click **Take over mouse & keyboard** to pause bot input while logging in or interacting manually, then **Return control to bot**.
+  - From the Web Dashboard, a person can watch the live screen, click the canvas, type, or click **Take Control** to pause bot input while signing in, then **Return control** to the bot.
 - **Guarded Workspace MCP Server (`opencodingpartner-workspace`)**
   - **Workspace File Tools**: `workspace_list`, `workspace_read`, `workspace_grep`, `workspace_glob`, `workspace_write`, `workspace_patch`, `workspace_append`, `workspace_delete`, `workspace_rename`, `workspace_copy`, `workspace_mkdir`, `workspace_rmdir` (bounded to 500 KB, symlink-safe, and guarded by secret-pattern scanning).
   - **Persistent Workspace Memory**: `memory_remember`, `memory_search`, and `memory_forget` stored per workspace in `<OCP_DATA_DIR>/memories/<workspace-hash>/MEMORY.md`.
@@ -86,7 +88,7 @@ From the Web Dashboard you can:
 1. **Check Local Readiness**: Verify that **OCP Agent**, **OCP Coder**, and **Docker** are ready.
 2. **Create Teammates**: Choose a name, role (`coding`, `qa`, `security`, `research`, `computer`, `general`), runtime (`OCP Agent` or `OCP Coder`), workspace path, and provider (`OpenRouter`, OpenAI-compatible, or runtime default).
 3. **Run Tasks & Review Diffs**: Assign a request to a teammate (with an optional QA or security reviewer handoff), stream live activity, approve or deny permission requests, and inspect changed files and Git diffs.
-4. **Open the Virtual Computer Desktop**: Click **Computer desktop** on any teammate card to view its live `1280x800` virtual screen, open URLs in Chrome, click on the screen, type keys, or **Take over mouse & keyboard**.
+4. **Open the Virtual Computer**: Use **Virtual Computer** in the header to view the live `1280x800` screen, open a URL, click, type, or **Take Control**.
 
 ---
 
@@ -163,8 +165,8 @@ Every bot workspace has access to an isolated virtual computer (`computer-deskto
 | `computer_browser` | Launch or navigate Google Chrome inside the bot's virtual computer display with an isolated browser profile and capture an updated screenshot. |
 
 ### Human Takeover Protocol
-- When a human clicks **Take over mouse & keyboard** in the dashboard (or sends `POST /api/bots/:id/computer` with `{"kind": "takeover"}`), the workspace computer state switches to `control: "human"` (`status: "held"`).
-- While held by a human, any bot attempt to call `computer_mouse`, `computer_keyboard`, or `computer_browser` is refused until the human clicks **Return control to bot** (`{"kind": "return"}`).
+- When a person clicks **Take Control** in the dashboard (or sends `POST /api/bots/:id/computer` with `{"kind": "takeover"}`), the workspace computer state switches to `control: "human"` (`status: "held"`).
+- While a person holds the computer, a bot call to `computer_mouse`, `computer_keyboard`, or `computer_browser` is refused until they click **Return control** (`{"kind": "return"}`).
 
 ---
 

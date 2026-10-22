@@ -1314,6 +1314,16 @@ async function saveBotFromRequest(body: Record<string, unknown>, root: string, i
   if (!provider && model) return { error: "A model override requires an explicit OpenRouter or OpenAI-compatible provider profile." };
   if ((provider === "litellm" && !validEndpoint(endpoint)) || (provider !== "litellm" && endpoint)) return { error: "An OpenAI-compatible endpoint must be HTTP(S) without credentials; OpenRouter does not use a custom endpoint." };
   if ((provider === "litellm" && !validEnvName(apiKeyEnv)) || (provider !== "litellm" && body.apiKeyEnv)) return { error: "API key environment variable name is invalid or not supported for this provider." };
+  const routeMode = Object.hasOwn(body, "routeMode") || !existing
+    ? normalizeRouteMode(body.routeMode)
+    : existing.routeMode;
+  if ((Object.hasOwn(body, "routeMode") || !existing) && body.routeMode !== undefined && body.routeMode !== "" && !routeMode) {
+    return { error: "Route must be auto, cheap, or strong." };
+  }
+  const cheapModel = Object.hasOwn(body, "cheapModel")
+    ? normalizeCheapModel(body.cheapModel)
+    : existing?.cheapModel;
+  if (typeof body.cheapModel === "string" && body.cheapModel.trim() && !cheapModel) return { error: "Cheap model id must be 1 to 200 characters." };
   const mcpServers = parseMcpServers(body.mcpServers, existing?.mcpServers);
   const botInput = {
       name,
@@ -1325,6 +1335,8 @@ async function saveBotFromRequest(body: Record<string, unknown>, root: string, i
       instructions: typeof body.instructions === "string" ? body.instructions.trim().slice(0, 20_000) || defaultBotInstructions(role) : existing?.instructions ?? defaultBotInstructions(role),
       provider: provider as "openrouter" | "litellm" | undefined,
       model: model || undefined,
+      cheapModel: cheapModel || undefined,
+      routeMode,
       mcpServers,
       endpoint,
       apiKeyEnv,
@@ -1349,8 +1361,19 @@ function validEnvName(value: string | undefined): boolean {
   return typeof value === "string" && /^[A-Za-z_][A-Za-z0-9_]*$/.test(value);
 }
 
+function normalizeRouteMode(value: unknown): "auto" | "cheap" | "strong" | undefined {
+  return value === "auto" || value === "cheap" || value === "strong" ? value : undefined;
+}
+
+function normalizeCheapModel(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > 200 || /[\r\n]/.test(trimmed)) return undefined;
+  return trimmed;
+}
+
 function publicBot(bot: NonNullable<Awaited<ReturnType<typeof findBot>>>, env: NodeJS.ProcessEnv = process.env, secretKeys: ReadonlySet<string> = new Set()) {
-  const { id, name, role, runtime, isolation, network, workspace, provider, endpoint, apiKeyEnv, model, instructions, mcpServers, createdAt, updatedAt } = bot;
+  const { id, name, role, runtime, isolation, network, workspace, provider, endpoint, apiKeyEnv, model, cheapModel, routeMode, instructions, mcpServers, createdAt, updatedAt } = bot;
   const effectiveIsolation = isOcpAgentRuntime(runtime) ? isolation ?? "docker" : undefined;
   const providerKeyConfigured = provider ? missingProviderKey(bot, env) === undefined : undefined;
   return {
@@ -1365,6 +1388,8 @@ function publicBot(bot: NonNullable<Awaited<ReturnType<typeof findBot>>>, env: N
     endpoint,
     apiKeyEnv,
     model,
+    ...(cheapModel ? { cheapModel } : {}),
+    ...(routeMode ? { routeMode } : {}),
     instructions,
     mcpServers: (mcpServers ?? []).map((server) => publicConnector(server, secretKeys.has(mcpSecretKey(bot.id, server.name)))),
     providerKeyConfigured,
@@ -1812,6 +1837,8 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;font:12.5px/1.45 "JetBrains Mono
             <label id="networkField" class="hidden">Docker Network<select name="network"><option value="disabled">Disabled</option><option value="enabled">Enabled</option></select></label>
             <label>Provider Override<select name="provider"><option value="">Use global API key / default</option><option value="openrouter">OpenRouter</option><option value="litellm">OpenAI-compatible</option></select></label>
             <label class="provider-field hidden">Model ID<input name="model" placeholder="Model id you configured"></label>
+            <label>Cheap model id<input name="cheapModel" placeholder="Blank uses the strong model for cheap steps"></label>
+            <label>Route<select name="routeMode"><option value="auto">Auto: cheap for classify, summary, and lint-fix</option><option value="cheap">Cheap model for every step</option><option value="strong">Strong model for every step</option></select></label>
             <label class="provider-field hidden">OpenAI-compatible endpoint<input name="endpoint" placeholder="http://127.0.0.1:11434/v1"></label>
             <label class="provider-field hidden">API Key Env<input name="apiKeyEnv" value="LITELLM_API_KEY"></label>
             <label>MCP servers (JSON name + url only; tokens belong in Connectors)<textarea name="mcpServers" placeholder='[{"name":"docs","url":"http://127.0.0.1:3100"}]'></textarea></label>
@@ -1986,8 +2013,10 @@ function renderUsage(pBots){
   const recent=(usage.recent||[]).slice(0,8).map(c=>{
     const cached=c.estimated||c.cachedPromptTokens===undefined?'':(' · '+c.cachedPromptTokens+' cached / '+Math.max(0,c.promptTokens-c.cachedPromptTokens)+' uncached');
     const label=(c.estimated?('estimated '+c.promptTokens+' in / '+c.completionTokens+' out'):(c.promptTokens+' in / '+c.completionTokens+' out'))+cached;
-    const cost=c.costBasis==='entered'?'$'+usd(c.costUsd)+' from entered prices':c.costBasis==='local-default'?'$0 local default':'no price entered';
-    return '<div class="event"><time>'+esc(new Date(c.createdAt).toLocaleTimeString())+'</time>'+esc(c.model)+' · '+esc(label)+'<div class="meta">'+esc(botName(c.botId))+' · '+esc(cost)+'</div></div>';
+    const step=c.step?esc(c.step)+' · ':'';
+    const tier=c.tier?esc(c.tier)+(c.routeFallback?' (no cheap model configured)':'')+' · ':'';
+    const cost=c.costBasis==='entered'?'$'+usd(c.costUsd)+' from entered prices'+(c.estimated?' on estimated tokens':''):c.costBasis==='local-default'?'$0 local default':'no price entered';
+    return '<div class="event"><time>'+esc(new Date(c.createdAt).toLocaleTimeString())+'</time>'+step+tier+esc(c.model)+' · '+esc(label)+'<div class="meta">'+esc(botName(c.botId))+' · '+esc(cost)+'</div></div>';
   }).join('')||'<div class="meta">No model calls yet.</div>';
   const priceRows=prices.map(p=>'<div class="nav-item"><div class="nav-main"><strong>'+esc(p.model)+'</strong><div class="meta">$'+esc(String(p.inputPerMillion))+' in / $'+esc(String(p.outputPerMillion))+' out per 1M tokens</div></div><button type="button" class="ghost" data-price-remove="'+esc(p.model)+'">Remove</button></div>').join('')||'<div class="meta">No prices entered.</div>';
   const day=caps.perDay||{};
@@ -2227,6 +2256,8 @@ function editBot(id){
   form.elements.workspace.value=bot.workspace;
   form.elements.provider.value=bot.provider||'';
   form.elements.model.value=bot.model||'';
+  form.elements.cheapModel.value=bot.cheapModel||'';
+  form.elements.routeMode.value=bot.routeMode||'auto';
   form.elements.endpoint.value=bot.endpoint||'';
   form.elements.apiKeyEnv.value=bot.apiKeyEnv||'LITELLM_API_KEY';
   form.elements.instructions.value=bot.instructions||'';

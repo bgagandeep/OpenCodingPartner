@@ -35,6 +35,8 @@ export interface BotDefinition {
   endpoint?: string;
   apiKeyEnv?: string;
   model?: string;
+  cheapModel?: string;
+  routeMode?: "auto" | "cheap" | "strong";
   runtimeSessionId?: string;
   mcpServers?: BotMcpServer[];
   createdAt: string;
@@ -734,7 +736,7 @@ export async function createBot(
 
 export async function updateBot(
   id: string,
-  update: Partial<Pick<BotDefinition, "name" | "role" | "runtime" | "isolation" | "network" | "workspace" | "instructions" | "provider" | "endpoint" | "apiKeyEnv" | "model" | "mcpServers">>,
+  update: Partial<Pick<BotDefinition, "name" | "role" | "runtime" | "isolation" | "network" | "workspace" | "instructions" | "provider" | "endpoint" | "apiKeyEnv" | "model" | "cheapModel" | "routeMode" | "mcpServers">>,
   root = productDataDir(),
   options: { actor?: "human" | "bot" } = {},
 ): Promise<BotDefinition> {
@@ -1361,6 +1363,8 @@ export async function runBotSession(
   const args = resolved.args;
   const runtimeEnv: NodeJS.ProcessEnv = { ...effectiveEnv, OCP_DATA_DIR: dataRoot, OCP_ACTOR_BOT_ID: bot.id };
   if (options.taskId) runtimeEnv.OCP_TASK_ID = options.taskId;
+  if (bot.cheapModel) runtimeEnv.OCP_CHEAP_MODEL = bot.cheapModel;
+  if (bot.routeMode) runtimeEnv.OCP_ROUTE_MODE = bot.routeMode;
   if (agentRuntime && (bot.isolation ?? "docker") === "docker" && !dockerDaemonAvailable(runtimeEnv)) {
     throw new Error("Docker isolation is configured but Docker is not available. Install Docker, or have a human switch this bot to host isolation.");
   }

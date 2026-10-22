@@ -243,6 +243,12 @@ test("native runtime asks before an external MCP call and does not store the tok
     request.on("data", (chunk: Buffer) => chunks.push(chunk));
     request.on("end", () => {
       llm.unref();
+      const raw = Buffer.concat(chunks).toString("utf8");
+      if (raw.includes("Classify this user turn for OCP.")) {
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify({ choices: [{ message: { role: "assistant", content: "edit" } }] }));
+        return;
+      }
       const count = Number(llmCalls);
       llmCalls += 1;
       const message = count === 0

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createServer } from "node:http";
 import { once } from "node:events";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
@@ -111,6 +111,18 @@ test("a session cache hit is zero tokens and is not a provider cache or an unpri
 
 test("the usage panel labels a session cache hit as no provider call", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "ocp-cache-ui-"));
+  await noteModelUsage(root, {
+    botId: "ada",
+    model: "stub-model",
+    provider: "custom",
+    baseUrl: "http://127.0.0.1:9/v1",
+    usage: undefined,
+    promptText: "ignored",
+    completionText: "ignored",
+    sessionCache: true,
+    step: "edit",
+    tier: "strong",
+  });
   const app = await startProductApp({
     root,
     port: 0,
@@ -119,7 +131,19 @@ test("the usage panel labels a session cache hit as no provider call", async () 
   try {
     const html = await (await fetch(app.url)).text();
     assert.match(html, /session cache, no provider call/);
-    assert.doesNotMatch(html, /OpenClaw|LiteLLM|Grok Build/);
+    const script = /<script nonce="[^"]*">([\s\S]*)<\/script>/.exec(html)?.[1] ?? "";
+    const scriptPath = path.join(root, "dash.js");
+    await writeFile(scriptPath, script);
+    const checked = spawnSync(process.execPath, ["--check", scriptPath], { encoding: "utf8" });
+    assert.equal(checked.status, 0, checked.stderr);
+    const state = await (await fetch(`${app.url}/api/state`)).json() as {
+      usage?: { recent?: Array<{ costBasis?: string; estimated?: boolean; promptTokens?: number; cachedPromptTokens?: number }>; today?: { sessionCacheCalls?: number } };
+    };
+    assert.equal(state.usage?.recent?.[0]?.costBasis, "session-cache");
+    assert.equal(state.usage?.recent?.[0]?.estimated, false);
+    assert.equal(state.usage?.recent?.[0]?.promptTokens, 0);
+    assert.equal(state.usage?.recent?.[0]?.cachedPromptTokens, undefined);
+    assert.equal(state.usage?.today?.sessionCacheCalls, 1);
   } finally {
     await app.close();
     await rm(root, { recursive: true, force: true });

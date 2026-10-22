@@ -1,0 +1,60 @@
+import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { test } from "node:test";
+import { startProductApp } from "./server.js";
+
+test("the studio keeps dark and light themes and persists the choice", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ocp-theme-"));
+  const env: NodeJS.ProcessEnv = { PATH: process.env.PATH, HOME: root, HERMES_HOME: root, OCP_DATA_DIR: root };
+  const app = await startProductApp({ root, port: 0, env });
+  try {
+    const first = await fetch(app.url);
+    const html = await first.text();
+    assert.match(html, /<html lang="en" data-theme="dark">/);
+    assert.match(html, /data-theme-choice="dark" aria-pressed="true"/);
+    assert.match(html, /data-theme-choice="light"/);
+    assert.match(html, /data-theme-choice="system"/);
+    assert.match(html, /aria-label="Theme"/);
+    assert.match(html, /Theme Dark/);
+    assert.match(html, /Theme Light/);
+    assert.match(html, /Theme System/);
+    assert.match(html, /#06040f/);
+    assert.match(html, /#f5f5f7/);
+    assert.match(html, /prefers-color-scheme:light/);
+    const script = /<script nonce="[^"]*">([\s\S]*)<\/script>/.exec(html)?.[1] ?? "";
+    await writeFile(path.join(root, "dash.js"), script);
+    const checked = spawnSync(process.execPath, ["--check", path.join(root, "dash.js")], { encoding: "utf8" });
+    assert.equal(checked.status, 0, checked.stderr);
+    const token = /script-src 'nonce-([a-f0-9]+)'/.exec(first.headers.get("content-security-policy") ?? "")?.[1] ?? "";
+    const headers = { "content-type": "application/json", "x-ocp-token": token };
+    const bad = await fetch(`${app.url}/api/settings`, { method: "POST", headers, body: JSON.stringify({ theme: "neon" }) });
+    assert.equal(bad.status, 400);
+    const stillDark = await (await fetch(app.url)).text();
+    assert.match(stillDark, /<html lang="en" data-theme="dark">/);
+    const saved = await fetch(`${app.url}/api/settings`, { method: "POST", headers, body: JSON.stringify({ theme: "light" }) });
+    assert.equal(saved.status, 200);
+    const savedBody = await saved.json() as { theme: string };
+    assert.equal(savedBody.theme, "light");
+    const light = await (await fetch(app.url)).text();
+    assert.match(light, /<html lang="en" data-theme="light">/);
+    assert.match(light, /data-theme-choice="light" aria-pressed="true"/);
+    const fromCookie = await (await fetch(app.url, { headers: { cookie: "ocp-theme=system" } })).text();
+    assert.match(fromCookie, /<html lang="en" data-theme="system">/);
+    const stored = await (await fetch(app.url)).text();
+    assert.match(stored, /<html lang="en" data-theme="light">/);
+    const kept = await fetch(`${app.url}/api/settings`, { method: "POST", headers, body: JSON.stringify({ defaultModel: "local-model" }) });
+    const keptBody = await kept.json() as { theme: string; defaultModel: string };
+    assert.equal(keptBody.theme, "light");
+    assert.equal(keptBody.defaultModel, "local-model");
+    const system = await fetch(`${app.url}/api/settings`, { method: "POST", headers, body: JSON.stringify({ theme: "system" }) });
+    assert.equal(system.status, 200);
+    assert.equal((await system.json() as { theme: string }).theme, "system");
+    assert.match(await (await fetch(app.url)).text(), /<html lang="en" data-theme="system">/);
+  } finally {
+    await app.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});

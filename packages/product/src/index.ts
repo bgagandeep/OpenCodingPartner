@@ -226,6 +226,7 @@ export interface ProviderSettings {
   telegramBotId?: string;
   modelPrices?: ModelPrice[];
   usageCaps?: UsageCaps;
+  theme?: "dark" | "light" | "system";
   updatedAt?: string;
 }
 
@@ -240,14 +241,14 @@ export async function readProviderSettings(root = productDataDir()): Promise<Pro
 }
 
 export async function saveProviderSettings(
-  input: Partial<Omit<ProviderSettings, "modelPrices" | "usageCaps">> & { modelPrices?: unknown; usageCaps?: unknown },
+  input: Partial<Omit<ProviderSettings, "modelPrices" | "usageCaps" | "theme">> & { modelPrices?: unknown; usageCaps?: unknown; theme?: unknown },
   root = productDataDir(),
 ): Promise<ProviderSettings> {
   await mkdir(root, { recursive: true, mode: 0o700 });
   await chmod(root, 0o700).catch(() => undefined);
   const current = await readProviderSettings(root);
   const next: ProviderSettings = { ...current, updatedAt: new Date().toISOString() };
-  const assign = (key: keyof Omit<ProviderSettings, "updatedAt" | "modelPrices" | "usageCaps">) => {
+  const assign = (key: keyof Omit<ProviderSettings, "updatedAt" | "modelPrices" | "usageCaps" | "theme">) => {
     if (!Object.prototype.hasOwnProperty.call(input, key)) return;
     const val = typeof input[key] === "string" ? input[key]!.trim() : "";
     if (val) next[key] = val;
@@ -266,6 +267,7 @@ export async function saveProviderSettings(
   assign("telegramBotId");
   if (Object.prototype.hasOwnProperty.call(input, "modelPrices")) next.modelPrices = normalizeModelPrices(input.modelPrices);
   if (Object.prototype.hasOwnProperty.call(input, "usageCaps")) next.usageCaps = normalizeUsageCaps(input.usageCaps);
+  if (input.theme === "dark" || input.theme === "light" || input.theme === "system") next.theme = input.theme;
   const target = path.join(root, "settings.json");
   await writeFile(target, `${JSON.stringify(next, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
   await chmod(target, 0o600).catch(() => undefined);

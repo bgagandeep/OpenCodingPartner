@@ -118,7 +118,7 @@ Bot configuration -> OCP Agent adapter -> OCP Agent (Hermes ACP) -> configured e
 
 ## Current repository: implemented foundation
 
-This repository is an early product prototype, not yet the target product above. It now has a local browser dashboard, durable bot/task state, isolated **OCP Agent** profiles for explicit OpenRouter/LiteLLM bots, Docker-backed **OCP Agent** tool execution, task history, cancellation, and one-action approvals. It still lacks a complete product UI, secret-store integration, container isolation for standalone `ocp-coder` runtime processes, and team orchestration built on durable task records.
+This repository is a local product you can run today. It is shorter than the target above. The loopback dashboard, durable bot and task records, credentials vault, bring-your-own account connectors, routines, skills, draft-before-send, and a virtual computer with Take Control are in the tree. Standalone `ocp-coder` processes still run with the operator's OS permissions rather than the **OCP Agent** container boundary. A QA or security review is a fixed handoff, not open-ended team orchestration. One operator, one machine. See [Onboarding](docs/onboarding.md).
 
 | Package/path | Current role | Target direction |
 | --- | --- | --- |
@@ -128,7 +128,7 @@ This repository is an early product prototype, not yet the target product above.
 | `packages/swarm` | In-memory stand-up/list/dispatch of role records | Replace or evolve into durable bot registry and task orchestration; do not confuse role records with running independent agents |
 | `packages/workers` | Local coding, security, QA, and computer implementations; coding and OpenAI-compatible runners | Preserve valuable tool/policy functions behind **OCP Agent** / **OCP Coder** tool contracts; coding is a bot capability, not a disconnected app |
 | `packages/mesh` | Shared role and session types | Evolve into stable product domain contracts for bots, tasks, runs, sessions, grants, and events |
-| `packages/product` | Local JSON bot/task registry, **OCP Agent** & **OCP Coder** ACP runtime, task event history, and loopback dashboard server | Grow into durable product services, runtime lifecycle, provider and credential management, and team orchestration |
+| `packages/product` | Local JSON bot/task registry, **OCP Agent** and **OCP Coder** runtime, loopback dashboard, vault, routines, skills, and account connectors | Keep the loopback boundary. Grow handoffs into durable team orchestration |
 | `packages/bundle` | Installs/probes legacy stack binaries; LiteLLM-compatible coding path | Add/replace with **OCP Agent** runtime setup and provider configuration; retain OpenClaw only as an optional integration if it adds value |
 | `integrations/openclaw-sandbox-write` | OpenClaw plugin plus loopback bridge for guarded sandbox writes | Keep the security boundary; decouple it from OpenClaw and expose guarded tool contracts to **OCP Agent** |
 

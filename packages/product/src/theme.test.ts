@@ -45,6 +45,13 @@ test("the studio keeps dark and light themes and persists the choice", async () 
     assert.match(fromCookie, /<html lang="en" data-theme="system">/);
     const stored = await (await fetch(app.url)).text();
     assert.match(stored, /<html lang="en" data-theme="light">/);
+    const junk = await (await fetch(app.url, { headers: { cookie: "ocp-theme=neon" } })).text();
+    assert.match(junk, /<html lang="en" data-theme="light">/);
+    const disguised = await (await fetch(app.url, { headers: { cookie: "foo=ocp-theme=dark" } })).text();
+    assert.match(disguised, /<html lang="en" data-theme="light">/);
+    const blank = await fetch(`${app.url}/api/settings`, { method: "POST", headers, body: JSON.stringify({ theme: "" }) });
+    assert.equal(blank.status, 400);
+    assert.match(await (await fetch(app.url)).text(), /<html lang="en" data-theme="light">/);
     const kept = await fetch(`${app.url}/api/settings`, { method: "POST", headers, body: JSON.stringify({ defaultModel: "local-model" }) });
     const keptBody = await kept.json() as { theme: string; defaultModel: string };
     assert.equal(keptBody.theme, "light");

@@ -1995,6 +1995,7 @@ function costLine(b){
   const bits=[];
   if(b.enteredCostUsd!==undefined)bits.push('$'+usd(b.enteredCostUsd)+' from entered prices');
   if(b.localDefaultCalls)bits.push(b.localDefaultCalls+' local at $0 default');
+  if(b.sessionCacheCalls)bits.push(b.sessionCacheCalls+' session cache, no provider call');
   if(b.unpricedCalls)bits.push(b.unpricedCalls+(b.unpricedCalls===1?' call has no price entered':' calls have no price entered'));
   return bits.join(' · ')||'No usage yet';
 }
@@ -2015,7 +2016,7 @@ function renderUsage(pBots){
     const label=(c.estimated?('estimated '+c.promptTokens+' in / '+c.completionTokens+' out'):(c.promptTokens+' in / '+c.completionTokens+' out'))+cached;
     const step=c.step?esc(c.step)+' · ':'';
     const tier=c.tier?esc(c.tier)+(c.routeFallback?' (no cheap model configured)':'')+' · ':'';
-    const cost=c.costBasis==='entered'?'$'+usd(c.costUsd)+' from entered prices'+(c.estimated?' on estimated tokens':''):c.costBasis==='local-default'?'$0 local default':'no price entered';
+    const cost=c.costBasis==='entered'?'$'+usd(c.costUsd)+' from entered prices'+(c.estimated?' on estimated tokens':''):c.costBasis==='local-default'?'$0 local default':c.costBasis==='session-cache'?'session cache, no provider call':'no price entered';
     return '<div class="event"><time>'+esc(new Date(c.createdAt).toLocaleTimeString())+'</time>'+step+tier+esc(c.model)+' · '+esc(label)+'<div class="meta">'+esc(botName(c.botId))+' · '+esc(cost)+'</div></div>';
   }).join('')||'<div class="meta">No model calls yet.</div>';
   const priceRows=prices.map(p=>'<div class="nav-item"><div class="nav-main"><strong>'+esc(p.model)+'</strong><div class="meta">$'+esc(String(p.inputPerMillion))+' in / $'+esc(String(p.outputPerMillion))+' out per 1M tokens</div></div><button type="button" class="ghost" data-price-remove="'+esc(p.model)+'">Remove</button></div>').join('')||'<div class="meta">No prices entered.</div>';

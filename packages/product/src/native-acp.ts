@@ -13,6 +13,16 @@ import { layoutCachedPrompt } from "./prompt-cache.js";
 import { retrieveWorkspaceSnippets } from "./retrieval.js";
 import { recentTokenBudget } from "./provider-presets.js";
 import { classifyPrompt, formatRouteUsage, nextRouteStep, parseRouteLabel, selectStepModel, type RouteStep } from "./routing.js";
+import {
+  forgetToolResponses,
+  isCacheableTool,
+  lookupResponse,
+  modelCacheKey,
+  modelResponseIsCacheable,
+  storeResponse,
+  toolCacheKey,
+  type ResponseCacheEntry,
+} from "./response-cache.js";
 import { presentToolOutput, toolOutputDataDir } from "./tool-trim.js";
 import type { ReadStamp } from "./tool-trim.js";
 import { noteModelUsage, usageCapReason, usageProviderKind } from "./usage.js";
@@ -65,6 +75,7 @@ interface SessionState {
   foldedCount?: number;
   pinned?: PinnedNotes;
   reads?: ReadStamp[];
+  responseCache?: ResponseCacheEntry[];
 }
 
 interface ProviderConfig {
@@ -555,6 +566,7 @@ export async function runNativeAcpAgent(): Promise<void> {
           usage: unknown;
           promptText: string;
           completionText: string;
+          sessionCache?: boolean;
         }): Promise<void> => {
           if (!process.env.OCP_DATA_DIR || !process.env.OCP_ACTOR_BOT_ID) return;
           const recorded = await noteModelUsage(process.env.OCP_DATA_DIR, {
@@ -569,6 +581,7 @@ export async function runNativeAcpAgent(): Promise<void> {
             step: input.step,
             tier: input.tier,
             routeFallback: input.routeFallback,
+            sessionCache: input.sessionCache,
           });
           send({
             jsonrpc: "2.0",
@@ -592,6 +605,55 @@ export async function runNativeAcpAgent(): Promise<void> {
             },
           });
         };
+        const takeModel = async (input: {
+          model: string;
+          messages: unknown;
+          toolNames: string[];
+          tools?: typeof openAiTools;
+        }): Promise<{ message: ChatMessage; usage: unknown; sessionCache: boolean }> => {
+          const key = modelCacheKey(input.model, input.messages, input.toolNames);
+          const hit = lookupResponse(state.responseCache, "model", key);
+          if (hit) {
+            try {
+              const message = JSON.parse(hit) as ChatMessage;
+              if (message?.role === "assistant") return { message, usage: undefined, sessionCache: true };
+            } catch {
+              // A corrupt entry is a miss. The provider call below replaces it when the result is cacheable.
+            }
+          }
+          const response = await fetch(`${config.baseUrl}/chat/completions`, {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              authorization: `Bearer ${config.apiKey}`,
+            },
+            body: JSON.stringify({
+              model: input.model,
+              messages: input.messages,
+              ...(input.tools && input.tools.length > 0 ? { tools: input.tools } : {}),
+            }),
+          });
+          if (!response.ok) {
+            const errText = (await response.text().catch(() => "")).slice(0, 600);
+            throw new Error(`Provider HTTP ${response.status}: ${errText || response.statusText}`);
+          }
+          const payload = (await response.json()) as {
+            choices?: Array<{ message?: ChatMessage }>;
+            usage?: unknown;
+          };
+          const choice = payload.choices?.[0]?.message;
+          if (!choice) throw new Error("Provider returned no completion choices.");
+          const toolCalls = Array.isArray(choice.tool_calls) ? choice.tool_calls : [];
+          const message: ChatMessage = {
+            role: "assistant",
+            content: typeof choice.content === "string" ? choice.content : null,
+            ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
+          };
+          if (modelResponseIsCacheable(toolCalls.map((call) => call.function.name))) {
+            state.responseCache = storeResponse(state.responseCache, "model", key, JSON.stringify(message));
+          }
+          return { message, usage: payload.usage, sessionCache: false };
+        };
         let retrievalFor = "";
         let retrievalText = "";
         const messagesForModel = async (cacheModel: string) => {
@@ -606,22 +668,18 @@ export async function runNativeAcpAgent(): Promise<void> {
               const summaryConfigured = Boolean(process.env.OCP_SUMMARY_MODEL?.trim() || cheapModel || localProvider);
               if (!summaryConfigured || !config.apiKey) return undefined;
               try {
-                const summaryResponse = await fetch(`${config.baseUrl}/chat/completions`, {
-                  method: "POST",
-                  headers: { "content-type": "application/json", authorization: `Bearer ${config.apiKey}` },
-                  body: JSON.stringify({ model: summaryChoice.model, messages: [{ role: "user", content: prompt }] }),
-                });
-                if (!summaryResponse.ok) return undefined;
-                const summaryPayload = await summaryResponse.json() as { choices?: Array<{ message?: { content?: string | null } }>; usage?: unknown };
-                const text = summaryPayload.choices?.[0]?.message?.content;
+                const summaryMessages = [{ role: "user", content: prompt }];
+                const taken = await takeModel({ model: summaryChoice.model, messages: summaryMessages, toolNames: [] });
+                const text = taken.message.content;
                 await recordStep({
                   model: summaryChoice.model,
                   step: "summary",
                   tier: summaryChoice.tier,
                   routeFallback: summaryChoice.fallback,
-                  usage: summaryPayload.usage,
+                  usage: taken.usage,
                   promptText: prompt,
                   completionText: typeof text === "string" ? text : "",
+                  sessionCache: taken.sessionCache,
                 }).catch(() => undefined);
                 return typeof text === "string" ? text : undefined;
               } catch {
@@ -679,28 +737,23 @@ export async function runNativeAcpAgent(): Promise<void> {
             if (routeMode !== "strong" && classifyChoice.tier === "cheap" && !classifyChoice.fallback) {
               const latestUser = [...state.messages].reverse().find((message) => message.role === "user")?.content ?? "";
               try {
-                const classifyResponse = await fetch(`${config.baseUrl}/chat/completions`, {
-                  method: "POST",
-                  headers: { "content-type": "application/json", authorization: `Bearer ${config.apiKey}` },
-                  body: JSON.stringify({
-                    model: classifyChoice.model,
-                    messages: [{ role: "user", content: classifyPrompt(latestUser) }],
-                  }),
+                const taken = await takeModel({
+                  model: classifyChoice.model,
+                  messages: [{ role: "user", content: classifyPrompt(latestUser) }],
+                  toolNames: [],
                 });
-                if (classifyResponse.ok) {
-                  const classifyPayload = await classifyResponse.json() as { choices?: Array<{ message?: { content?: string | null } }>; usage?: unknown };
-                  const classifyText = classifyPayload.choices?.[0]?.message?.content ?? "";
-                  await recordStep({
-                    model: classifyChoice.model,
-                    step: "classify",
-                    tier: classifyChoice.tier,
-                    routeFallback: classifyChoice.fallback,
-                    usage: classifyPayload.usage,
-                    promptText: latestUser,
-                    completionText: typeof classifyText === "string" ? classifyText : "",
-                  });
-                  routeStep = (typeof classifyText === "string" ? parseRouteLabel(classifyText) : undefined) ?? routeStep;
-                }
+                const classifyText = taken.message.content ?? "";
+                await recordStep({
+                  model: classifyChoice.model,
+                  step: "classify",
+                  tier: classifyChoice.tier,
+                  routeFallback: classifyChoice.fallback,
+                  usage: taken.usage,
+                  promptText: latestUser,
+                  completionText: typeof classifyText === "string" ? classifyText : "",
+                  sessionCache: taken.sessionCache,
+                });
+                routeStep = (typeof classifyText === "string" ? parseRouteLabel(classifyText) : undefined) ?? routeStep;
               } catch {
                 routeStep = routeMode === "cheap" ? "answer" : "edit";
               }
@@ -709,57 +762,27 @@ export async function runNativeAcpAgent(): Promise<void> {
           const routeChoice = choiceFor(routeStep);
           const modelMessages = await messagesForModel(routeChoice.model);
           const promptText = JSON.stringify(modelMessages);
-          const response = await fetch(`${config.baseUrl}/chat/completions`, {
-            method: "POST",
-            headers: {
-              "content-type": "application/json",
-              authorization: `Bearer ${config.apiKey}`,
-            },
-            body: JSON.stringify({
-              model: routeChoice.model,
-              messages: modelMessages,
-              ...(openAiTools.length > 0 ? { tools: openAiTools } : {}),
-            }),
+          const toolNames = openAiTools.map((tool) => tool.function.name);
+          const taken = await takeModel({
+            model: routeChoice.model,
+            messages: modelMessages,
+            toolNames,
+            tools: openAiTools,
           });
-
-          if (!response.ok) {
-            const errText = (await response.text().catch(() => "")).slice(0, 600);
-            throw new Error(`Provider HTTP ${response.status}: ${errText || response.statusText}`);
-          }
-
-          const payload = (await response.json()) as {
-            choices?: Array<{
-              message?: {
-                role?: string;
-                content?: string | null;
-                tool_calls?: Array<{
-                  id: string;
-                  type: "function";
-                  function: { name: string; arguments: string };
-                }>;
-              };
-            }>;
-          };
-          const choice = payload.choices?.[0]?.message;
-          if (!choice) throw new Error("Provider returned no completion choices.");
-
-          const assistantText = typeof choice.content === "string" ? choice.content : "";
-          const toolCalls = Array.isArray(choice.tool_calls) ? choice.tool_calls : [];
+          const assistantText = typeof taken.message.content === "string" ? taken.message.content : "";
+          const toolCalls = taken.message.tool_calls ?? [];
           await recordStep({
             model: routeChoice.model,
             step: routeStep,
             tier: routeChoice.tier,
             routeFallback: routeChoice.fallback,
-            usage: (payload as { usage?: unknown }).usage,
+            usage: taken.usage,
             promptText,
             completionText: assistantText || JSON.stringify(toolCalls),
+            sessionCache: taken.sessionCache,
           });
 
-          state.messages.push({
-            role: "assistant",
-            content: assistantText || null,
-            ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
-          });
+          state.messages.push(taken.message);
 
           if (assistantText) {
             send({
@@ -834,7 +857,26 @@ export async function runNativeAcpAgent(): Promise<void> {
               });
               continue;
             }
-            const toolResult = await entry.bridge.callTool(toolName, parsedArgs);
+            const cacheKey = toolCacheKey(toolName, parsedArgs);
+            const cachedText = isCacheableTool(toolName) ? lookupResponse(state.responseCache, "tool", cacheKey) : undefined;
+            let toolResult: { text: string; isError: boolean };
+            if (cachedText !== undefined) {
+              send({
+                jsonrpc: "2.0",
+                method: "session/update",
+                params: {
+                  sessionId,
+                  update: { sessionUpdate: "tool_call", title: `session cache hit: ${toolName}` },
+                },
+              });
+              toolResult = { text: cachedText, isError: false };
+            } else {
+              toolResult = await entry.bridge.callTool(toolName, parsedArgs);
+              if (isCacheableTool(toolName) && !toolResult.isError) {
+                state.responseCache = storeResponse(state.responseCache, "tool", cacheKey, toolResult.text);
+              }
+            }
+            if (MUTATING_TOOLS.has(toolName)) state.responseCache = forgetToolResponses(state.responseCache);
             let content = toolResult.text;
             if (toolName !== "tool_output_read") {
               const presented = await presentToolOutput({

@@ -234,13 +234,6 @@ export async function loginCompanyAssertion(root: string, assertion: string): Pr
   return created;
 }
 
-export async function speakTranscript(transcript: string): Promise<{ heard: string; spoken: string }> {
-  const heard = transcript.replace(/[\r\n]+/g, " ").trim();
-  if (!heard || heard.length > 4_000) throw new Error("Voice needs a transcript of 1 to 4,000 characters.");
-  const spoken = redactStored(`No model is configured. Heard: ${heard}. This turn will not invent an action.`);
-  return { heard: redactStored(heard), spoken };
-}
-
 export async function listPages(root: string): Promise<StudioPage[]> {
   const rows = await readJson<unknown>(file(root, "pages.json"), []);
   if (!Array.isArray(rows)) return [];

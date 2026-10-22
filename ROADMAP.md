@@ -37,7 +37,7 @@ One-off text/file CLI helpers (`ocp lower`, `ocp squeeze`, …) still exist for 
 7. A named deny rule the audit row can quote.
 8. `ocp doctor` printing local, hosted, or not configured, without the key and without a network call.
 
-A loopback agent endpoint, component replies, a local directory with company assertion sign-in, voice transcripts, WhatsApp drafts, and pages are in this tree. gVisor, a Helm chart, and a database inside the app image are not yet in this tree. Standalone **OCP Coder** uses workspace confinement when `OCP_CODER_CONFINEMENT=workspace` and otherwise uses the operator's OS permissions.
+A loopback agent endpoint, component replies, a local directory, WhatsApp drafts, and pages are in this tree. Company sign-in checks a signed assertion on this machine and does not contact a company directory. Allowing a WhatsApp draft still sends nothing. Voice and meetings are not now. gVisor, a Helm chart, and a database inside the app image are not yet in this tree. Standalone **OCP Coder** uses workspace confinement when `OCP_CODER_CONFINEMENT=workspace` and otherwise uses the operator's OS permissions.
 
 ## Later
 

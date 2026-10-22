@@ -14,8 +14,10 @@ Open Coding Partner is a local agentic coding partner. You run it on your machin
 - A model. There is no default model. The header shows **No model configured** until you set one.
 - A hosted account, a public website, or a signup. The server refuses to bind to anything except `127.0.0.1`, `localhost`, or `::1`.
 - A bundled OAuth client. Google and Microsoft connectors use a client you create. See [OAuth setup](oauth-setup.md).
-- Voice, WhatsApp, or a pages surface. Those are still on the roadmap.
-- A computer per bot, a readable audit, a standing responsibility, a thread for two bots, a reach draft, editable memory, a named deny rule, an honest doctor line, a loopback agent endpoint, component replies, a local directory, voice transcripts, WhatsApp drafts, and pages are in this tree. [The path](parity-path.md) lists those proofs and the surfaces that are still false.
+- Voice and meetings. Those are not now.
+- WhatsApp delivery. A WhatsApp reach is a draft. Allowing it still sends nothing.
+- A company directory. Sign-in checks a signed assertion on this machine and does not contact one.
+- A computer per bot, a readable audit, a standing responsibility, a thread for two bots, a reach draft, editable memory, a named deny rule, an honest doctor line, a loopback agent endpoint, component replies, a local directory, WhatsApp drafts, and pages are in this tree. [The path](parity-path.md) lists those proofs, what is not now, and the surfaces that are still false.
 
 Ads are off. Payments are off. Seats and credit packs in Settings are design only. No charge is made.
 

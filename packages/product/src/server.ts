@@ -5,7 +5,7 @@ import path from "node:path";
 import { readFile, stat } from "node:fs/promises";
 import { readWorkspaceFile } from "./workspace-mcp.js";
 import { correctMemory, createResponsibility, createThread, forgetMemory, listAudit, listDenyRules, listMemory, listResponsibilities, listThreads, reachThread, recordAudit, saveDenyRule, updateResponsibility } from "./teammate.js";
-import { appendWhatsappOutbox, createDirectoryUser, executeAguiRun, listAgents, listDirectory, listPages, loginCompanyAssertion, loginDirectory, registerAgent, savePage, setCompanyAssertionSecret, speakTranscript } from "./category.js";
+import { appendWhatsappOutbox, createDirectoryUser, executeAguiRun, listAgents, listDirectory, listPages, loginCompanyAssertion, loginDirectory, registerAgent, savePage, setCompanyAssertionSecret } from "./category.js";
 import {
   postSlackReply,
   postTelegramReply,
@@ -1442,14 +1442,6 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
       }
       return;
     }
-    if (request.method === "POST" && url.pathname === "/api/voice") {
-      try {
-        sendJson(response, 200, await speakTranscript(typeof body.transcript === "string" ? body.transcript : ""));
-      } catch (error) {
-        sendJson(response, 400, { error: error instanceof Error ? error.message : "Could not speak that transcript." });
-      }
-      return;
-    }
     if (request.method === "POST" && url.pathname === "/api/pages") {
       try {
         const page = await savePage(root, typeof body.title === "string" ? body.title : "", typeof body.body === "string" ? body.body : "");
@@ -2479,7 +2471,7 @@ li{margin:4px 0}
 
       <div id="tab-category" class="tab-pane hidden">
         <h2>Category</h2>
-        <p class="sub">A foreign agent on this machine, component replies, a local directory, voice transcripts, and pages. WhatsApp reach stays a draft. Nothing is sent automatically.</p>
+        <p class="sub">A foreign agent on this machine, component replies, a local directory, and pages. WhatsApp reach stays a draft. Allowing that draft still sends nothing. Company sign-in checks a signed assertion on this machine and does not contact a company directory.</p>
         <form id="agentForm">
           <label>Agent name<input name="name" required></label>
           <label>Loopback URL<input name="url" required placeholder="http://127.0.0.1:9/agent"></label>
@@ -2499,12 +2491,6 @@ li{margin:4px 0}
           <button type="submit" class="secondary">Enable company sign-in</button>
         </form>
         <div id="directoryList" class="meta mt-sm"></div>
-        <h3>Voice</h3>
-        <form id="voiceForm">
-          <label>Transcript<input name="transcript" required></label>
-          <button type="submit">Speak</button>
-        </form>
-        <div id="voiceResult" class="meta mt-sm"></div>
         <h3>Pages</h3>
         <form id="pageForm">
           <label>Title<input name="title" required></label>
@@ -3878,13 +3864,6 @@ document.querySelector('#companyForm')?.addEventListener('submit',async e=>{
   await api('/api/directory/company',{secret:f.elements.secret.value},'POST');
   f.reset();
   await refreshTeammate();
-});
-document.querySelector('#voiceForm')?.addEventListener('submit',async e=>{
-  e.preventDefault();
-  const f=e.target;
-  const spoken=await api('/api/voice',{transcript:f.elements.transcript.value},'POST');
-  const slot=document.querySelector('#voiceResult');
-  if(slot)slot.textContent=spoken.spoken||'';
 });
 document.querySelector('#pageForm')?.addEventListener('submit',async e=>{
   e.preventDefault();

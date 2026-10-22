@@ -9,3 +9,4 @@ Grok Build — Apache-2.0 — xAI (SpaceXAI) — https://github.com/xai-org/grok
 Laya — Apache-2.0 — Convai Innovations — https://pypi.org/project/laya/
 LiteLLM — MIT — BerriAI — https://github.com/BerriAI/litellm
 Hermes Agent — MIT — Nous Research — https://github.com/NousResearch/hermes-agent — optional ACP-shaped backend, not installed and not required
+OpenBot — MIT — CopilotKit — https://github.com/CopilotKit/OpenBot — coworker shape only (a computer per coworker, a recorded gate, take the controls). Source is not copied. Not affiliated.

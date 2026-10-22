@@ -6,9 +6,11 @@ Teammates powered by **OCP Agent** and **OCP Coder** (optional external ACP bina
 
 The core is free forever and open source. The operator owns the meter. The full coding partner (**OCP Coder**) is included. Seats and credit packs in Settings are design only. Billing is inert. No charge is made. Ads are off. Payments are off in the core.
 
-Start with [Onboarding](docs/onboarding.md). That guide is the first-run path: install, choose a model, spawn a team, and learn the limits. [The teammate path](docs/parity-path.md) is what still has to be built before this project is in the same category as other open coworkers. The sentence that is true today is the one in the next paragraphs. [ARCHITECTURE.md](ARCHITECTURE.md) is the design, and [ROADMAP.md](ROADMAP.md) is what is in this tree and what is still ahead.
+Start with [Onboarding](docs/onboarding.md). That guide is the first-run path: install, choose a model, spawn a team, and learn the limits. [The teammate path](docs/parity-path.md) records the proofs in this tree and the surfaces that are still false. The sentence that is true today is the one in the next paragraphs. [ARCHITECTURE.md](ARCHITECTURE.md) is the design, and [ROADMAP.md](ROADMAP.md) is what is in this tree and what is still ahead.
 
 The app binds to loopback (`127.0.0.1`) only. There is no default model and no hosted signup. You bring an OpenRouter key or a local OpenAI-compatible server. Dark is the first theme. Light and System are in the header.
+
+A bot can have a computer of its own. Consequential actions are recorded, a person can take the controls, and the model is one you run locally or one you bring. That is the teammate shape. It is not a claim to be another product. The proof list is in [the teammate path](docs/parity-path.md).
 
 ---
 
@@ -21,7 +23,7 @@ The app binds to loopback (`127.0.0.1`) only. There is no default model and no h
   - Configure any bot with OpenRouter or an OpenAI-compatible base URL (Ollama, LM Studio, vLLM, custom).
   - Open Coding Partner writes isolated per-bot runtime profiles with telemetry, feedback, and trace uploads disabled.
 - **Dedicated Virtual Computer Desktop (Mouse, Keyboard, Browser & Human Takeover)**
-  - **Linux**: Boots an isolated `1280x800` virtual X11 computer display per workspace (`Xvnc` + `xdotool` + Google Chrome + `ffmpeg` live frame capture).
+  - **Linux**: Each bot gets its own display number and Chrome profile. The display is an isolated `1280x800` virtual X11 computer (`Xvnc` + `xdotool` + Google Chrome + `ffmpeg` live frame capture). Resetting one bot does not clear another bot's profile. A workspace tool that does not name a bot still uses the shared workspace computer.
   - **macOS**: Uses built-in macOS Quartz (`CGEvent`), `System Events`, `screencapture`, and Chrome/`open` (`macos:0`) with zero external packages required.
   - Bots can inspect the screen (`computer_screen`), move/click/drag/scroll the mouse (`computer_mouse`), type text or press key combinations (`computer_keyboard`), and open pages in Chrome (`computer_browser`).
   - From the Web Dashboard, a person can watch the live screen, click the canvas, type, or click **Take Control** to pause bot input while signing in, then **Return control** to the bot.
@@ -219,6 +221,7 @@ The repository also retains its earlier sandbox and connected-stack CLI (`ocp de
 | Laya | Apache-2.0 | Convai Innovations — https://pypi.org/project/laya/ and https://huggingface.co/convaiinnovations/laya |
 | LiteLLM | MIT | BerriAI — https://github.com/BerriAI/litellm |
 | Hermes Agent | MIT | Nous Research — https://github.com/NousResearch/hermes-agent — powers the OCP Agent ACP runtime; install separately |
+| OpenBot | MIT | CopilotKit — https://github.com/CopilotKit/OpenBot — the open coworker shape (a computer per coworker, a recorded gate, take the controls) that this project implements in its own code. No OpenBot source is copied. |
 | OpenCodingPartner (OCP Agent & OCP Coder) | Apache-2.0 | OpenCodingPartner contributors |
 
 Full wording is in [NOTICE](NOTICE) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

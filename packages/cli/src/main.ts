@@ -12,7 +12,7 @@ import { appendSandboxFile, applySandboxTodo, applyUnifiedDiff, commandDecision,
 import { routeWithPredict } from "@opencodingpartner/policy";
 import { proveCoding, proveComputer } from "./prove.js";
 import { runChatRepl } from "./repl.js";
-import { backupProductData, captureWorkspaceBaseline, collectWorkspaceChanges, createBot, createTask, defaultBotInstructions, deleteBot, deleteTask, findBot, findTask, isOcpAgentRuntime, listBots, listTasks, missingProviderKey, productDataDir, recordTaskApproval, recordTaskEvent, restoreProductData, runBotSession, updateBotSession, updateTask, validBotNetworkMode, validBotProvider, validBotRole, validBotRuntime, workspacePathsMatch } from "@opencodingpartner/product";
+import { backupProductData, captureWorkspaceBaseline, collectWorkspaceChanges, createBot, createTask, defaultBotInstructions, deleteBot, deleteTask, findBot, findTask, isOcpAgentRuntime, listBots, listTasks, missingProviderKey, modelDoctorLine, productDataDir, readProviderSettings, recordTaskApproval, recordTaskEvent, restoreProductData, runBotSession, updateBotSession, updateTask, validBotNetworkMode, validBotProvider, validBotRole, validBotRuntime, workspacePathsMatch } from "@opencodingpartner/product";
 import { startProductApp } from "@opencodingpartner/product/server";
 
 function sameFile(left: string, right: string): boolean {
@@ -2822,6 +2822,13 @@ export async function main(argv: readonly string[]): Promise<number> {
       agreementLine: partnerAgreementDoctorLine(await partnerAgreementStatus(sandbox)),
       todoLine: todoDoctorLine((await listTodoQueue(sandbox)).filter((item) => !item.done).length),
     });
+    const settings = await readProviderSettings(productDataDir(process.env));
+    const baseUrl = settings.litellmBaseUrl || process.env.LITELLM_BASE_URL || process.env.OPENAI_BASE_URL || "";
+    const hasHostedKey = Boolean(
+      settings.openrouterApiKey || settings.openaiApiKey || settings.litellmApiKey
+      || process.env.OPENROUTER_API_KEY || process.env.OPENAI_API_KEY || process.env.LITELLM_API_KEY || process.env.LITELLM_MASTER_KEY,
+    );
+    process.stdout.write(`${modelDoctorLine({ baseUrl, hasHostedKey })}\n`);
     process.stdout.write(report.transcript);
     return report.code;
   }

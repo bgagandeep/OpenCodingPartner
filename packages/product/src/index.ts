@@ -297,6 +297,23 @@ export function applyProviderSettingsToEnv(
   return merged;
 }
 
+export function modelDoctorLine(input: { baseUrl?: string; hasHostedKey: boolean }): string {
+  const base = input.baseUrl?.trim() ?? "";
+  if (base) {
+    try {
+      const url = new URL(base);
+      url.username = "";
+      url.password = "";
+      const shown = `${url.origin}${url.pathname === "/" ? "" : url.pathname}`.replace(/\/+$/, "");
+      if (url.hostname === "127.0.0.1" || url.hostname === "localhost" || url.hostname === "::1") return `Model: local ${shown}`;
+      return "Model: hosted";
+    } catch {
+      return "Model: not configured";
+    }
+  }
+  return input.hasHostedKey ? "Model: hosted" : "Model: not configured";
+}
+
 /** Operating instructions for the Lead Orchestrator bot that can create, configure, and coordinate other bots. */
 export function leadBotInstructions(): string {
   return [
@@ -1782,7 +1799,9 @@ export {
   computerMouse,
   computerOpenBrowser,
   ensureComputerDisplay,
+  botComputerIdentity,
   readDesktopState,
+  resetBotComputer,
   setComputerControl,
   stopComputerDesktop,
   type ComputerActionResult,

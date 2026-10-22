@@ -26,18 +26,18 @@ One-off text/file CLI helpers (`ocp lower`, `ocp squeeze`, …) still exist for 
 
 ## Next
 
-[The teammate path](docs/parity-path.md) is the order of work for the announcement window. The README does not claim parity with another product until items 1 through 8 on that page have tests. In short:
+[The teammate path](docs/parity-path.md) is the record of the announcement-window proofs. Items 1 through 8 are in this tree, with tests. The README states that teammate shape and does not name this project as another product. In short:
 
 1. A computer per bot, not one shared screen per workspace.
 2. An audit page of permitted, refused, and failed actions.
 3. A standing responsibility that survives a restart.
 4. A thread addressed to more than one bot.
-5. Continuing that thread into Slack or Telegram.
+5. Continuing that thread into Slack or Telegram as a draft. Nothing is sent automatically.
 6. Memory a person can correct or forget.
 7. A named deny rule the audit row can quote.
 8. `ocp doctor` printing local, hosted, or not configured, without the key and without a network call.
 
-Voice, WhatsApp, a pages surface, a foreign agent protocol, and multi-person sign-in stay later. A container boundary for standalone **OCP Coder** processes is still open: those processes use the operator's OS permissions today.
+Voice, WhatsApp, a pages surface, a foreign agent protocol, and multi-person sign-in are not yet in this tree. A container boundary for standalone **OCP Coder** processes is still open: those processes use the operator's OS permissions today.
 
 ## Later
 

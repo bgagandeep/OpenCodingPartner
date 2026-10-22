@@ -9,6 +9,7 @@ OpenCodingPartner installs these tools for the operator. We do not copy their so
 | Laya | Apache-2.0 | Convai Innovations | https://pypi.org/project/laya/ and https://huggingface.co/convaiinnovations/laya | PyPI package `laya==0.3.13`. Weights download only if you run the bridge. |
 | LiteLLM | MIT | BerriAI | https://github.com/BerriAI/litellm | Optional proxy image `docker.litellm.ai/berriai/litellm:v1.102.1`. We do not copy its source. |
 | Hermes Agent | MIT | Nous Research | https://github.com/NousResearch/hermes-agent | Default local ACP runtime engine powering `OCP Agent` (`ocp-agent` / `hermes`) bots in OpenCodingPartner. Installed and configured separately by the operator; not vendored. |
+| OpenBot | MIT | CopilotKit | https://github.com/CopilotKit/OpenBot | Coworker shape only: a computer per coworker, a recorded gate, and taking the controls. This repository implements that shape in its own code. No OpenBot source is copied. Not affiliated. |
 | OpenCodingPartner (`OCP Agent` & `OCP Coder`) | Apache-2.0 | OpenCodingPartner contributors | This repository | The unified AI teammate platform, `OCP Agent` / `OCP Coder` product layer, swarm, and installer. |
 
 Pins live in `packages/bundle/pins.json`.

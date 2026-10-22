@@ -27,9 +27,18 @@ export interface ModelPrice {
   outputPerMillion: number;
 }
 
+export interface UsageScopeCap {
+  maxTokens?: number;
+  maxCostUsd?: number;
+  softMaxTokens?: number;
+  softMaxCostUsd?: number;
+  hardMaxTokens?: number;
+  hardMaxCostUsd?: number;
+}
+
 export interface UsageCaps {
-  perBot: Array<{ botId: string; maxTokens?: number; maxCostUsd?: number }>;
-  perDay?: { maxTokens?: number; maxCostUsd?: number };
+  perBot: Array<{ botId: string } & UsageScopeCap>;
+  perDay?: UsageScopeCap;
 }
 
 export interface UsageBucket {
@@ -155,7 +164,7 @@ export function normalizeUsageCaps(value: unknown): UsageCaps {
     const cap = normalizeScopeCap(record, "Bot");
     return { botId, ...cap };
   });
-  return { perBot, ...(perDay && (perDay.maxTokens !== undefined || perDay.maxCostUsd !== undefined) ? { perDay } : {}) };
+  return { perBot, ...(perDay && scopeHasCap(perDay) ? { perDay } : {}) };
 }
 
 export async function readUsagePolicy(root: string): Promise<{ prices: ModelPrice[]; caps: UsageCaps }> {
@@ -375,15 +384,32 @@ function requiredNonNegative(value: unknown, label: string): number {
   return parsed;
 }
 
-function normalizeScopeCap(value: unknown, label: string): { maxTokens?: number; maxCostUsd?: number } {
+function normalizeScopeCap(value: unknown, label: string): UsageScopeCap {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${label} cap must be an object.`);
   const record = value as Record<string, unknown>;
   const maxTokens = optionalNonNegative(record.maxTokens, `${label} token cap`);
   const maxCostUsd = optionalNonNegative(record.maxCostUsd, `${label} cost cap`);
+  const softMaxTokens = optionalNonNegative(record.softMaxTokens, `${label} soft token cap`);
+  const softMaxCostUsd = optionalNonNegative(record.softMaxCostUsd, `${label} soft cost cap`);
+  const hardMaxTokens = optionalNonNegative(record.hardMaxTokens, `${label} hard token cap`);
+  const hardMaxCostUsd = optionalNonNegative(record.hardMaxCostUsd, `${label} hard cost cap`);
   return {
     ...(maxTokens !== undefined ? { maxTokens } : {}),
     ...(maxCostUsd !== undefined ? { maxCostUsd } : {}),
+    ...(softMaxTokens !== undefined ? { softMaxTokens } : {}),
+    ...(softMaxCostUsd !== undefined ? { softMaxCostUsd } : {}),
+    ...(hardMaxTokens !== undefined ? { hardMaxTokens } : {}),
+    ...(hardMaxCostUsd !== undefined ? { hardMaxCostUsd } : {}),
   };
+}
+
+function scopeHasCap(cap: UsageScopeCap): boolean {
+  return cap.maxTokens !== undefined
+    || cap.maxCostUsd !== undefined
+    || cap.softMaxTokens !== undefined
+    || cap.softMaxCostUsd !== undefined
+    || cap.hardMaxTokens !== undefined
+    || cap.hardMaxCostUsd !== undefined;
 }
 
 function optionalNonNegative(value: unknown, label: string): number | undefined {

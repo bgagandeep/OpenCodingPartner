@@ -14,7 +14,7 @@ export interface UsageCall {
   cachedPromptTokens?: number;
   estimated: boolean;
   costUsd?: number;
-  costBasis?: "entered" | "local-default";
+  costBasis?: "entered" | "local-default" | "session-cache";
   step?: string;
   tier?: "cheap" | "strong";
   routeFallback?: boolean;
@@ -41,6 +41,7 @@ export interface UsageBucket {
   cachedPromptTokens: number;
   enteredCostUsd?: number;
   localDefaultCalls: number;
+  sessionCacheCalls: number;
   unpricedCalls: number;
   calls: number;
 }
@@ -185,7 +186,28 @@ export async function noteModelUsage(root: string, input: {
   step?: string;
   tier?: "cheap" | "strong";
   routeFallback?: boolean;
+  sessionCache?: boolean;
 }): Promise<UsageCall> {
+  if (input.sessionCache) {
+    const call: UsageCall = {
+      id: randomUUID(),
+      botId: input.botId,
+      ...(input.taskId ? { taskId: input.taskId } : {}),
+      model: input.model.slice(0, 200),
+      provider: usageProviderKind(input.provider, input.baseUrl),
+      promptTokens: 0,
+      completionTokens: 0,
+      estimated: false,
+      costUsd: 0,
+      costBasis: "session-cache",
+      ...(input.step && input.step.length <= 40 && !/[\r\n]/.test(input.step) ? { step: input.step } : {}),
+      ...(input.tier === "cheap" || input.tier === "strong" ? { tier: input.tier } : {}),
+      ...(input.routeFallback ? { routeFallback: true } : {}),
+      createdAt: new Date().toISOString(),
+    };
+    await appendUsageCall(root, call);
+    return call;
+  }
   const measured = measureUsage(input.usage, input.promptText, input.completionText);
   const provider = usageProviderKind(input.provider, input.baseUrl);
   const { prices } = await readUsagePolicy(root);
@@ -301,6 +323,7 @@ function bucketFor(key: string, calls: UsageCall[]): UsageBucket {
     estimatedCompletionTokens: 0,
     cachedPromptTokens: 0,
     localDefaultCalls: 0,
+    sessionCacheCalls: 0,
     unpricedCalls: 0,
     calls: calls.length,
   };
@@ -316,6 +339,7 @@ function bucketFor(key: string, calls: UsageCall[]): UsageBucket {
     if (call.costBasis === "entered" && call.costUsd !== undefined) {
       bucket.enteredCostUsd = roundUsd((bucket.enteredCostUsd ?? 0) + call.costUsd);
     } else if (call.costBasis === "local-default") bucket.localDefaultCalls += 1;
+    else if (call.costBasis === "session-cache") bucket.sessionCacheCalls += 1;
     else bucket.unpricedCalls += 1;
   }
   return bucket;
@@ -334,7 +358,8 @@ function isUsageCall(value: unknown): value is UsageCall {
     && typeof call.createdAt === "string"
     && (call.step === undefined || (typeof call.step === "string" && call.step.length <= 40))
     && (call.tier === undefined || call.tier === "cheap" || call.tier === "strong")
-    && (call.routeFallback === undefined || typeof call.routeFallback === "boolean");
+    && (call.routeFallback === undefined || typeof call.routeFallback === "boolean")
+    && (call.costBasis === undefined || call.costBasis === "entered" || call.costBasis === "local-default" || call.costBasis === "session-cache");
 }
 
 function finiteToken(value: unknown): number | undefined {

@@ -68,13 +68,15 @@ export function formatRouteUsage(input: {
   completionTokens: number;
   estimated: boolean;
   costUsd?: number;
-  costBasis?: "entered" | "local-default";
+  costBasis?: "entered" | "local-default" | "session-cache";
 }): string {
   const tokens = input.estimated
     ? `estimated ${input.promptTokens} in / ${input.completionTokens} out`
     : `${input.promptTokens} in / ${input.completionTokens} out`;
   const tier = input.fallback ? `${input.tier}, no cheap model configured` : input.tier;
-  const cost = input.costBasis === "entered"
+  const cost = input.costBasis === "session-cache"
+    ? "session cache, no provider call"
+    : input.costBasis === "entered"
     ? `$${money(input.costUsd ?? 0)} from entered prices${input.estimated ? " on estimated tokens" : ""}`
     : input.costBasis === "local-default"
       ? "$0 local default"

@@ -331,7 +331,7 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
         litellmConfigured: Boolean(effectiveEnv.LITELLM_API_KEY || effectiveEnv.LITELLM_MASTER_KEY),
         openaiConfigured: Boolean(effectiveEnv.OPENAI_API_KEY),
         litellmBaseUrl: settings.litellmBaseUrl || effectiveEnv.LITELLM_BASE_URL || "http://127.0.0.1:4000/v1",
-        defaultModel: settings.defaultModel || effectiveEnv.OCP_DEFAULT_MODEL || "openai/gpt-4.1-mini",
+        defaultModel: settings.defaultModel || effectiveEnv.OCP_DEFAULT_MODEL || "",
       });
       return;
     }
@@ -458,7 +458,7 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
         litellmConfigured: Boolean(effectiveEnv.LITELLM_API_KEY || effectiveEnv.LITELLM_MASTER_KEY),
         openaiConfigured: Boolean(effectiveEnv.OPENAI_API_KEY),
         litellmBaseUrl: saved.litellmBaseUrl || effectiveEnv.LITELLM_BASE_URL || "http://127.0.0.1:4000/v1",
-        defaultModel: saved.defaultModel || effectiveEnv.OCP_DEFAULT_MODEL || "openai/gpt-4.1-mini",
+        defaultModel: saved.defaultModel || effectiveEnv.OCP_DEFAULT_MODEL || "",
       });
       return;
     }
@@ -936,9 +936,9 @@ async function saveBotFromRequest(body: Record<string, unknown>, root: string, i
   if (!name || name.length > 100 || !validBotRole(role) || !validBotRuntime(runtime) || !info?.isDirectory()) return { error: "Enter a name, valid role/runtime, and an existing workspace directory." };
   if (agentRuntime && !["docker", "host"].includes(isolation)) return { error: "Choose Docker or host isolation." };
   if (!validBotNetworkMode(network) || (network === "enabled" && (!agentRuntime || isolation !== "docker"))) return { error: "Network access can only be enabled for an OCP Agent bot using Docker isolation." };
-  if (provider && (!validBotProvider(provider) || !model)) return { error: "Provider routing requires an OpenRouter or LiteLLM provider and a model ID." };
-  if (!provider && model) return { error: "A model override requires an explicit OpenRouter or LiteLLM provider profile." };
-  if ((provider === "litellm" && !validEndpoint(endpoint)) || (provider !== "litellm" && endpoint)) return { error: "LiteLLM requires an HTTP(S) endpoint without credentials; other providers do not use one." };
+      if (provider && (!validBotProvider(provider) || !model)) return { error: "Provider routing requires an OpenRouter or OpenAI-compatible provider and a model ID." };
+  if (!provider && model) return { error: "A model override requires an explicit OpenRouter or OpenAI-compatible provider profile." };
+  if ((provider === "litellm" && !validEndpoint(endpoint)) || (provider !== "litellm" && endpoint)) return { error: "An OpenAI-compatible endpoint must be HTTP(S) without credentials; OpenRouter does not use a custom endpoint." };
   if ((provider === "litellm" && !validEnvName(apiKeyEnv)) || (provider !== "litellm" && body.apiKeyEnv)) return { error: "API key environment variable name is invalid or not supported for this provider." };
   const botInput = {
       name,
@@ -1364,9 +1364,9 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;font:12.5px/1.45 "JetBrains Mono
             <label>Project Workspace Path<input name="workspace" required value="${escapeAttribute(process.cwd())}"></label>
             <label>Tool Isolation<select name="isolation"><option value="host">Host process (fast local)</option><option value="docker">Docker container sandbox</option></select></label>
             <label id="networkField" class="hidden">Docker Network<select name="network"><option value="disabled">Disabled</option><option value="enabled">Enabled</option></select></label>
-            <label>Provider Override<select name="provider"><option value="">Use global API key / default</option><option value="openrouter">OpenRouter</option><option value="litellm">LiteLLM</option></select></label>
-            <label class="provider-field hidden">Model ID<input name="model" placeholder="openai/gpt-4.1-mini"></label>
-            <label class="provider-field hidden">LiteLLM Endpoint<input name="endpoint" placeholder="http://127.0.0.1:4000/v1"></label>
+            <label>Provider Override<select name="provider"><option value="">Use global API key / default</option><option value="openrouter">OpenRouter</option><option value="litellm">OpenAI-compatible</option></select></label>
+            <label class="provider-field hidden">Model ID<input name="model" placeholder="Model id you configured"></label>
+            <label class="provider-field hidden">OpenAI-compatible endpoint<input name="endpoint" placeholder="http://127.0.0.1:11434/v1"></label>
             <label class="provider-field hidden">API Key Env<input name="apiKeyEnv" value="LITELLM_API_KEY"></label>
           </details>
           <div class="row mt-sm">
@@ -1404,8 +1404,8 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;font:12.5px/1.45 "JetBrains Mono
         <form id="settingsForm">
           <label>OpenRouter API Key<input type="password" name="openrouterApiKey" placeholder="sk-or-v1-..."></label>
           <label>OpenAI API Key<input type="password" name="openaiApiKey" placeholder="sk-..."></label>
-          <label>LiteLLM / Custom API Key<input type="password" name="litellmApiKey" placeholder="sk-..."></label>
-          <label>LiteLLM / Ollama Base URL<input name="litellmBaseUrl" placeholder="http://127.0.0.1:11434/v1"></label>
+          <label>OpenAI-compatible API key<input type="password" name="litellmApiKey" placeholder="sk-..."></label>
+          <label>Local / custom base URL<input name="litellmBaseUrl" placeholder="http://127.0.0.1:11434/v1"></label>
           <label>Default Model ID<input name="defaultModel" placeholder="Leave blank until you choose a model"></label>
           <button type="submit">Save &amp; Apply Immediately</button>
         </form>
@@ -2005,9 +2005,9 @@ document.querySelector('#projectForm').addEventListener('submit',async e=>{
 document.querySelector('#useLocalGpuBtn').addEventListener('click',async()=>{
   const f=document.querySelector('#settingsForm');
   f.elements.litellmBaseUrl.value='http://127.0.0.1:11434/v1';
-  f.elements.defaultModel.value='gemma4:latest';
+  f.elements.defaultModel.value='';
   try{
-    await api('/api/settings',{litellmBaseUrl:'http://127.0.0.1:11434/v1',defaultModel:'gemma4:latest'},'POST');
+    await api('/api/settings',{litellmBaseUrl:'http://127.0.0.1:11434/v1',defaultModel:''},'POST');
     document.querySelector('#settingsStatus').textContent='Switched to local GPU via Ollama.';
     await load();await showHealth();
   }catch(err){document.querySelector('#settingsStatus').textContent=err.message}
@@ -2015,9 +2015,9 @@ document.querySelector('#useLocalGpuBtn').addEventListener('click',async()=>{
 document.querySelector('#useOpenRouterPresetBtn').addEventListener('click',async()=>{
   const f=document.querySelector('#settingsForm');
   f.elements.litellmBaseUrl.value='';
-  f.elements.defaultModel.value='openai/gpt-4.1-mini';
+  f.elements.defaultModel.value='';
   try{
-    await api('/api/settings',{litellmBaseUrl:'',defaultModel:'openai/gpt-4.1-mini'},'POST');
+    await api('/api/settings',{litellmBaseUrl:'',defaultModel:''},'POST');
     document.querySelector('#settingsStatus').textContent='Switched to OpenRouter!';
     await load();await showHealth();
   }catch(err){document.querySelector('#settingsStatus').textContent=err.message}

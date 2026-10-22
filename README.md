@@ -2,7 +2,7 @@
 
 **OpenCodingPartner (OCP)** is an open-source (`Apache-2.0`), local-first, provider-neutral ecosystem for building and running persistent AI teammates, centered on **OCP Agent** and **OCP Coder**.
 
-Teammates powered by **OCP Agent** (Hermes Agent ACP runtime or the built-in native Node.js ACP runtime) and **OCP Coder** (`grok` ACP coding harness or the built-in native ACP runtime) can route directly through **OpenRouter**, **LiteLLM**, or any local OpenAI-compatible model endpoint (such as Ollama or vLLM) with **zero vendor or regional lock-in**. Every teammate shares identity, conversation continuity, guarded workspace tools, persistent workspace memory, bounded task history recall, approval flows, and a dedicated **Virtual Computer Desktop** with full mouse, keyboard, and browser control.
+Teammates powered by **OCP Agent** and **OCP Coder** (optional external ACP binaries, or the built-in native Node.js ACP runtime) can route through **OpenRouter** or any local OpenAI-compatible endpoint (Ollama, LM Studio, vLLM, or a custom base URL) with **zero vendor or regional lock-in**. There is no default model: you choose one. Every teammate shares identity, conversation continuity, guarded workspace tools, persistent workspace memory, bounded task history recall, approval flows, and a dedicated **Virtual Computer Desktop** with mouse, keyboard, browser control, and a live dashboard stream when a display is running.
 
 The core is free forever and open source. The operator owns the meter. The full coding partner (**OCP Coder**) is included. Seats and credit packs in Settings are design only. Billing is inert. No charge is made. Ads are off. Payments are off in the core.
 
@@ -13,11 +13,11 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the full architecture and [ROADMAP.md
 ## Key Features
 
 - **Unified `OCP Agent` & `OCP Coder` Ecosystem**
-  - **OCP Agent (`ocp-agent`)**: General, research, QA, security, coding, and computer-use teammate runtime. Uses the `hermes` ACP binary when installed or falls back automatically to OpenCodingPartner's built-in native ACP runtime (`ocp-agent-acp`).
-  - **OCP Coder (`ocp-coder`)**: Dedicated coding teammate runtime. Uses the `grok` ACP binary (`grok agent stdio`) when installed or falls back automatically to the built-in native ACP runtime.
-- **100% Provider Freedom (OpenRouter, LiteLLM & Local Models)**
-  - Configure any **OCP Agent** or **OCP Coder** bot with `openrouter` or `litellm` (including local Ollama, vLLM, or self-hosted proxies).
-  - OpenCodingPartner generates isolated per-bot runtime profiles (`hermes-profiles/<bot-id>` and `coder-profiles/<bot-id>`) with telemetry, feedback, and trace uploads disabled, routing requests directly to your chosen provider.
+  - **OCP Agent (`ocp-agent`)**: General, research, QA, security, coding, and computer-use teammate runtime. Uses an optional external ACP binary when installed, otherwise the built-in native ACP runtime.
+  - **OCP Coder (`ocp-coder`)**: Dedicated coding teammate runtime. Uses an optional external ACP binary when installed, otherwise the built-in native ACP runtime.
+- **Provider freedom (OpenRouter and local OpenAI-compatible servers)**
+  - Configure any bot with OpenRouter or an OpenAI-compatible base URL (Ollama, LM Studio, vLLM, custom).
+  - Open Coding Partner writes isolated per-bot runtime profiles with telemetry, feedback, and trace uploads disabled.
 - **Dedicated Virtual Computer Desktop (Mouse, Keyboard, Browser & Human Takeover)**
   - **Linux**: Boots an isolated `1280x800` virtual X11 computer display per workspace (`Xvnc` + `xdotool` + Google Chrome + `ffmpeg` live frame capture).
   - **macOS**: Uses built-in macOS Quartz (`CGEvent`), `System Events`, `screencapture`, and Chrome/`open` (`macos:0`) with zero external packages required.
@@ -43,9 +43,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the full architecture and [ROADMAP.md
 ### Optional (Recommended for Full Capabilities)
 - **Docker Engine / Desktop**: Used by default for **OCP Agent** terminal container isolation (`--isolation docker`). Bots configured with `--isolation host` run on the host without Docker.
   - [Linux Engine](https://docs.docker.com/engine/install/) · [macOS Desktop](https://docs.docker.com/desktop/setup/install/mac-install/) · [Windows Desktop](https://docs.docker.com/desktop/setup/install/windows-install/)
-- **External Runtime CLIs** (OpenCodingPartner includes a built-in native ACP runtime out of the box, so these are optional):
-  - **Hermes Agent (`hermes`)**: Optional external runtime for `ocp-agent` ([installation guide](https://hermes-agent.nousresearch.com/docs/getting-started/installation/)).
-  - **Grok CLI (`grok`)**: Optional external Rust ACP harness for `ocp-coder`.
+- **External runtime CLIs** (optional): Open Coding Partner includes a built-in native ACP runtime. Optional `ocp-agent` / `ocp-coder` binaries on `PATH` are used when present. Credits for those upstream projects are in [NOTICE](NOTICE).
 - **Computer Desktop Support**:
   - **macOS**: Built-in out of the box (`screencapture`, `osascript` Quartz/System Events, and Chrome/`open`). Grant **Screen Recording** and **Accessibility** permissions to your terminal in *System Settings → Privacy & Security* when using live desktop control.
   - **Linux**: Install `tigervnc-standalone-server` (`Xvnc`), `xdotool`, `ffmpeg`, and `google-chrome` (or `chromium`) for isolated virtual X11 displays.
@@ -86,7 +84,7 @@ Open **<http://127.0.0.1:4317>** in your browser.
 
 From the Web Dashboard you can:
 1. **Check Local Readiness**: Verify that **OCP Agent**, **OCP Coder**, and **Docker** are ready.
-2. **Create Teammates**: Choose a name, role (`coding`, `qa`, `security`, `research`, `computer`, `general`), runtime (`OCP Agent` or `OCP Coder`), workspace path, and provider (`OpenRouter`, `LiteLLM`, or runtime default).
+2. **Create Teammates**: Choose a name, role (`coding`, `qa`, `security`, `research`, `computer`, `general`), runtime (`OCP Agent` or `OCP Coder`), workspace path, and provider (`OpenRouter`, OpenAI-compatible, or runtime default).
 3. **Run Tasks & Review Diffs**: Assign a request to a teammate (with an optional QA or security reviewer handoff), stream live activity, approve or deny permission requests, and inspect changed files and Git diffs.
 4. **Open the Virtual Computer Desktop**: Click **Computer desktop** on any teammate card to view its live `1280x800` virtual screen, open URLs in Chrome, click on the screen, type keys, or **Take over mouse & keyboard**.
 
@@ -109,7 +107,7 @@ corepack pnpm exec ocp bot create \
   --model "anthropic/claude-sonnet-4" \
   --workspace .
 
-# 2. Create an OCP Agent bot routed through LiteLLM or local Ollama
+# 2. Create an OCP Agent bot routed through a local OpenAI-compatible server (Ollama)
 export LITELLM_API_KEY="local-key"
 corepack pnpm exec ocp bot create \
   --name "OCP Agent (Local Ollama)" \
@@ -229,4 +227,4 @@ Apache-2.0. See [LICENSE](LICENSE).
 
 ## Independence
 
-OpenCodingPartner is independent of the upstream projects named in Credits. **OCP Agent** integrates the Hermes ACP runtime and **OCP Coder** provides the coding teammate experience in the same ecosystem; model access is configured by the operator through **OCP Agent**, **OCP Coder**, LiteLLM, or OpenRouter. No upstream proprietary source is vendored.
+Open Coding Partner is independent of the upstream projects named in Credits. **OCP Agent** and **OCP Coder** are the user-facing runtimes; optional external ACP binaries and OpenAI-compatible proxies are operator-configured. No upstream proprietary source is vendored.

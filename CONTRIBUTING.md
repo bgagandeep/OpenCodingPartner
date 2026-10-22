@@ -18,7 +18,7 @@ OpenCodingPartner is a TypeScript ESM monorepo managed with `pnpm` workspaces:
 | `@opencodingpartner/gateway` | `packages/gateway` | Multi-agent turn orchestration, specialist review handoffs, computer tab state, and Slack/Telegram webhook verification. |
 | `@opencodingpartner/policy` | `packages/policy` | Approval card state machine, partner agreements, and security policy gates. |
 | `@opencodingpartner/swarm` | `packages/swarm` | Swarm manifest validation and multi-partner workspace layout. |
-| `@opencodingpartner/mesh` | `packages/mesh` | System-1 Laya router client and fallback routing. |
+| `@opencodingpartner/mesh` | `packages/mesh` | System-1 router client and fallback routing. |
 | `@opencodingpartner/bundle` | `packages/bundle` | Environment readiness doctor and optional bundle installer. |
 
 ---
@@ -68,7 +68,7 @@ Every contribution must preserve these core project invariants (enforced by `tes
 
 1. **Provider-Neutral, Open-Source Core**
    - Keep bot identity, conversation sessions, task history, approvals, and workspace policies inside OpenCodingPartner.
-   - Runtimes (**OCP Agent** / `hermes`, **OCP Coder** / `grok`, and the built-in `native-acp` runtime) and model providers (**OpenRouter**, **LiteLLM**, local endpoints) must remain modular, replaceable integrations.
+   - Runtimes (**OCP Agent**, **OCP Coder**, and the built-in native ACP runtime) and model providers (**OpenRouter**, local OpenAI-compatible endpoints) must remain modular, replaceable integrations.
    - Ads are off and payments are off in the core.
 2. **Strict Credential Hygiene**
    - Never store API keys or bearer tokens in `state.json`, bot definitions, task logs, or generated profile files (`config.yaml` / `config.toml`).

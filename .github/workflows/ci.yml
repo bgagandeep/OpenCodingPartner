@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-lint-test:
+    name: Build, lint, branding, tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: ".node-version"
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm build
+
+      - name: Lint and format
+        run: pnpm lint
+
+      - name: Branding guard
+        run: pnpm branding-guard
+
+      - name: Full test suite
+        run: set -o pipefail && pnpm test | tee "${RUNNER_TEMP}/ocp-test-output.txt"
+
+      - name: Assert full test count
+        run: node scripts/assert-test-count.mjs "${RUNNER_TEMP}/ocp-test-output.txt"

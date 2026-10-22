@@ -11,13 +11,15 @@ import { main } from "./main.js";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 
+/** Capture CLI stdout while still forwarding bytes so the Node test reporter can count every test. */
+
 test("ocp demo writes a file, blocks a secret, and records GTM actions", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "ocp-cli-"));
   let captured = "";
   const original = process.stdout.write.bind(process.stdout);
-  process.stdout.write = ((chunk: string | Uint8Array) => {
+  process.stdout.write = ((chunk: string | Uint8Array, encoding?: BufferEncoding, cb?: (err?: Error | null) => void) => {
     captured += String(chunk);
-    return true;
+    return original(chunk, encoding, cb);
   }) as typeof process.stdout.write;
   try {
     const code = await main(["demo", "--sandbox", root]);
@@ -42,9 +44,9 @@ test("ocp doctor --sandbox checks that sandbox frame, fleet, and approvals", asy
   const other = mkdtempSync(path.join(tmpdir(), "ocp-doctor-other-"));
   let captured = "";
   const original = process.stdout.write.bind(process.stdout);
-  process.stdout.write = ((chunk: string | Uint8Array) => {
+  process.stdout.write = ((chunk: string | Uint8Array, encoding?: BufferEncoding, cb?: (err?: Error | null) => void) => {
     captured += String(chunk);
-    return true;
+    return original(chunk, encoding, cb);
   }) as typeof process.stdout.write;
   try {
     const { mkdirSync, writeFileSync } = await import("node:fs");
@@ -120,9 +122,9 @@ test("ocp doctor --sandbox checks that sandbox frame, fleet, and approvals", asy
 test("ocp doctor prints a status and does not print the meter key", async () => {
   let captured = "";
   const original = process.stdout.write.bind(process.stdout);
-  process.stdout.write = ((chunk: string | Uint8Array) => {
+  process.stdout.write = ((chunk: string | Uint8Array, encoding?: BufferEncoding, cb?: (err?: Error | null) => void) => {
     captured += String(chunk);
-    return true;
+    return original(chunk, encoding, cb);
   }) as typeof process.stdout.write;
   const previous = process.env.LITELLM_API_KEY;
   process.env.LITELLM_API_KEY = "doctor-secret-value";
@@ -142,9 +144,9 @@ test("ocp doctor prints a status and does not print the meter key", async () => 
 test("ocp prove coding passes with a scripted runner and does not print a key", async () => {
   let captured = "";
   const original = process.stdout.write.bind(process.stdout);
-  process.stdout.write = ((chunk: string | Uint8Array) => {
+  process.stdout.write = ((chunk: string | Uint8Array, encoding?: BufferEncoding, cb?: (err?: Error | null) => void) => {
     captured += String(chunk);
-    return true;
+    return original(chunk, encoding, cb);
   }) as typeof process.stdout.write;
   const previous = process.env.LITELLM_API_KEY;
   process.env.LITELLM_API_KEY = "prove-secret-value";
@@ -173,9 +175,9 @@ test("ocp prove coding passes with a scripted runner and does not print a key", 
 test("ocp prove computer passes with a fake browser and does not print a key", async () => {
   let captured = "";
   const original = process.stdout.write.bind(process.stdout);
-  process.stdout.write = ((chunk: string | Uint8Array) => {
+  process.stdout.write = ((chunk: string | Uint8Array, encoding?: BufferEncoding, cb?: (err?: Error | null) => void) => {
     captured += String(chunk);
-    return true;
+    return original(chunk, encoding, cb);
   }) as typeof process.stdout.write;
   const previous = process.env.LITELLM_API_KEY;
   process.env.LITELLM_API_KEY = "prove-computer-secret";
@@ -207,9 +209,9 @@ test("ocp computer shows the sandbox tab and takeover", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "ocp-computer-tab-"));
   let captured = "";
   const original = process.stdout.write.bind(process.stdout);
-  process.stdout.write = ((chunk: string | Uint8Array) => {
+  process.stdout.write = ((chunk: string | Uint8Array, encoding?: BufferEncoding, cb?: (err?: Error | null) => void) => {
     captured += String(chunk);
-    return true;
+    return original(chunk, encoding, cb);
   }) as typeof process.stdout.write;
   try {
     assert.equal(await main(["computer", "--sandbox", root]), 0);
@@ -238,9 +240,9 @@ test("ocp settings shows advanced ACP off and does not name the backend", async 
   const root = mkdtempSync(path.join(tmpdir(), "ocp-settings-"));
   let captured = "";
   const original = process.stdout.write.bind(process.stdout);
-  process.stdout.write = ((chunk: string | Uint8Array) => {
+  process.stdout.write = ((chunk: string | Uint8Array, encoding?: BufferEncoding, cb?: (err?: Error | null) => void) => {
     captured += String(chunk);
-    return true;
+    return original(chunk, encoding, cb);
   }) as typeof process.stdout.write;
   const previous = process.env.OCP_ACP;
   delete process.env.OCP_ACP;
@@ -264,9 +266,9 @@ test("ocp channel slack stays offline without credentials and posts when they ar
   const root = mkdtempSync(path.join(tmpdir(), "ocp-slack-cli-"));
   let captured = "";
   const original = process.stdout.write.bind(process.stdout);
-  process.stdout.write = ((chunk: string | Uint8Array) => {
+  process.stdout.write = ((chunk: string | Uint8Array, encoding?: BufferEncoding, cb?: (err?: Error | null) => void) => {
     captured += String(chunk);
-    return true;
+    return original(chunk, encoding, cb);
   }) as typeof process.stdout.write;
   const token = process.env.SLACK_BOT_TOKEN;
   const signing = process.env.SLACK_SIGNING_SECRET;
@@ -311,9 +313,9 @@ test("ocp approve list shows a pending card and does not decide it", async () =>
   const root = mkdtempSync(path.join(tmpdir(), "ocp-approve-cli-"));
   let captured = "";
   const original = process.stdout.write.bind(process.stdout);
-  process.stdout.write = ((chunk: string | Uint8Array) => {
+  process.stdout.write = ((chunk: string | Uint8Array, encoding?: BufferEncoding, cb?: (err?: Error | null) => void) => {
     captured += String(chunk);
-    return true;
+    return original(chunk, encoding, cb);
   }) as typeof process.stdout.write;
   try {
     const empty = await main(["approve", "list", "--sandbox", root]);
@@ -350,9 +352,9 @@ test("ocp approve accept deny and redirect run the chat turn", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "ocp-approve-decide-"));
   let captured = "";
   const original = process.stdout.write.bind(process.stdout);
-  process.stdout.write = ((chunk: string | Uint8Array) => {
+  process.stdout.write = ((chunk: string | Uint8Array, encoding?: BufferEncoding, cb?: (err?: Error | null) => void) => {
     captured += String(chunk);
-    return true;
+    return original(chunk, encoding, cb);
   }) as typeof process.stdout.write;
   try {
     const { writeFileSync, readFileSync } = await import("node:fs");
@@ -395,9 +397,9 @@ test("ocp approve accept clears a review hold and leaves the intent", async () =
   const root = mkdtempSync(path.join(tmpdir(), "ocp-accept-again-cli-"));
   let captured = "";
   const original = process.stdout.write.bind(process.stdout);
-  process.stdout.write = ((chunk: string | Uint8Array) => {
+  process.stdout.write = ((chunk: string | Uint8Array, encoding?: BufferEncoding, cb?: (err?: Error | null) => void) => {
     captured += String(chunk);
-    return true;
+    return original(chunk, encoding, cb);
   }) as typeof process.stdout.write;
   try {
     const { mkdirSync, writeFileSync, readFileSync } = await import("node:fs");
@@ -432,9 +434,9 @@ test("ocp check runs the sandbox check and does not store the output", async () 
   const root = mkdtempSync(path.join(tmpdir(), "ocp-check-cli-"));
   let captured = "";
   const original = process.stdout.write.bind(process.stdout);
-  process.stdout.write = ((chunk: string | Uint8Array) => {
+  process.stdout.write = ((chunk: string | Uint8Array, encoding?: BufferEncoding, cb?: (err?: Error | null) => void) => {
     captured += String(chunk);
-    return true;
+    return original(chunk, encoding, cb);
   }) as typeof process.stdout.write;
   try {
     const { mkdirSync, writeFileSync, readFileSync } = await import("node:fs");
@@ -471,9 +473,9 @@ test("ocp todo list shows the checklist and does not change it", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "ocp-todo-cli-"));
   let captured = "";
   const original = process.stdout.write.bind(process.stdout);
-  process.stdout.write = ((chunk: string | Uint8Array) => {
+  process.stdout.write = ((chunk: string | Uint8Array, encoding?: BufferEncoding, cb?: (err?: Error | null) => void) => {
     captured += String(chunk);
-    return true;
+    return original(chunk, encoding, cb);
   }) as typeof process.stdout.write;
   try {
     const empty = await main(["todo", "list", "--sandbox", root]);
@@ -507,9 +509,9 @@ test("ocp todo add and complete change the checklist and refuse a secret", async
   const root = mkdtempSync(path.join(tmpdir(), "ocp-todo-change-"));
   let captured = "";
   const original = process.stdout.write.bind(process.stdout);
-  process.stdout.write = ((chunk: string | Uint8Array) => {
+  process.stdout.write = ((chunk: string | Uint8Array, encoding?: BufferEncoding, cb?: (err?: Error | null) => void) => {
     captured += String(chunk);
-    return true;
+    return original(chunk, encoding, cb);
   }) as typeof process.stdout.write;
   try {
     const { readFileSync } = await import("node:fs");
@@ -549,9 +551,9 @@ test("ocp read prints a sandbox file and refuses a secret", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "ocp-read-cli-"));
   let captured = "";
   const original = process.stdout.write.bind(process.stdout);
-  process.stdout.write = ((chunk: string | Uint8Array) => {
+  process.stdout.write = ((chunk: string | Uint8Array, encoding?: BufferEncoding, cb?: (err?: Error | null) => void) => {
     captured += String(chunk);
-    return true;
+    return original(chunk, encoding, cb);
   }) as typeof process.stdout.write;
   try {
     const { mkdirSync, writeFileSync } = await import("node:fs");
@@ -597,9 +599,9 @@ test("ocp list names sandbox files and does not print contents", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "ocp-list-cli-"));
   let captured = "";
   const original = process.stdout.write.bind(process.stdout);
-  process.stdout.write = ((chunk: string | Uint8Array) => {
+  process.stdout.write = ((chunk: string | Uint8Array, encoding?: BufferEncoding, cb?: (err?: Error | null) => void) => {
     captured += String(chunk);
-    return true;
+    return original(chunk, encoding, cb);
   }) as typeof process.stdout.write;
   try {
     const { mkdirSync, writeFileSync } = await import("node:fs");
@@ -641,9 +643,9 @@ test("ocp grep prints a short hit and skips a secret file", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "ocp-grep-cli-"));
   let captured = "";
   const original = process.stdout.write.bind(process.stdout);
-  process.stdout.write = ((chunk: string | Uint8Array) => {
+  process.stdout.write = ((chunk: string | Uint8Array, encoding?: BufferEncoding, cb?: (err?: Error | null) => void) => {
     captured += String(chunk);
-    return true;
+    return original(chunk, encoding, cb);
   }) as typeof process.stdout.write;
   try {
     const { mkdirSync, writeFileSync } = await import("node:fs");
@@ -687,9 +689,9 @@ test("ocp glob names matching files and does not print contents", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "ocp-glob-cli-"));
   let captured = "";
   const original = process.stdout.write.bind(process.stdout);
-  process.stdout.write = ((chunk: string | Uint8Array) => {
+  process.stdout.write = ((chunk: string | Uint8Array, encoding?: BufferEncoding, cb?: (err?: Error | null) => void) => {
     captured += String(chunk);
-    return true;
+    return original(chunk, encoding, cb);
   }) as typeof process.stdout.write;
   try {
     const { mkdirSync, writeFileSync } = await import("node:fs");
@@ -733,9 +735,9 @@ test("ocp git status shows sandbox changes and does not commit", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "ocp-git-cli-"));
   let captured = "";
   const original = process.stdout.write.bind(process.stdout);
-  process.stdout.write = ((chunk: string | Uint8Array) => {
+  process.stdout.write = ((chunk: string | Uint8Array, encoding?: BufferEncoding, cb?: (err?: Error | null) => void) => {
     captured += String(chunk);
-    return true;
+    return original(chunk, encoding, cb);
   }) as typeof process.stdout.write;
   try {
     const { existsSync, mkdirSync, writeFileSync } = await import("node:fs");
@@ -774,9 +776,9 @@ test("ocp git log shows short commits and does not commit", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "ocp-git-log-"));
   let captured = "";
   const original = process.stdout.write.bind(process.stdout);
-  process.stdout.write = ((chunk: string | Uint8Array) => {
+  process.stdout.write = ((chunk: string | Uint8Array, encoding?: BufferEncoding, cb?: (err?: Error | null) => void) => {
     captured += String(chunk);
-    return true;
+    return original(chunk, encoding, cb);
   }) as typeof process.stdout.write;
   const git = (cwd: string, args: string[]) => spawnSync("git", args, { cwd, encoding: "utf8" });
   try {
@@ -822,9 +824,9 @@ test("ocp git diff shows a tracked change and hides a secret line", async () => 
   const root = mkdtempSync(path.join(tmpdir(), "ocp-git-diff-"));
   let captured = "";
   const original = process.stdout.write.bind(process.stdout);
-  process.stdout.write = ((chunk: string | Uint8Array) => {
+  process.stdout.write = ((chunk: string | Uint8Array, encoding?: BufferEncoding, cb?: (err?: Error | null) => void) => {
     captured += String(chunk);
-    return true;
+    return original(chunk, encoding, cb);
   }) as typeof process.stdout.write;
   const git = (cwd: string, args: string[]) => spawnSync("git", args, { cwd, encoding: "utf8" });
   try {
@@ -871,9 +873,9 @@ test("ocp git show prints a committed file and hides a secret line", async () =>
   const root = mkdtempSync(path.join(tmpdir(), "ocp-git-show-"));
   let captured = "";
   const original = process.stdout.write.bind(process.stdout);
-  process.stdout.write = ((chunk: string | Uint8Array) => {
+  process.stdout.write = ((chunk: string | Uint8Array, encoding?: BufferEncoding, cb?: (err?: Error | null) => void) => {
     captured += String(chunk);
-    return true;
+    return original(chunk, encoding, cb);
   }) as typeof process.stdout.write;
   const git = (cwd: string, args: string[]) => spawnSync("git", args, { cwd, encoding: "utf8" });
   try {
@@ -918,9 +920,9 @@ test("ocp turns lists stored outcomes and does not print the request", async () 
   const root = mkdtempSync(path.join(tmpdir(), "ocp-turns-"));
   let captured = "";
   const original = process.stdout.write.bind(process.stdout);
-  process.stdout.write = ((chunk: string | Uint8Array) => {
+  process.stdout.write = ((chunk: string | Uint8Array, encoding?: BufferEncoding, cb?: (err?: Error | null) => void) => {
     captured += String(chunk);
-    return true;
+    return original(chunk, encoding, cb);
   }) as typeof process.stdout.write;
   try {
     const { mkdirSync, writeFileSync } = await import("node:fs");
@@ -974,9 +976,9 @@ test("ocp append adds text to an existing file and does not create one", async (
   const root = mkdtempSync(path.join(tmpdir(), "ocp-append-"));
   let captured = "";
   const original = process.stdout.write.bind(process.stdout);
-  process.stdout.write = ((chunk: string | Uint8Array) => {
+  process.stdout.write = ((chunk: string | Uint8Array, encoding?: BufferEncoding, cb?: (err?: Error | null) => void) => {
     captured += String(chunk);
-    return true;
+    return original(chunk, encoding, cb);
   }) as typeof process.stdout.write;
   try {
     const { existsSync, mkdirSync, writeFileSync } = await import("node:fs");
@@ -1021,9 +1023,9 @@ test("ocp mkdir creates a directory and does not replace a file", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "ocp-mkdir-"));
   let captured = "";
   const original = process.stdout.write.bind(process.stdout);
-  process.stdout.write = ((chunk: string | Uint8Array) => {
+  process.stdout.write = ((chunk: string | Uint8Array, encoding?: BufferEncoding, cb?: (err?: Error | null) => void) => {
     captured += String(chunk);
-    return true;
+    return original(chunk, encoding, cb);
   }) as typeof process.stdout.write;
   try {
     const { existsSync, statSync, writeFileSync } = await import("node:fs");
@@ -1065,9 +1067,9 @@ test("ocp delete removes one file and leaves a secret file", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "ocp-delete-"));
   let captured = "";
   const original = process.stdout.write.bind(process.stdout);
-  process.stdout.write = ((chunk: string | Uint8Array) => {
+  process.stdout.write = ((chunk: string | Uint8Array, encoding?: BufferEncoding, cb?: (err?: Error | null) => void) => {
     captured += String(chunk);
-    return true;
+    return original(chunk, encoding, cb);
   }) as typeof process.stdout.write;
   try {
     const { existsSync, mkdirSync, writeFileSync } = await import("node:fs");
@@ -1114,9 +1116,9 @@ test("ocp rmdir removes one empty directory and leaves the rest", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "ocp-rmdir-"));
   let captured = "";
   const original = process.stdout.write.bind(process.stdout);
-  process.stdout.write = ((chunk: string | Uint8Array) => {
+  process.stdout.write = ((chunk: string | Uint8Array, encoding?: BufferEncoding, cb?: (err?: Error | null) => void) => {
     captured += String(chunk);
-    return true;
+    return original(chunk, encoding, cb);
   }) as typeof process.stdout.write;
   try {
     const { existsSync, mkdirSync, writeFileSync } = await import("node:fs");
@@ -1165,9 +1167,9 @@ test("ocp rename moves one file and does not overwrite", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "ocp-rename-"));
   let captured = "";
   const original = process.stdout.write.bind(process.stdout);
-  process.stdout.write = ((chunk: string | Uint8Array) => {
+  process.stdout.write = ((chunk: string | Uint8Array, encoding?: BufferEncoding, cb?: (err?: Error | null) => void) => {
     captured += String(chunk);
-    return true;
+    return original(chunk, encoding, cb);
   }) as typeof process.stdout.write;
   try {
     const { existsSync, mkdirSync, writeFileSync } = await import("node:fs");
@@ -1219,9 +1221,9 @@ test("ocp copy duplicates one file and leaves the source", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "ocp-copy-"));
   let captured = "";
   const original = process.stdout.write.bind(process.stdout);
-  process.stdout.write = ((chunk: string | Uint8Array) => {
+  process.stdout.write = ((chunk: string | Uint8Array, encoding?: BufferEncoding, cb?: (err?: Error | null) => void) => {
     captured += String(chunk);
-    return true;
+    return original(chunk, encoding, cb);
   }) as typeof process.stdout.write;
   try {
     const { existsSync, mkdirSync, writeFileSync } = await import("node:fs");
@@ -1271,9 +1273,9 @@ test("ocp write creates one new file and does not overwrite", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "ocp-write-"));
   let captured = "";
   const original = process.stdout.write.bind(process.stdout);
-  process.stdout.write = ((chunk: string | Uint8Array) => {
+  process.stdout.write = ((chunk: string | Uint8Array, encoding?: BufferEncoding, cb?: (err?: Error | null) => void) => {
     captured += String(chunk);
-    return true;
+    return original(chunk, encoding, cb);
   }) as typeof process.stdout.write;
   try {
     const { existsSync, mkdirSync } = await import("node:fs");
@@ -1316,9 +1318,9 @@ test("ocp patch edits one file and leaves a mismatch unchanged", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "ocp-patch-"));
   let captured = "";
   const original = process.stdout.write.bind(process.stdout);
-  process.stdout.write = ((chunk: string | Uint8Array) => {
+  process.stdout.write = ((chunk: string | Uint8Array, encoding?: BufferEncoding, cb?: (err?: Error | null) => void) => {
     captured += String(chunk);
-    return true;
+    return original(chunk, encoding, cb);
   }) as typeof process.stdout.write;
   try {
     const { existsSync, mkdirSync, writeFileSync } = await import("node:fs");
@@ -1376,9 +1378,9 @@ test("ocp replace overwrites one existing file and does not create one", async (
   const root = mkdtempSync(path.join(tmpdir(), "ocp-replace-"));
   let captured = "";
   const original = process.stdout.write.bind(process.stdout);
-  process.stdout.write = ((chunk: string | Uint8Array) => {
+  process.stdout.write = ((chunk: string | Uint8Array, encoding?: BufferEncoding, cb?: (err?: Error | null) => void) => {
     captured += String(chunk);
-    return true;
+    return original(chunk, encoding, cb);
   }) as typeof process.stdout.write;
   try {
     const { existsSync, mkdirSync, writeFileSync } = await import("node:fs");
@@ -1430,9 +1432,9 @@ test("ocp stat names a file or directory and does not print contents", async () 
   const root = mkdtempSync(path.join(tmpdir(), "ocp-stat-"));
   let captured = "";
   const original = process.stdout.write.bind(process.stdout);
-  process.stdout.write = ((chunk: string | Uint8Array) => {
+  process.stdout.write = ((chunk: string | Uint8Array, encoding?: BufferEncoding, cb?: (err?: Error | null) => void) => {
     captured += String(chunk);
-    return true;
+    return original(chunk, encoding, cb);
   }) as typeof process.stdout.write;
   try {
     const { existsSync, mkdirSync, writeFileSync } = await import("node:fs");
@@ -1477,9 +1479,9 @@ test("ocp same compares two files and does not print them", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "ocp-same-"));
   let captured = "";
   const original = process.stdout.write.bind(process.stdout);
-  process.stdout.write = ((chunk: string | Uint8Array) => {
+  process.stdout.write = ((chunk: string | Uint8Array, encoding?: BufferEncoding, cb?: (err?: Error | null) => void) => {
     captured += String(chunk);
-    return true;
+    return original(chunk, encoding, cb);
   }) as typeof process.stdout.write;
   try {
     const { existsSync, mkdirSync, writeFileSync } = await import("node:fs");
@@ -1531,9 +1533,9 @@ test("ocp contains says yes or no and does not print the line", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "ocp-contains-"));
   let captured = "";
   const original = process.stdout.write.bind(process.stdout);
-  process.stdout.write = ((chunk: string | Uint8Array) => {
+  process.stdout.write = ((chunk: string | Uint8Array, encoding?: BufferEncoding, cb?: (err?: Error | null) => void) => {
     captured += String(chunk);
-    return true;
+    return original(chunk, encoding, cb);
   }) as typeof process.stdout.write;
   try {
     const { existsSync, mkdirSync, writeFileSync } = await import("node:fs");
@@ -1587,9 +1589,9 @@ test("ocp lines counts one file and does not print the lines", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "ocp-lines-"));
   let captured = "";
   const original = process.stdout.write.bind(process.stdout);
-  process.stdout.write = ((chunk: string | Uint8Array) => {
+  process.stdout.write = ((chunk: string | Uint8Array, encoding?: BufferEncoding, cb?: (err?: Error | null) => void) => {
     captured += String(chunk);
-    return true;
+    return original(chunk, encoding, cb);
   }) as typeof process.stdout.write;
   try {
     const { existsSync, mkdirSync, writeFileSync } = await import("node:fs");
@@ -1654,9 +1656,9 @@ test("ocp bytes prints a file size and does not print the file", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "ocp-bytes-"));
   let captured = "";
   const original = process.stdout.write.bind(process.stdout);
-  process.stdout.write = ((chunk: string | Uint8Array) => {
+  process.stdout.write = ((chunk: string | Uint8Array, encoding?: BufferEncoding, cb?: (err?: Error | null) => void) => {
     captured += String(chunk);
-    return true;
+    return original(chunk, encoding, cb);
   }) as typeof process.stdout.write;
   try {
     const { existsSync, mkdirSync, writeFileSync } = await import("node:fs");
@@ -1720,9 +1722,9 @@ test("ocp count names how many entries are in a directory", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "ocp-count-"));
   let captured = "";
   const original = process.stdout.write.bind(process.stdout);
-  process.stdout.write = ((chunk: string | Uint8Array) => {
+  process.stdout.write = ((chunk: string | Uint8Array, encoding?: BufferEncoding, cb?: (err?: Error | null) => void) => {
     captured += String(chunk);
-    return true;
+    return original(chunk, encoding, cb);
   }) as typeof process.stdout.write;
   try {
     const { existsSync, mkdirSync, writeFileSync } = await import("node:fs");
@@ -1787,9 +1789,9 @@ test("ocp trail says whether a line ends with spaces", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "ocp-trail-"));
   let captured = "";
   const original = process.stdout.write.bind(process.stdout);
-  process.stdout.write = ((chunk: string | Uint8Array) => {
+  process.stdout.write = ((chunk: string | Uint8Array, encoding?: BufferEncoding, cb?: (err?: Error | null) => void) => {
     captured += String(chunk);
-    return true;
+    return original(chunk, encoding, cb);
   }) as typeof process.stdout.write;
   try {
     const { existsSync, mkdirSync, writeFileSync } = await import("node:fs");
@@ -1858,9 +1860,9 @@ test("ocp keep drop and uniq edit lines without printing them", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "ocp-keep-"));
   let captured = "";
   const original = process.stdout.write.bind(process.stdout);
-  process.stdout.write = ((chunk: string | Uint8Array) => {
+  process.stdout.write = ((chunk: string | Uint8Array, encoding?: BufferEncoding, cb?: (err?: Error | null) => void) => {
     captured += String(chunk);
-    return true;
+    return original(chunk, encoding, cb);
   }) as typeof process.stdout.write;
   try {
     const { existsSync, mkdirSync, writeFileSync } = await import("node:fs");
@@ -1932,9 +1934,9 @@ test("ocp mtime prints when a path changed and does not print the file", async (
   const root = mkdtempSync(path.join(tmpdir(), "ocp-mtime-"));
   let captured = "";
   const original = process.stdout.write.bind(process.stdout);
-  process.stdout.write = ((chunk: string | Uint8Array) => {
+  process.stdout.write = ((chunk: string | Uint8Array, encoding?: BufferEncoding, cb?: (err?: Error | null) => void) => {
     captured += String(chunk);
-    return true;
+    return original(chunk, encoding, cb);
   }) as typeof process.stdout.write;
   try {
     const { existsSync, mkdirSync, statSync, writeFileSync } = await import("node:fs");
@@ -1992,9 +1994,9 @@ test("ocp lower and upper change case without printing the file", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "ocp-case-"));
   let captured = "";
   const original = process.stdout.write.bind(process.stdout);
-  process.stdout.write = ((chunk: string | Uint8Array) => {
+  process.stdout.write = ((chunk: string | Uint8Array, encoding?: BufferEncoding, cb?: (err?: Error | null) => void) => {
     captured += String(chunk);
-    return true;
+    return original(chunk, encoding, cb);
   }) as typeof process.stdout.write;
   try {
     const { existsSync, mkdirSync, writeFileSync } = await import("node:fs");
@@ -2054,9 +2056,9 @@ test("ocp first last and chop keep one edge without printing the file", async ()
   const root = mkdtempSync(path.join(tmpdir(), "ocp-edge-"));
   let captured = "";
   const original = process.stdout.write.bind(process.stdout);
-  process.stdout.write = ((chunk: string | Uint8Array) => {
+  process.stdout.write = ((chunk: string | Uint8Array, encoding?: BufferEncoding, cb?: (err?: Error | null) => void) => {
     captured += String(chunk);
-    return true;
+    return original(chunk, encoding, cb);
   }) as typeof process.stdout.write;
   try {
     const { existsSync, mkdirSync, writeFileSync } = await import("node:fs");
@@ -2162,9 +2164,9 @@ test("ocp prefix suffix and wrap mark lines without printing the file", async ()
   const root = mkdtempSync(path.join(tmpdir(), "ocp-wrap-"));
   let captured = "";
   const original = process.stdout.write.bind(process.stdout);
-  process.stdout.write = ((chunk: string | Uint8Array) => {
+  process.stdout.write = ((chunk: string | Uint8Array, encoding?: BufferEncoding, cb?: (err?: Error | null) => void) => {
     captured += String(chunk);
-    return true;
+    return original(chunk, encoding, cb);
   }) as typeof process.stdout.write;
   try {
     const { existsSync, mkdirSync, writeFileSync } = await import("node:fs");
@@ -2270,9 +2272,9 @@ test("ocp take skip and span keep a line window without printing the file", asyn
   const root = mkdtempSync(path.join(tmpdir(), "ocp-window-"));
   let captured = "";
   const original = process.stdout.write.bind(process.stdout);
-  process.stdout.write = ((chunk: string | Uint8Array) => {
+  process.stdout.write = ((chunk: string | Uint8Array, encoding?: BufferEncoding, cb?: (err?: Error | null) => void) => {
     captured += String(chunk);
-    return true;
+    return original(chunk, encoding, cb);
   }) as typeof process.stdout.write;
   try {
     const { existsSync, mkdirSync, writeFileSync } = await import("node:fs");
@@ -2373,9 +2375,9 @@ test("ocp squeeze purge and trim tidy lines without printing the file", async ()
   const root = mkdtempSync(path.join(tmpdir(), "ocp-squeeze-"));
   let captured = "";
   const original = process.stdout.write.bind(process.stdout);
-  process.stdout.write = ((chunk: string | Uint8Array) => {
+  process.stdout.write = ((chunk: string | Uint8Array, encoding?: BufferEncoding, cb?: (err?: Error | null) => void) => {
     captured += String(chunk);
-    return true;
+    return original(chunk, encoding, cb);
   }) as typeof process.stdout.write;
   try {
     const { existsSync, mkdirSync, writeFileSync } = await import("node:fs");
@@ -2480,9 +2482,9 @@ test("ocp insert cut and exchange edit one line without printing the file", asyn
   const root = mkdtempSync(path.join(tmpdir(), "ocp-insert-"));
   let captured = "";
   const original = process.stdout.write.bind(process.stdout);
-  process.stdout.write = ((chunk: string | Uint8Array) => {
+  process.stdout.write = ((chunk: string | Uint8Array, encoding?: BufferEncoding, cb?: (err?: Error | null) => void) => {
     captured += String(chunk);
-    return true;
+    return original(chunk, encoding, cb);
   }) as typeof process.stdout.write;
   try {
     const { existsSync, mkdirSync, writeFileSync } = await import("node:fs");
@@ -2594,9 +2596,9 @@ test("ocp until from and between keep a marked span without printing the file", 
   const root = mkdtempSync(path.join(tmpdir(), "ocp-until-"));
   let captured = "";
   const original = process.stdout.write.bind(process.stdout);
-  process.stdout.write = ((chunk: string | Uint8Array) => {
+  process.stdout.write = ((chunk: string | Uint8Array, encoding?: BufferEncoding, cb?: (err?: Error | null) => void) => {
     captured += String(chunk);
-    return true;
+    return original(chunk, encoding, cb);
   }) as typeof process.stdout.write;
   try {
     const { existsSync, mkdirSync, writeFileSync } = await import("node:fs");
@@ -2706,9 +2708,9 @@ test("ocp shared only and join edit one file from another without printing it", 
   const root = mkdtempSync(path.join(tmpdir(), "ocp-pair-"));
   let captured = "";
   const original = process.stdout.write.bind(process.stdout);
-  process.stdout.write = ((chunk: string | Uint8Array) => {
+  process.stdout.write = ((chunk: string | Uint8Array, encoding?: BufferEncoding, cb?: (err?: Error | null) => void) => {
     captured += String(chunk);
-    return true;
+    return original(chunk, encoding, cb);
   }) as typeof process.stdout.write;
   try {
     const { existsSync, mkdirSync, writeFileSync } = await import("node:fs");
@@ -2813,9 +2815,9 @@ test("ocp clip pad and fold set a line width without printing the file", async (
   const root = mkdtempSync(path.join(tmpdir(), "ocp-width-"));
   let captured = "";
   const original = process.stdout.write.bind(process.stdout);
-  process.stdout.write = ((chunk: string | Uint8Array) => {
+  process.stdout.write = ((chunk: string | Uint8Array, encoding?: BufferEncoding, cb?: (err?: Error | null) => void) => {
     captured += String(chunk);
-    return true;
+    return original(chunk, encoding, cb);
   }) as typeof process.stdout.write;
   try {
     const { existsSync, mkdirSync, writeFileSync } = await import("node:fs");
@@ -2906,9 +2908,9 @@ test("ocp col dropcol and swapcol edit fields without printing the file", async 
   const root = mkdtempSync(path.join(tmpdir(), "ocp-col-"));
   let captured = "";
   const original = process.stdout.write.bind(process.stdout);
-  process.stdout.write = ((chunk: string | Uint8Array) => {
+  process.stdout.write = ((chunk: string | Uint8Array, encoding?: BufferEncoding, cb?: (err?: Error | null) => void) => {
     captured += String(chunk);
-    return true;
+    return original(chunk, encoding, cb);
   }) as typeof process.stdout.write;
   try {
     const { existsSync, mkdirSync, writeFileSync } = await import("node:fs");
@@ -3003,9 +3005,9 @@ test("ocp up down and shift move lines without printing the file", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "ocp-shift-"));
   let captured = "";
   const original = process.stdout.write.bind(process.stdout);
-  process.stdout.write = ((chunk: string | Uint8Array) => {
+  process.stdout.write = ((chunk: string | Uint8Array, encoding?: BufferEncoding, cb?: (err?: Error | null) => void) => {
     captured += String(chunk);
-    return true;
+    return original(chunk, encoding, cb);
   }) as typeof process.stdout.write;
   try {
     const { existsSync, mkdirSync, writeFileSync } = await import("node:fs");
@@ -3108,9 +3110,9 @@ test("ocp fleet status lists a partner and can print json", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "ocp-fleet-cli-"));
   let captured = "";
   const original = process.stdout.write.bind(process.stdout);
-  process.stdout.write = ((chunk: string | Uint8Array) => {
+  process.stdout.write = ((chunk: string | Uint8Array, encoding?: BufferEncoding, cb?: (err?: Error | null) => void) => {
     captured += String(chunk);
-    return true;
+    return original(chunk, encoding, cb);
   }) as typeof process.stdout.write;
   try {
     const empty = await main(["fleet", "status", "--sandbox", root]);
@@ -3142,9 +3144,9 @@ test("ocp channel telegram stays offline without credentials and posts when they
   const root = mkdtempSync(path.join(tmpdir(), "ocp-telegram-cli-"));
   let captured = "";
   const original = process.stdout.write.bind(process.stdout);
-  process.stdout.write = ((chunk: string | Uint8Array) => {
+  process.stdout.write = ((chunk: string | Uint8Array, encoding?: BufferEncoding, cb?: (err?: Error | null) => void) => {
     captured += String(chunk);
-    return true;
+    return original(chunk, encoding, cb);
   }) as typeof process.stdout.write;
   const token = process.env.TELEGRAM_BOT_TOKEN;
   const secret = process.env.TELEGRAM_WEBHOOK_SECRET;
@@ -3187,9 +3189,9 @@ test("ocp channel slack receive rejects a bad signature and accepts a signed eve
   const root = mkdtempSync(path.join(tmpdir(), "ocp-slack-receive-"));
   let captured = "";
   const original = process.stdout.write.bind(process.stdout);
-  process.stdout.write = ((chunk: string | Uint8Array) => {
+  process.stdout.write = ((chunk: string | Uint8Array, encoding?: BufferEncoding, cb?: (err?: Error | null) => void) => {
     captured += String(chunk);
-    return true;
+    return original(chunk, encoding, cb);
   }) as typeof process.stdout.write;
   const token = process.env.SLACK_BOT_TOKEN;
   const signing = process.env.SLACK_SIGNING_SECRET;
@@ -3245,9 +3247,9 @@ test("ocp computer qa fails a bad partner frame without opening a browser", asyn
   const root = mkdtempSync(path.join(tmpdir(), "ocp-fleet-frame-qa-"));
   let captured = "";
   const original = process.stdout.write.bind(process.stdout);
-  process.stdout.write = ((chunk: string | Uint8Array) => {
+  process.stdout.write = ((chunk: string | Uint8Array, encoding?: BufferEncoding, cb?: (err?: Error | null) => void) => {
     captured += String(chunk);
-    return true;
+    return original(chunk, encoding, cb);
   }) as typeof process.stdout.write;
   try {
     const { mkdirSync, writeFileSync } = await import("node:fs");
@@ -3273,9 +3275,9 @@ test("ocp computer qa prints pass or fail and does not open a page", async () =>
   const root = mkdtempSync(path.join(tmpdir(), "ocp-computer-qa-"));
   let captured = "";
   const original = process.stdout.write.bind(process.stdout);
-  process.stdout.write = ((chunk: string | Uint8Array) => {
+  process.stdout.write = ((chunk: string | Uint8Array, encoding?: BufferEncoding, cb?: (err?: Error | null) => void) => {
     captured += String(chunk);
-    return true;
+    return original(chunk, encoding, cb);
   }) as typeof process.stdout.write;
   try {
     const missing = await main(["computer", "--sandbox", root, "qa"]);
@@ -3312,9 +3314,9 @@ test("a partner orchestration write lands in the partner workspace", async () =>
   const root = mkdtempSync(path.join(tmpdir(), "ocp-partner-write-"));
   let captured = "";
   const original = process.stdout.write.bind(process.stdout);
-  process.stdout.write = ((chunk: string | Uint8Array) => {
+  process.stdout.write = ((chunk: string | Uint8Array, encoding?: BufferEncoding, cb?: (err?: Error | null) => void) => {
     captured += String(chunk);
-    return true;
+    return original(chunk, encoding, cb);
   }) as typeof process.stdout.write;
   const previous = process.env.OPENCLAW_GATEWAY_URL;
   const server = createServer(async (req, res) => {

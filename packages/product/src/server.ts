@@ -1862,7 +1862,7 @@ button.chip:hover{background:#f5f5f7}
 .nav-item.selected .orb{box-shadow:0 0 0 2px rgba(255,255,255,.85)}
 @keyframes orb-pulse{0%,100%{opacity:1}50%{opacity:.45}}
 .chat-head{min-height:60px;padding:12px 22px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;gap:12px;background:#fff;flex-shrink:0}
-.chat-feed{flex:1;padding:28px 28px 18px;overflow-y:auto;display:grid;gap:16px;align-content:start;background:#fff}
+.chat-feed{flex:1;min-height:0;padding:28px 28px 18px;overflow-y:auto;display:grid;gap:16px;align-content:start;background:#fff}
 .welcome-box{border:0;border-radius:18px;padding:22px 22px 16px;background:#f5f5f7}
 .home-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:14px}
 .home-card{padding:14px 16px;border-radius:14px;border:0;background:#fff;box-shadow:var(--shadow)}
@@ -1928,6 +1928,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;font:12.5px/1.45 ui-monospace,SF
 .tab.active{background:var(--accent);color:#fff;font-weight:590}
 .tab:active{opacity:1}
 .drawer-body{flex:1;padding:22px 22px 28px;overflow-y:auto;min-height:0}
+.drawer-body code,.drawer-body li{overflow-wrap:anywhere}
 .comp-stage{flex:1;display:flex;flex-direction:column;min-height:0;padding:16px 20px;gap:12px;overflow-y:auto;background:#f5f5f7}
 .comp-toolbar{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;background:#fff;border:1px solid var(--line);border-radius:14px;padding:10px 14px}
 .comp-banner{border-radius:12px;padding:10px 14px;font-size:14px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
@@ -1973,8 +1974,19 @@ li{margin:4px 0}
 }
 @media(max-width:820px){
   body{overflow:hidden}
-  header{flex-wrap:wrap;height:auto}
-  .top-actions .hide-sm,.stage-switch{display:none}
+  header{flex-wrap:wrap;height:auto;align-items:flex-start;padding:10px 12px}
+  .brand{flex:0 0 auto}
+  .brand strong{white-space:nowrap}
+  .brand-row{flex-wrap:wrap;width:100%;gap:8px}
+  .proj-bar{flex:1 1 100%;min-width:0}
+  .proj-bar select{min-width:0;max-width:46vw}
+  .top-actions{width:100%}
+  .top-actions .hide-sm,.stage-switch,#openComputerFromChatBtn{display:none}
+  .chat-head{flex-wrap:wrap;align-items:flex-start;padding:12px 14px}
+  .chat-head h1{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .chat-feed{padding:16px}
+  .welcome-box{padding:16px}
+  .home-grid{grid-template-columns:1fr 1fr}
   .studio{grid-template-columns:1fr;padding-bottom:58px}
   .sidebar,.inspector{position:fixed;top:auto;bottom:58px;left:0;right:0;height:min(62vh,520px);z-index:8;border:1px solid var(--line);border-radius:16px 16px 0 0;display:none;background:#fff;box-shadow:0 -8px 30px rgba(0,0,0,.08)}
   .studio.show-bots .sidebar,.studio.show-more .inspector{display:flex}

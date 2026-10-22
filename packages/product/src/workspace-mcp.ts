@@ -50,6 +50,7 @@ import {
 } from "./index.js";
 import { runWorkspaceCommand, runWorkspaceTests } from "./sandbox-run.js";
 import { pageStoredToolOutput, toolOutputDataDir } from "./tool-trim.js";
+import { fillVaultLogin, type VaultChallenge } from "./vault.js";
 
 const acceptedPlans = new Set<string>();
 const WRITE_TOOLS = new Set([
@@ -92,6 +93,7 @@ const DIRECT_TOOLS = [
   { name: "computer_mouse", description: "Control the mouse on the bot's virtual computer display (move, click, double_click, right_click, middle_click, down, up, drag, scroll, position).", inputSchema: { type: "object", properties: { action: { type: "string", enum: ["move", "click", "double_click", "right_click", "middle_click", "down", "up", "drag", "scroll", "position"] }, x: { type: "number" }, y: { type: "number" }, fromX: { type: "number" }, fromY: { type: "number" }, button: { type: "string", enum: ["left", "middle", "right"] }, direction: { type: "string", enum: ["up", "down", "left", "right"] }, amount: { type: "number" } }, required: ["action"] } },
   { name: "computer_keyboard", description: "Control the keyboard on the bot's virtual computer display (type text or press keys/hotkeys such as Return, Tab, Escape, BackSpace, ctrl+l, ctrl+c).", inputSchema: { type: "object", properties: { action: { type: "string", enum: ["type", "key", "hotkey"] }, text: { type: "string" }, key: { type: "string" } }, required: ["action"] } },
   { name: "computer_browser", description: "Open a URL in Google Chrome inside the bot's virtual computer display and capture a screenshot.", inputSchema: { type: "object", properties: { url: { type: "string" } }, required: ["url"] } },
+  { name: "vault_fill", description: "Fill a username or password on the virtual computer from a vault item. Pass the item name only. Do not pass the secret. A password fill waits for human approval. If the page is a sign-in wall, 2FA, or captcha, set challenge to signin, 2fa, or captcha so the human can Take Control. The secret is never typed on those pages and is never returned.", inputSchema: { type: "object", properties: { name: { type: "string" }, field: { type: "string", enum: ["username", "password"] }, challenge: { type: "string", enum: ["signin", "2fa", "captcha"] } }, required: ["name"] } },
   { name: "bot_list", description: "List all bots in the OpenCodingPartner fleet along with their roles, runtimes, models, workspaces, and active task counts.", inputSchema: { type: "object", properties: {} } },
   { name: "bot_create", description: "Create a new persistent bot teammate with a specific name, role, runtime, model/provider, and operating instructions.", inputSchema: { type: "object", properties: { name: { type: "string", description: "Unique bot name (e.g. Linus, Grace, Sentinel)." }, role: { type: "string", enum: ["general", "coding", "qa", "security", "research", "computer"] }, runtime: { type: "string", enum: ["ocp-agent", "ocp-coder"] }, isolation: { type: "string", enum: ["docker", "host"] }, network: { type: "string", enum: ["disabled", "enabled"] }, provider: { type: "string", enum: ["openrouter", "litellm"] }, model: { type: "string" }, endpoint: { type: "string" }, apiKeyEnv: { type: "string" }, workspace: { type: "string" }, instructions: { type: "string" } }, required: ["name"] } },
   { name: "bot_update", description: "Update an existing bot's role, runtime, model/provider, isolation, or instructions by bot ID or name.", inputSchema: { type: "object", properties: { bot: { type: "string", description: "Target bot ID or name." }, name: { type: "string", description: "Optional new name for the bot." }, role: { type: "string", enum: ["general", "coding", "qa", "security", "research", "computer"] }, runtime: { type: "string", enum: ["ocp-agent", "ocp-coder"] }, isolation: { type: "string", enum: ["docker", "host"] }, network: { type: "string", enum: ["disabled", "enabled"] }, provider: { type: "string", enum: ["openrouter", "litellm"] }, model: { type: "string" }, endpoint: { type: "string" }, apiKeyEnv: { type: "string" }, instructions: { type: "string" } }, required: ["bot"] } },
@@ -368,6 +370,21 @@ async function executeToolCall(root: string, name: string, args: Record<string, 
     const url = typeof args.url === "string" ? args.url : "";
     const res = await computerOpenBrowser(root, url, "partner");
     return mcpToolResult({ ok: res.ok, detail: JSON.stringify(res, null, 2) });
+  }
+  if (name === "vault_fill") {
+    const challenge = args.challenge === "signin" || args.challenge === "2fa" || args.challenge === "captcha" ? args.challenge as VaultChallenge : "";
+    const outcome = await fillVaultLogin({
+      root: resolveDataDir(),
+      workspace: root,
+      name: typeof args.name === "string" ? args.name : "",
+      field: args.field === "username" ? "username" : "password",
+      challenge,
+      typeText: async (text) => {
+        const typed = await computerKeyboard(root, { action: "type", text, actor: "partner", fast: true });
+        return { ok: typed.ok, detail: typed.detail };
+      },
+    });
+    return mcpToolResult({ ok: outcome.ok, detail: outcome.text });
   }
 
   const dataDir = resolveDataDir();

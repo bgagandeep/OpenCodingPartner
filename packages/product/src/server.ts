@@ -76,6 +76,7 @@ import {
 import { probeConnectors, publicConnector, upsertConnectorSnapshot, validateConnectorInput } from "./connectors.js";
 import { usageSnapshot } from "./usage.js";
 import { deleteMcpSecret, listMcpSecretKeys, mcpSecretKey, readMcpSecret, writeMcpSecret } from "./mcp-secrets.js";
+import { createVaultItem, deleteVaultItem, publicVault, VaultError } from "./vault.js";
 
 interface AppOptions {
   host?: string;
@@ -445,6 +446,7 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
         activeModel: effectiveEnv.OCP_DEFAULT_MODEL || settings.defaultModel || "",
         routines,
         channelLog: await listChannelLog(root),
+        vault: await publicVault(root, env),
         usage: await usageSnapshot(root),
         modelPrices: settings.modelPrices ?? [],
         usageCaps: settings.usageCaps ?? { perBot: [] },
@@ -494,6 +496,10 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
     }
     if (request.method === "GET" && url.pathname === "/api/routines") {
       sendJson(response, 200, { routines: await listProductRoutines(root) });
+      return;
+    }
+    if (request.method === "GET" && url.pathname === "/api/vault") {
+      sendJson(response, 200, await publicVault(root, env));
       return;
     }
     if (request.method === "GET" && url.pathname === "/api/workspace/file") {
@@ -677,6 +683,27 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
         sendJson(response, 201, { routine });
       } catch (error) {
         sendJson(response, 400, { error: error instanceof Error ? error.message : "Could not create routine." });
+      }
+      return;
+    }
+    if (request.method === "POST" && url.pathname === "/api/vault") {
+      try {
+        const item = await createVaultItem(root, body, env);
+        sendJson(response, 201, { item });
+      } catch (error) {
+        const status = error instanceof VaultError ? error.status : 400;
+        sendJson(response, status, { error: error instanceof Error ? error.message : "Vault item was not stored." });
+      }
+      return;
+    }
+    const vaultItemMatch = /^\/api\/vault\/([^/]+)$/.exec(url.pathname);
+    if (vaultItemMatch && request.method === "DELETE") {
+      try {
+        await deleteVaultItem(root, decodeURIComponent(vaultItemMatch[1] ?? ""), env);
+        sendJson(response, 200, { ok: true });
+      } catch (error) {
+        const status = error instanceof VaultError ? error.status : 400;
+        sendJson(response, status, { error: error instanceof Error ? error.message : "Vault item was not deleted." });
       }
       return;
     }
@@ -1811,6 +1838,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;font:12.5px/1.45 "JetBrains Mono
       <button type="button" class="tab" data-tab="routines">Routines</button>
       <button type="button" class="tab" data-tab="connectors">Connectors</button>
       <button type="button" class="tab" data-tab="channels">Channels</button>
+      <button type="button" class="tab" data-tab="vault">Vault</button>
     </div>
 
     <div class="drawer-body">
@@ -1952,6 +1980,12 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;font:12.5px/1.45 "JetBrains Mono
         <p class="sub">Slack and Telegram messages become tasks for the assigned bot. Replies stay as drafts until you send them. Nothing is sent automatically. Tokens stay in Settings.</p>
         <div id="channelPanel"></div>
       </div>
+
+      <div id="tab-vault" class="tab-pane hidden">
+        <h2>Vault</h2>
+        <p class="sub">Logins, tokens, and OAuth secrets stay in this vault. A bot fills a virtual-computer login by item name. The secret is not sent to the model and is not written in the task log. A sign-in, 2FA, or captcha asks you to Take Control.</p>
+        <div id="vaultPanel"></div>
+      </div>
     </div>
   </aside>
 </main>
@@ -1968,7 +2002,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;font:12.5px/1.45 "JetBrains Mono
   <div id="paletteList" role="listbox"></div>
 </div>
 
-<script nonce="${token}">const TOKEN='${token}',DEFAULT_WS='${escapeJs(process.cwd())}';let state={projects:[],bots:[],tasks:[],routines:[],channels:{},channelLog:[],activeBrainLabel:'',activeModel:''},activeWorkspace='',selected='',conversationBot='',computerBot='',computerMeta=null,bootstrapped=false,activeTab='detail',centerView='chat',lastClickPt=null,renderedCompBot='',lastFrameSrc='',lastSyncedUrl='',lastSidebarSig='',lastChatSig='',lastDetailSig='',keyBuffer='',keyTimer=null,lastCompInteract=0,compQueue=Promise.resolve(),paletteIndex=0,sseLive=false,connectorBot='';
+<script nonce="${token}">const TOKEN='${token}',DEFAULT_WS='${escapeJs(process.cwd())}';let state={projects:[],bots:[],tasks:[],routines:[],channels:{},channelLog:[],vault:{items:[]},activeBrainLabel:'',activeModel:''},activeWorkspace='',selected='',conversationBot='',computerBot='',computerMeta=null,bootstrapped=false,activeTab='detail',centerView='chat',lastClickPt=null,renderedCompBot='',lastFrameSrc='',lastSyncedUrl='',lastSidebarSig='',lastChatSig='',lastDetailSig='',keyBuffer='',keyTimer=null,lastCompInteract=0,compQueue=Promise.resolve(),paletteIndex=0,sseLive=false,connectorBot='';
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const googleSignInNote='Google sign-in stays in this virtual computer. Take Control and sign in yourself. OCP does not connect a Google account, and there is no Gmail, Calendar, or Drive connection.';
 const isAgentRuntime=r=>r==='ocp-agent'||r==='hermes';
@@ -2096,6 +2130,34 @@ function renderChannels(pBots){
     try{await api('/api/settings',{slackBotId:String(f.get('slackBotId')||''),telegramBotId:String(f.get('telegramBotId')||'')});lastChannelSig='';document.querySelector('#channelAssignStatus').textContent='Assignment saved.';await load()}catch(err){document.querySelector('#channelAssignStatus').textContent=err.message}
   });
   bindDrafts();
+}
+let lastVaultSig='';
+function renderVault(){
+  const box=document.querySelector('#vaultPanel');
+  if(!box)return;
+  const vault=state.vault||{backendLabel:'',items:[]};
+  const sig=JSON.stringify(vault);
+  if(sig===lastVaultSig)return;
+  lastVaultSig=sig;
+  const items=(vault.items||[]).map(item=>'<div class="nav-item"><div class="nav-main"><strong>'+esc(item.name)+'</strong><div class="meta">'+esc(item.kind)+' · '+esc(item.account||'no account')+' · '+esc(item.storage)+'</div></div><button type="button" class="ghost" data-vault-delete="'+esc(item.id)+'">Delete</button></div>').join('')||'<div class="meta">No vault items yet.</div>';
+  box.innerHTML='<p class="meta">'+esc(vault.backendLabel||'Vault')+(vault.onePasswordCli?' · 1Password CLI is available.':' · 1Password CLI is not installed.')+'</p>'+items+'<form id="vaultForm" class="mt-sm"><label>Name<input name="name" required placeholder="Work mail"></label><label>Kind<select name="kind"><option value="login">Login</option><option value="oauth">OAuth</option><option value="token">Token</option><option value="note">Note</option></select></label><label>Account<input name="account" placeholder="name@example.com" autocomplete="off"></label><label>Secret<input type="password" name="secret" required autocomplete="off" placeholder="Stored encrypted. Never shown again."></label><label>Where<select name="storage"><option value="local">This computer</option><option value="1password">1Password CLI</option></select></label><button type="submit">Save in vault</button></form><div id="vaultStatus" class="status"></div>';
+  const form=document.querySelector('#vaultForm');
+  if(form)form.addEventListener('submit',async e=>{
+    e.preventDefault();
+    const f=new FormData(form);
+    const status=document.querySelector('#vaultStatus');
+    try{
+      await api('/api/vault',{name:String(f.get('name')||''),kind:String(f.get('kind')||'login'),account:String(f.get('account')||''),secret:String(f.get('secret')||''),storage:String(f.get('storage')||'local')});
+      lastVaultSig='';
+      if(status)status.textContent='Saved. The secret is not shown again.';
+      form.reset();
+      await load();
+    }catch(err){if(status)status.textContent=err.message}
+  });
+  box.querySelectorAll('[data-vault-delete]').forEach(el=>el.addEventListener('click',async()=>{
+    const status=document.querySelector('#vaultStatus');
+    try{await api('/api/vault/'+encodeURIComponent(el.dataset.vaultDelete),{},'DELETE');lastVaultSig='';if(status)status.textContent='Deleted.';await load()}catch(err){if(status)status.textContent=err.message}
+  }));
 }
 function homeDashboard(pBots,pTasks){const running=pTasks.filter(t=>['running','queued','awaiting-approval'].includes(t.status)).length;const waiting=pTasks.filter(t=>t.status==='awaiting-approval').length;const done=pTasks.filter(t=>t.status==='succeeded').length;return '<div class="home-grid"><div class="home-card"><span class="meta">Active tasks</span><strong>'+running+'</strong></div><div class="home-card"><span class="meta">Waiting on you</span><strong>'+waiting+'</strong></div><div class="home-card"><span class="meta">Completed</span><strong>'+done+'</strong></div><div class="home-card"><span class="meta">Active model</span><strong style="font-size:13px">'+esc(state.activeBrainLabel||state.activeModel||'No model configured')+'</strong></div></div>'}
 function graphHtml(t){const agents=t.agents||[];if(!agents.length)return '';return '<div class="graph" aria-label="Delegation graph">'+agents.map((a,i)=>(i?'<span class="edge">→</span>':'')+'<span class="node">'+esc(a.name)+' · '+esc(roleFriendly(a.role))+'</span>').join('')+'</div>'}
@@ -2365,6 +2427,7 @@ function draw(){
   }
 
   renderChannels(pBots);
+  renderVault();
   renderUsage(pBots);
   drawChatFeed(activeProj,pBots,pTasks);
   drawComputer(pBots);
@@ -2854,6 +2917,7 @@ const paletteCommands=[
   {id:'routines',label:'Routines',run:()=>setTab('routines')},
   {id:'connectors',label:'Connectors',run:()=>setTab('connectors')},
   {id:'channels',label:'Channels',run:()=>setTab('channels')},
+  {id:'vault',label:'Vault',run:()=>setTab('vault')},
   {id:'inbox',label:'Approvals inbox',run:()=>{setTab('detail');lastDetailSig='';drawDetail()}}
 ];
 function paletteVisible(){return !document.querySelector('#palette').classList.contains('hidden')}

@@ -52,6 +52,7 @@ import { runWorkspaceCommand, runWorkspaceTests } from "./sandbox-run.js";
 import { pageStoredToolOutput, toolOutputDataDir } from "./tool-trim.js";
 import { fillVaultLogin, type VaultChallenge } from "./vault.js";
 import { ACCOUNT_TOOL_DEFS, isAccountTool, runAccountTool } from "./accounts.js";
+import { skillCatalog } from "./skills.js";
 
 const acceptedPlans = new Set<string>();
 const WRITE_TOOLS = new Set([
@@ -104,7 +105,7 @@ const DIRECT_TOOLS = [
 ];
 
 const DISCOVERY_TOOLS = [
-  { name: "tool_search", description: "Search built-in workspace tools and attached external MCP connectors by keyword. Connector tools use names like mcp:server/tool. Connector failures are returned, not omitted.", inputSchema: { type: "object", properties: { query: { type: "string" } }, required: ["query"] } },
+  { name: "tool_search", description: "Search built-in workspace tools, reusable skills, and attached external MCP connectors by keyword. Skills use names like skill:review-a-diff and include their steps. Connector tools use names like mcp:server/tool. Connector failures are returned, not omitted.", inputSchema: { type: "object", properties: { query: { type: "string" } }, required: ["query"] } },
   { name: "tool_describe", description: "Return JSON schemas and usage guidance for up to 10 built-in or external MCP tool names.", inputSchema: { type: "object", properties: { names: { type: "array", items: { type: "string" } } }, required: ["names"] } },
   { name: "tool_call", description: "Invoke a built-in workspace tool or an attached external MCP tool (mcp:server/tool) by name and arguments. External calls are approved by the session before they run.", inputSchema: { type: "object", properties: { name: { type: "string" }, arguments: { type: "object" } }, required: ["name"] } },
 ];
@@ -186,7 +187,8 @@ async function executeToolCall(root: string, name: string, args: Record<string, 
     if (viaDiscovery) return mcpToolResult({ ok: false, detail: "A discovery tool cannot call another discovery tool." });
     const query = (typeof args.query === "string" ? args.query : "").trim().toLowerCase();
     const catalog = await safeExternalCatalog();
-    const scored = [...DIRECT_TOOLS.map((tool) => ({ name: tool.name, description: tool.description })), ...ACCOUNT_TOOL_DEFS.map((tool) => ({ name: tool.name, description: tool.description })), ...catalog.tools.map((tool) => ({ name: tool.qualifiedName, description: tool.description }))]
+    const skills = await skillCatalog(resolveDataDir()).catch(() => []);
+    const scored = [...DIRECT_TOOLS.map((tool) => ({ name: tool.name, description: tool.description, body: undefined as string | undefined })), ...ACCOUNT_TOOL_DEFS.map((tool) => ({ name: tool.name, description: tool.description, body: undefined as string | undefined })), ...skills, ...catalog.tools.map((tool) => ({ name: tool.qualifiedName, description: tool.description, body: undefined as string | undefined }))]
       .map((tool) => {
         const hay = `${tool.name} ${tool.description}`.toLowerCase();
         const score = !query ? 1 : tool.name.toLowerCase() === query ? 3 : tool.name.toLowerCase().includes(query) ? 2 : hay.includes(query) ? 1 : 0;
@@ -195,7 +197,7 @@ async function executeToolCall(root: string, name: string, args: Record<string, 
       .filter((entry) => entry.score > 0)
       .sort((a, b) => b.score - a.score)
       .slice(0, 10)
-      .map((entry) => ({ name: entry.tool.name, description: entry.tool.description }));
+      .map((entry) => entry.tool.body ? { name: entry.tool.name, description: entry.tool.description, body: entry.tool.body } : { name: entry.tool.name, description: entry.tool.description });
     const failures = catalog.errors.map((detail) => ({ name: "connector-error", description: detail, error: true }));
     return mcpToolResult({ ok: failures.length === 0, detail: JSON.stringify([...scored, ...failures], null, 2) });
   }
@@ -208,9 +210,11 @@ async function executeToolCall(root: string, name: string, args: Record<string, 
         : [];
     const names = rawNames.filter((n): n is string => typeof n === "string").slice(0, 10);
     const catalog = await safeExternalCatalog();
+    const skills = await skillCatalog(resolveDataDir()).catch(() => []);
     const described = [
       ...DIRECT_TOOLS.filter((tool) => names.includes(tool.name)),
       ...ACCOUNT_TOOL_DEFS.filter((tool) => names.includes(tool.name)),
+      ...skills.filter((skill) => names.includes(skill.name)),
       ...catalog.tools.filter((tool) => names.includes(tool.qualifiedName)).map((tool) => ({
         name: tool.qualifiedName,
         description: tool.description,

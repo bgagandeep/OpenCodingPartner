@@ -1158,6 +1158,7 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
   }
 
   async function startRoutineTask(routine: Awaited<ReturnType<typeof listProductRoutines>>[number]): Promise<void> {
+    if (closing) return;
     const bot = await findBot(routine.botId, root);
     if (!bot) return;
     const task = await createTask({ botId: bot.id, prompt: `[routine ${routine.id}] ${routine.prompt}` }, root);
@@ -1225,25 +1226,37 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
   const actualPort = typeof address === "object" && address ? address.port : port;
   boundPort = actualPort;
   const displayHost = host.includes(":") ? `[${host}]` : host;
+  let background: Promise<void> = Promise.resolve();
+  const trackBackground = (work: Promise<unknown>) => {
+    background = background.then(() => work).then(() => undefined, () => undefined);
+  };
   const queueTimer = setInterval(() => {
-    void (async () => {
+    trackBackground((async () => {
+      if (closing) return;
       const queued = (await listTasks(root)).filter((task) => task.status === "queued");
+      if (closing) return;
       const seen = new Set<string>();
       for (const task of queued) {
+        if (closing) return;
         const owner = await findBot(task.botId, root);
         if (!owner || seen.has(owner.workspace)) continue;
         seen.add(owner.workspace);
         await drainWorkspaceQueue(owner.workspace);
       }
-    })();
+    })());
   }, 400);
   queueTimer.unref?.();
   const routineTimer = setInterval(() => {
-    void (async () => {
+    trackBackground((async () => {
+      if (closing) return;
       const due = await dueProductRoutines(Date.now(), root);
-      for (const routine of due) await startRoutineTask(routine);
+      if (closing) return;
+      for (const routine of due) {
+        if (closing) return;
+        await startRoutineTask(routine);
+      }
       if (due.length) notifySse();
-    })();
+    })());
   }, 1000);
   routineTimer.unref?.();
   return {
@@ -1253,6 +1266,7 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
       closing = true;
       clearInterval(queueTimer);
       clearInterval(routineTimer);
+      await background;
       for (const client of sseClients) {
         try {
           client.end();

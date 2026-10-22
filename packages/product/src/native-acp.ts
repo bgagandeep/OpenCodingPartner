@@ -8,7 +8,9 @@ import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import { externalToolNeedsApproval } from "./connectors.js";
 import { listHttpMcpTools, type HttpMcpEndpoint } from "./http-mcp.js";
-import { noteModelUsage, usageCapReason } from "./usage.js";
+import { formatPins, splitRecent, summarizeTurns, takePins, type PinnedNotes } from "./context.js";
+import { recentTokenBudget } from "./provider-presets.js";
+import { noteModelUsage, usageCapReason, usageProviderKind } from "./usage.js";
 
 interface RpcMessage {
   jsonrpc?: string;
@@ -54,6 +56,9 @@ interface SessionState {
   modelOverride?: string;
   mcpServers: McpServerSpec[];
   messages: ChatMessage[];
+  summary?: string;
+  foldedCount?: number;
+  pinned?: PinnedNotes;
 }
 
 interface ProviderConfig {
@@ -382,6 +387,7 @@ export async function runNativeAcpAgent(): Promise<void> {
         rules,
         mcpServers,
         messages: [{ role: "system", content: rules }],
+        pinned: { facts: [], decisions: [], todos: [] },
       };
       sessions.set(sessionId, state);
       await saveSession(state);
@@ -453,7 +459,9 @@ export async function runNativeAcpAgent(): Promise<void> {
 
       const promptBlocks = Array.isArray(params.prompt) ? (params.prompt as Array<{ type?: string; text?: string }>) : [];
       const promptText = promptBlocks.map((b) => b.text ?? "").join("\n").trim();
-      state.messages.push({ role: "user", content: promptText });
+      const pinnedTurn = takePins(promptText, state.pinned ?? { facts: [], decisions: [], todos: [] });
+      state.pinned = pinnedTurn.pinned;
+      state.messages.push({ role: "user", content: pinnedTurn.text || promptText });
 
       const bridges: McpClientBridge[] = [];
       const toolMap = new Map<string, { bridge: McpClientBridge; tool: McpTool }>();
@@ -523,6 +531,53 @@ export async function runNativeAcpAgent(): Promise<void> {
 
         const activeModel = state.modelOverride || config.model;
         let usageContinued = false;
+        const messagesForModel = async (): Promise<ChatMessage[]> => {
+          const rest = state.messages.slice(1);
+          const budget = recentTokenBudget(config.provider, config.baseUrl);
+          const { older, recent } = splitRecent(rest, budget);
+          const start = Math.min(state.foldedCount ?? 0, older.length);
+          const portion = older.slice(start).map((message) => ({ role: message.role, content: message.content ?? "" }));
+          if (portion.length > 0) {
+            const folded = await summarizeTurns(portion, state.summary ?? "", async (prompt) => {
+              const summaryModel = process.env.OCP_SUMMARY_MODEL?.trim();
+              const local = usageProviderKind(config.provider, config.baseUrl) === "local";
+              if ((!summaryModel && !local) || !config.apiKey) return undefined;
+              try {
+                const summaryResponse = await fetch(`${config.baseUrl}/chat/completions`, {
+                  method: "POST",
+                  headers: { "content-type": "application/json", authorization: `Bearer ${config.apiKey}` },
+                  body: JSON.stringify({ model: summaryModel || activeModel, messages: [{ role: "user", content: prompt }] }),
+                });
+                if (!summaryResponse.ok) return undefined;
+                const summaryPayload = await summaryResponse.json() as { choices?: Array<{ message?: { content?: string | null } }>; usage?: unknown };
+                const text = summaryPayload.choices?.[0]?.message?.content;
+                if (process.env.OCP_DATA_DIR && process.env.OCP_ACTOR_BOT_ID) {
+                  await noteModelUsage(process.env.OCP_DATA_DIR, {
+                    botId: process.env.OCP_ACTOR_BOT_ID,
+                    taskId: process.env.OCP_TASK_ID,
+                    model: summaryModel || activeModel,
+                    provider: config.provider,
+                    baseUrl: config.baseUrl,
+                    usage: summaryPayload.usage,
+                    promptText: prompt,
+                    completionText: typeof text === "string" ? text : "",
+                  }).catch(() => undefined);
+                }
+                return typeof text === "string" ? text : undefined;
+              } catch {
+                return undefined;
+              }
+            });
+            state.summary = folded.summary;
+            state.foldedCount = older.length;
+          }
+          const pinText = formatPins(state.pinned ?? { facts: [], decisions: [], todos: [] });
+          const request: ChatMessage[] = [state.messages[0] ?? { role: "system", content: state.rules }];
+          if (pinText) request.push({ role: "system", content: `Pinned notes:\n${pinText}` });
+          if (state.summary) request.push({ role: "system", content: `Earlier conversation summary:\n${state.summary}` });
+          request.push(...recent);
+          return request;
+        };
         for (let step = 0; step < 12; step += 1) {
           if (!usageContinued && process.env.OCP_DATA_DIR && process.env.OCP_ACTOR_BOT_ID) {
             const reason = await usageCapReason(process.env.OCP_DATA_DIR, process.env.OCP_ACTOR_BOT_ID);
@@ -543,7 +598,8 @@ export async function runNativeAcpAgent(): Promise<void> {
               usageContinued = true;
             }
           }
-          const promptText = JSON.stringify(state.messages);
+          const modelMessages = await messagesForModel();
+          const promptText = JSON.stringify(modelMessages);
           const response = await fetch(`${config.baseUrl}/chat/completions`, {
             method: "POST",
             headers: {
@@ -552,7 +608,7 @@ export async function runNativeAcpAgent(): Promise<void> {
             },
             body: JSON.stringify({
               model: activeModel,
-              messages: state.messages,
+              messages: modelMessages,
               ...(openAiTools.length > 0 ? { tools: openAiTools } : {}),
             }),
           });

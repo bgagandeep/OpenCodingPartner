@@ -7,6 +7,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ActionRules } from "./action-rules.js";
+import { deleteWebhookSecret, newWebhookSecret, nextCronRun, saveWebhookSecret } from "./cron.js";
 import type { ConnectorSnapshot } from "./connectors.js";
 import { probeConnectors } from "./connectors.js";
 import { normalizeModelPrices, normalizeUsageCaps, type ModelPrice, type UsageCaps } from "./usage.js";
@@ -123,6 +124,9 @@ export interface ProductRoutine {
   status: "active" | "paused";
   everyMs?: number;
   event?: string;
+  cron?: string;
+  timezone?: string;
+  webhook?: boolean;
   nextRunAt?: number;
   lastRunAt?: string;
   createdAt: string;
@@ -899,38 +903,67 @@ export async function updateTask(
 }
 
 export async function listProductRoutines(root = productDataDir()): Promise<ProductRoutine[]> {
-  return (await readState(root)).routines ?? [];
+  return ((await readState(root)).routines ?? []).map((routine) => {
+    const copy = { ...routine } as ProductRoutine & { webhookSecret?: string };
+    delete copy.webhookSecret;
+    return copy;
+  });
 }
 
 export async function createProductRoutine(
-  input: { botId: string; prompt: string; everyMs?: number; event?: string },
+  input: { botId: string; prompt: string; everyMs?: number; event?: string; cron?: string; timezone?: string; webhook?: boolean },
   root = productDataDir(),
-): Promise<ProductRoutine> {
+): Promise<ProductRoutine & { webhookSecret?: string }> {
   const prompt = input.prompt.trim();
   if (!prompt) throw new Error("Routine needs a prompt.");
   const bot = await findBot(input.botId, root);
   if (!bot) throw new Error("Unknown bot.");
-  const event = input.event?.trim();
-  const everyMs = input.everyMs;
-  if (event && everyMs) throw new Error("Choose an interval or an event, not both.");
-  if (!event && (!Number.isInteger(everyMs) || (everyMs ?? 0) < 1000)) throw new Error("Interval must be at least 1000 ms.");
-  if (event && !/^[A-Za-z0-9._:-]+$/.test(event)) throw new Error("Event name must be a simple token.");
+  const event = input.event?.trim() ?? "";
+  const cron = input.cron?.trim() ?? "";
+  const timezone = input.timezone?.trim() ?? "";
+  const hasEvery = input.everyMs !== undefined;
+  const hasEvent = event.length > 0;
+  const hasCron = cron.length > 0;
+  const chosen = Number(hasEvery) + Number(hasEvent) + Number(hasCron);
+  if (hasEvery && hasEvent && !hasCron) throw new Error("Choose an interval or an event, not both.");
+  if (chosen > 1) throw new Error("Choose an interval, an event, or a cron expression.");
+  if (!hasEvent && !hasCron && (!Number.isInteger(input.everyMs) || (input.everyMs ?? 0) < 1000)) throw new Error("Interval must be at least 1000 ms.");
+  if (hasEvent && !/^[A-Za-z0-9._:-]+$/.test(event)) throw new Error("Event name must be a simple token.");
   const now = Date.now();
+  let nextRunAt: number | undefined;
+  if (hasCron) {
+    if (!timezone) throw new Error("A cron routine needs an IANA timezone.");
+    nextRunAt = nextCronRun(cron, timezone, now);
+  } else if (hasEvery) nextRunAt = now + (input.everyMs ?? 0);
+  const webhookSecret = input.webhook ? newWebhookSecret() : undefined;
   const routine: ProductRoutine = {
     id: randomUUID(),
     botId: bot.id,
     prompt,
     status: "active",
-    everyMs: event ? undefined : everyMs,
-    event: event || undefined,
-    nextRunAt: event ? undefined : now + (everyMs ?? 0),
+    everyMs: hasEvery ? input.everyMs : undefined,
+    event: hasEvent ? event : undefined,
+    cron: hasCron ? cron : undefined,
+    timezone: hasCron ? timezone : undefined,
+    webhook: webhookSecret ? true : undefined,
+    nextRunAt,
     createdAt: new Date().toISOString(),
   };
   await mutateState(root, (state) => {
     state.routines ??= [];
     state.routines.push(routine);
   });
-  return routine;
+  if (webhookSecret) {
+    try {
+      await saveWebhookSecret(root, routine.id, webhookSecret);
+    } catch {
+      await mutateState(root, (state) => {
+        state.routines = (state.routines ?? []).filter((item) => item.id !== routine.id);
+      });
+      throw new Error("The webhook secret was not stored. The routine was not saved.");
+    }
+  }
+  return webhookSecret ? { ...routine, webhookSecret } : routine;
 }
 
 export async function updateProductRoutine(
@@ -1021,11 +1054,15 @@ export async function deleteProductRoutine(id: string, root = productDataDir()):
   await mutateState(root, (state) => {
     state.routines = (state.routines ?? []).filter((item) => item.id !== id);
   });
+  await deleteWebhookSecret(root, id);
 }
 
 export async function dueProductRoutines(now = Date.now(), root = productDataDir()): Promise<ProductRoutine[]> {
   return (await listProductRoutines(root)).filter((routine) =>
-    routine.status === "active" && Number.isInteger(routine.everyMs) && typeof routine.nextRunAt === "number" && routine.nextRunAt <= now,
+    routine.status === "active" &&
+    typeof routine.nextRunAt === "number" &&
+    routine.nextRunAt <= now &&
+    (Number.isInteger(routine.everyMs) || Boolean(routine.cron)),
   );
 }
 

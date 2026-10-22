@@ -81,6 +81,7 @@ import { createVaultItem, deleteVaultItem, publicVault, VaultError } from "./vau
 import { parseActionRules } from "./action-rules.js";
 import { createSkill, deleteSkill, exportSkillPack, importSkillGit, importSkillZip, listSkills, SkillError, updateSkill } from "./skills.js";
 import { approveIssuePlan, IssuePrError, listIssueRuns, openIssuePullRequest, runIssueTests, startIssueRun } from "./issue-pr.js";
+import { consumeWebhookReplay, followingRunAt, readWebhookSecret, verifyRoutineWebhook } from "./cron.js";
 import { AccountError, completeAccountLogin, deliverMailDraft, disconnectAccount, GOOGLE_SCOPES, MICROSOFT_SCOPES, publicAccounts, saveAccountClient, startAccountLogin } from "./accounts.js";
 
 interface AppOptions {
@@ -270,7 +271,8 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
     const hostHeader = request.headers.host ?? "";
     const requestUrl = new URL(request.url ?? "/", `http://${hostHeader || "127.0.0.1"}`);
     const channelWebhook = request.method === "POST" && (requestUrl.pathname === "/api/channels/slack" || requestUrl.pathname === "/api/channels/telegram");
-    if (!validHostHeader(hostHeader, boundPort) || (!channelWebhook && !validOrigin(request.headers.origin, hostHeader))) {
+    const routineWebhook = request.method === "POST" && /^\/api\/routines\/hooks\/[^/]+$/.test(requestUrl.pathname);
+    if (!validHostHeader(hostHeader, boundPort) || (!channelWebhook && !routineWebhook && !validOrigin(request.headers.origin, hostHeader))) {
       sendJson(response, 403, { error: "This local app only accepts requests from its loopback origin." });
       return;
     }
@@ -613,6 +615,41 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
       sendJson(response, result.status, result.body);
       return;
     }
+    const routineHookMatch = /^\/api\/routines\/hooks\/([^/]+)$/.exec(url.pathname);
+    if (request.method === "POST" && routineHookMatch) {
+      const routineId = decodeURIComponent(routineHookMatch[1] ?? "");
+      const rawBody = await readRaw(request);
+      const secret = await readWebhookSecret(root, routineId);
+      if (!secret) {
+        sendJson(response, 404, { ok: false, error: "This routine has no signed webhook. Nothing was started." });
+        return;
+      }
+      const verified = verifyRoutineWebhook({
+        secret,
+        timestamp: oneHeader(request.headers["x-ocp-timestamp"]),
+        signature: oneHeader(request.headers["x-ocp-signature"]),
+        rawBody,
+        nowMs: Date.now(),
+      });
+      if (!verified.ok) {
+        sendJson(response, 401, { ok: false, error: "The signature was rejected. Nothing was started." });
+        return;
+      }
+      const replayed = await consumeWebhookReplay(root, routineId, oneHeader(request.headers["x-ocp-timestamp"]), oneHeader(request.headers["x-ocp-signature"]), Date.now());
+      if (replayed) {
+        sendJson(response, 401, { ok: false, error: "The signature was replayed. Nothing was started." });
+        return;
+      }
+      const routine = (await listProductRoutines(root)).find((item) => item.id === routineId);
+      if (!routine || routine.status !== "active") {
+        sendJson(response, 409, { ok: false, error: "That routine is not active. Nothing was started." });
+        return;
+      }
+      await startRoutineTask(routine, "webhook");
+      notifySse();
+      sendJson(response, 202, { ok: true, started: true, routineId: routine.id });
+      return;
+    }
     if (request.method !== "POST" && request.method !== "PATCH" && request.method !== "DELETE") {
       sendJson(response, 404, { error: "Not found." });
       return;
@@ -736,15 +773,22 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
     }
     if (request.method === "POST" && url.pathname === "/api/routines") {
       try {
-        const everyMs = typeof body.everyMs === "number" ? body.everyMs : typeof body.everyMs === "string" ? Number(body.everyMs) : undefined;
-        const routine = await createProductRoutine({
+        const created = await createProductRoutine({
           botId: typeof body.botId === "string" ? body.botId : "",
           prompt: typeof body.prompt === "string" ? body.prompt : "",
-          everyMs: Number.isFinite(everyMs) ? everyMs : undefined,
+          everyMs: optionalNumber(body.everyMs),
           event: typeof body.event === "string" ? body.event : undefined,
+          cron: typeof body.cron === "string" ? body.cron : undefined,
+          timezone: typeof body.timezone === "string" ? body.timezone : undefined,
+          webhook: body.webhook === true || body.webhook === "true" || body.webhook === "on",
         }, root);
         notifySse();
-        sendJson(response, 201, { routine });
+        const webhookSecret = created.webhookSecret;
+        const routine = { ...created };
+        delete routine.webhookSecret;
+        sendJson(response, 201, webhookSecret
+          ? { routine, webhookSecret, webhookPath: `/api/routines/hooks/${routine.id}` }
+          : { routine });
       } catch (error) {
         sendJson(response, 400, { error: error instanceof Error ? error.message : "Could not create routine." });
       }
@@ -1350,12 +1394,21 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
     })();
   }
 
-  async function startRoutineTask(routine: Awaited<ReturnType<typeof listProductRoutines>>[number]): Promise<void> {
+  async function startRoutineTask(routine: Awaited<ReturnType<typeof listProductRoutines>>[number], source: "schedule" | "webhook" = "schedule"): Promise<void> {
     if (closing) return;
     const bot = await findBot(routine.botId, root);
     if (!bot) return;
     const task = await createTask({ botId: bot.id, prompt: `[routine ${routine.id}] ${routine.prompt}` }, root);
-    await updateProductRoutine(routine.id, { lastRunAt: new Date().toISOString(), nextRunAt: routine.everyMs ? Date.now() + routine.everyMs : routine.nextRunAt }, root);
+    let nextRunAt = routine.nextRunAt;
+    let status: "active" | "paused" | undefined;
+    if (source === "schedule") {
+      try {
+        nextRunAt = followingRunAt(routine, Date.now());
+      } catch {
+        status = "paused";
+      }
+    }
+    await updateProductRoutine(routine.id, { lastRunAt: new Date().toISOString(), nextRunAt, ...(status ? { status } : {}) }, root);
     if (await workspaceHasBusyTask(bot.workspace, root)) return;
     const baseline = await captureWorkspaceBaseline(bot.workspace);
     await updateTask(task.id, { status: "running", processId: process.pid }, root);
@@ -1608,6 +1661,12 @@ function boundedJson(value: unknown): unknown {
     if (!serialized || serialized.length > 12_000) return "[details omitted: too large]";
     return JSON.parse(serialized) as unknown;
   } catch { return "[details omitted: unavailable]"; }
+}
+
+function optionalNumber(value: unknown): number | undefined {
+  if (value === undefined || value === null || value === "") return undefined;
+  const number = typeof value === "number" ? value : typeof value === "string" ? Number(value) : Number.NaN;
+  return Number.isFinite(number) ? number : undefined;
 }
 
 function isLoopback(host: string): boolean {
@@ -2118,12 +2177,16 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;font:12.5px/1.45 "JetBrains Mono
 
       <div id="tab-routines" class="tab-pane hidden">
         <h2>Routines</h2>
-        <p class="sub">Cron-style intervals and named events run inside this app and enqueue a bot task.</p>
+        <p class="sub">Intervals, five-field cron with an IANA timezone, and named events enqueue a bot task. A signed webhook can start the same routine. The signing secret is shown once and is not kept in the page.</p>
+        <p class="meta">Webhook requests send the raw body with headers x-ocp-timestamp (unix milliseconds) and x-ocp-signature (hex HMAC-SHA256 of timestamp + &quot;.&quot; + body). A bad or replayed signature does not start a task.</p>
         <form id="routineForm">
           <label>Bot<select name="botId" id="routineBotSelect" required></select></label>
           <label>Prompt<textarea name="prompt" required placeholder="What should run on a schedule or event?"></textarea></label>
-          <label>Every (seconds)<input name="everySec" type="number" min="1" placeholder="Leave empty if using an event"></label>
+          <label>Every (seconds)<input name="everySec" type="number" min="1" placeholder="Leave empty if using an event or cron"></label>
           <label>Event name<input name="event" placeholder="e.g. build-finished"></label>
+          <label>Cron (minute hour day month weekday)<input name="cron" placeholder="0 9 * * 1" autocomplete="off"></label>
+          <label>Timezone<input name="timezone" placeholder="America/New_York" autocomplete="off"></label>
+          <label><input type="checkbox" name="webhook"> Signed inbound webhook</label>
           <button type="submit">Save routine</button>
         </form>
         <div id="routineStatus" class="status"></div>
@@ -2693,7 +2756,7 @@ function draw(){
   const pBots=projectBots();
   const pTasks=projectTasks();
   const select=document.querySelector('#botSelect'),reviewerSelect=document.querySelector('#reviewerSelect'),chosenBot=select.value,chosenReviewer=reviewerSelect.value;
-  const sidebarSig=JSON.stringify([activeWorkspace,conversationBot,selected,chosenBot,projects.map(p=>[p.workspace,p.name]),pBots.map(b=>[b.id,b.name,b.role,b.routeMode||'auto']),pTasks.map(t=>[t.id,t.botId,t.status,t.prompt])]);
+  const sidebarSig=JSON.stringify([activeWorkspace,conversationBot,selected,chosenBot,projects.map(p=>[p.workspace,p.name]),pBots.map(b=>[b.id,b.name,b.role,b.routeMode||'auto']),pTasks.map(t=>[t.id,t.botId,t.status,t.prompt]),(state.routines||[]).map(r=>[r.id,r.status,r.cron||'',r.timezone||'',r.event||'',r.everyMs||0,r.webhook?1:0])]);
 
   if(sidebarSig!==lastSidebarSig){
     lastSidebarSig=sidebarSig;
@@ -2742,8 +2805,9 @@ function draw(){
       const routines=state.routines||[];
       rlist.innerHTML=routines.length?routines.map(r=>{
         const owner=state.bots.find(b=>b.id===r.botId);
-        const when=r.event?('event '+r.event):('every '+Math.round((r.everyMs||0)/1000)+'s');
-        return '<div class="nav-item"><div class="nav-main"><strong>'+esc(owner?.name||r.botId)+'</strong><div class="meta">'+esc(when)+' · '+esc(r.status)+'</div></div><button type="button" class="ghost" data-routine-toggle="'+esc(r.id)+'" data-status="'+esc(r.status==='active'?'paused':'active')+'">'+(r.status==='active'?'Pause':'Resume')+'</button></div>';
+        const when=r.cron?(r.cron+' '+(r.timezone||'')):(r.event?('event '+r.event):('every '+Math.round((r.everyMs||0)/1000)+'s'));
+        const hook=r.webhook?' · /api/routines/hooks/'+r.id:'';
+        return '<div class="nav-item"><div class="nav-main"><strong>'+esc(owner?.name||r.botId)+'</strong><div class="meta">'+esc(when+hook)+' · '+esc(r.status)+'</div></div><button type="button" class="ghost" data-routine-toggle="'+esc(r.id)+'" data-status="'+esc(r.status==='active'?'paused':'active')+'">'+(r.status==='active'?'Pause':'Resume')+'</button></div>';
       }).join(''):'<div class="meta">No routines yet.</div>';
       rlist.querySelectorAll('[data-routine-toggle]').forEach(el=>el.addEventListener('click',async()=>{try{await api('/api/routines/'+encodeURIComponent(el.dataset.routineToggle),{status:el.dataset.status},'PATCH');await load()}catch(err){alert(err.message)}}));
     }
@@ -3144,11 +3208,21 @@ document.querySelector('#useOpenRouterPresetBtn').addEventListener('click',async
 document.querySelector('#routineForm')?.addEventListener('submit',async e=>{
   e.preventDefault();
   const f=new FormData(e.target);
-  const everySec=Number(f.get('everySec'));
+  const everyRaw=String(f.get('everySec')||'').trim();
+  const everySec=Number(everyRaw);
   const event=String(f.get('event')||'').trim();
+  const cron=String(f.get('cron')||'').trim();
+  const timezone=String(f.get('timezone')||'').trim();
+  const body={botId:f.get('botId'),prompt:f.get('prompt'),webhook:f.get('webhook')==='on'};
+  if(event)body.event=event;
+  if(cron)body.cron=cron;
+  if(timezone)body.timezone=timezone;
+  if(!event&&!cron&&everyRaw)body.everyMs=everySec*1000;
   try{
-    await api('/api/routines',{botId:f.get('botId'),prompt:f.get('prompt'),everyMs:event?'':(Number.isFinite(everySec)?everySec*1000:undefined),event:event||undefined});
-    document.querySelector('#routineStatus').textContent='Routine saved.';
+    const res=await api('/api/routines',body);
+    let note='Routine saved.';
+    if(res.webhookSecret)note+=' Webhook '+res.webhookPath+'. Secret shown once: '+res.webhookSecret;
+    document.querySelector('#routineStatus').textContent=note;
     e.target.reset();
     await load();
   }catch(err){document.querySelector('#routineStatus').textContent=err.message}

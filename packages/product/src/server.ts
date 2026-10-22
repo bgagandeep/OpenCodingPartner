@@ -45,6 +45,7 @@ import {
   updateBotSession,
   updateBot,
   updateTask,
+  writeBotMcpServers,
   validBotProvider,
   validBotRole,
   validBotRuntime,
@@ -54,11 +55,14 @@ import {
   nextQueuedTaskForWorkspace,
   routinesForEvent,
   updateProductRoutine,
+  type BotMcpServer,
   type KeyboardActionInput,
   type MouseActionInput,
   type PendingTaskApproval,
   type RuntimePermissionRequest,
 } from "./index.js";
+import { probeConnectors, publicConnector, upsertConnectorSnapshot, validateConnectorInput } from "./connectors.js";
+import { deleteMcpSecret, listMcpSecretKeys, mcpSecretKey, readMcpSecret, writeMcpSecret } from "./mcp-secrets.js";
 
 interface AppOptions {
   host?: string;
@@ -267,17 +271,18 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
       return;
     }
     if (request.method === "GET" && url.pathname === "/api/state") {
-      const [projects, bots, tasks, settings, routines] = await Promise.all([
+      const [projects, bots, tasks, settings, routines, secretKeys] = await Promise.all([
         listProjects(root),
         listBots(root),
         listTasks(root),
         readProviderSettings(root),
         listProductRoutines(root),
+        listMcpSecretKeys(root),
       ]);
       const effectiveEnv = applyProviderSettingsToEnv(settings, env);
       sendJson(response, 200, {
         projects,
-        bots: bots.map((bot) => publicBot(bot, effectiveEnv)),
+        bots: bots.map((bot) => publicBot(bot, effectiveEnv, secretKeys)),
         tasks: tasks.map((task) => ({
           id: task.id,
           botId: task.botId,
@@ -436,11 +441,12 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
         const fleet = mode !== "none"
           ? await bootstrapFleet(project.workspace, mode, root)
           : { created: [], bots: await listBots(root, project.workspace) };
+        const secretKeys = await listMcpSecretKeys(root);
         sendJson(response, 201, {
           ok: true,
           project,
-          createdBots: fleet.created.map((bot) => publicBot(bot, effectiveEnv)),
-          bots: fleet.bots.map((bot) => publicBot(bot, effectiveEnv)),
+          createdBots: fleet.created.map((bot) => publicBot(bot, effectiveEnv, secretKeys)),
+          bots: fleet.bots.map((bot) => publicBot(bot, effectiveEnv, secretKeys)),
         });
       } catch (error) {
         sendJson(response, 400, { error: error instanceof Error ? error.message : "Could not create project." });
@@ -534,10 +540,11 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
       const settings = await readProviderSettings(root);
       const effectiveEnv = applyProviderSettingsToEnv(settings, env);
       const result = await bootstrapFleet(workspace, mode, root);
+      const secretKeys = await listMcpSecretKeys(root);
       sendJson(response, 200, {
         ok: true,
-        created: result.created.map((bot) => publicBot(bot, effectiveEnv)),
-        bots: result.bots.map((bot) => publicBot(bot, effectiveEnv)),
+        created: result.created.map((bot) => publicBot(bot, effectiveEnv, secretKeys)),
+        bots: result.bots.map((bot) => publicBot(bot, effectiveEnv, secretKeys)),
       });
       return;
     }
@@ -558,7 +565,7 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
         return;
       }
       const effectiveEnv = applyProviderSettingsToEnv(await readProviderSettings(root), env);
-      sendJson(response, 201, { bot: publicBot(saved.bot, effectiveEnv) });
+      sendJson(response, 201, { bot: publicBot(saved.bot, effectiveEnv, await listMcpSecretKeys(root)) });
       return;
     }
     const computerPostMatch = /^\/api\/bots\/([^/]+)\/computer$/.exec(url.pathname);
@@ -619,6 +626,78 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
       sendJson(response, 200, res);
       return;
     }
+    const connectorTestMatch = /^\/api\/bots\/([^/]+)\/connectors\/test$/.exec(url.pathname);
+    if (request.method === "POST" && connectorTestMatch) {
+      const bot = await findBot(connectorTestMatch[1] ?? "", root);
+      const name = typeof body.name === "string" ? body.name.trim() : "";
+      const server = bot?.mcpServers?.find((item) => item.name === name);
+      if (!bot || !server) {
+        sendJson(response, 404, { error: "Connector not found." });
+        return;
+      }
+      const token = await readMcpSecret(root, bot.id, server.name);
+      const tokens = new Map<string, string>();
+      if (token) tokens.set(server.name, token);
+      const probed = await probeConnectors([server], tokens);
+      const merged = (bot.mcpServers ?? []).map((item) => item.name === server.name ? probed.servers[0] ?? item : item);
+      const saved = await writeBotMcpServers(bot.id, merged, root);
+      const secretKeys = await listMcpSecretKeys(root);
+      const connector = publicBot(saved, env, secretKeys).mcpServers.find((item) => item.name === server.name);
+      notifySse();
+      sendJson(response, probed.errors.length > 0 ? 409 : 200, { connector, error: probed.errors[0] });
+      return;
+    }
+    const connectorItemMatch = /^\/api\/bots\/([^/]+)\/connectors\/([^/]+)$/.exec(url.pathname);
+    if (request.method === "DELETE" && connectorItemMatch) {
+      const bot = await findBot(connectorItemMatch[1] ?? "", root);
+      const name = decodeURIComponent(connectorItemMatch[2] ?? "");
+      if (!bot || !(bot.mcpServers ?? []).some((item) => item.name === name)) {
+        sendJson(response, 404, { error: "Connector not found." });
+        return;
+      }
+      await deleteMcpSecret(root, bot.id, name);
+      const saved = await writeBotMcpServers(bot.id, (bot.mcpServers ?? []).filter((item) => item.name !== name), root);
+      notifySse();
+      sendJson(response, 200, { bot: publicBot(saved, env, await listMcpSecretKeys(root)) });
+      return;
+    }
+    const connectorCollectionMatch = /^\/api\/bots\/([^/]+)\/connectors$/.exec(url.pathname);
+    if (request.method === "POST" && connectorCollectionMatch) {
+      const bot = await findBot(connectorCollectionMatch[1] ?? "", root);
+      if (!bot) {
+        sendJson(response, 404, { error: "Bot not found." });
+        return;
+      }
+      const checked = validateConnectorInput({
+        name: typeof body.name === "string" ? body.name : "",
+        url: typeof body.url === "string" ? body.url : "",
+        authHeader: typeof body.authHeader === "string" ? body.authHeader : undefined,
+      });
+      if (!checked.ok) {
+        sendJson(response, 400, { error: checked.error });
+        return;
+      }
+      if (typeof body.authToken === "string" && body.authToken.trim()) await writeMcpSecret(root, bot.id, checked.name, body.authToken.trim());
+      if (body.clearAuth === true) await deleteMcpSecret(root, bot.id, checked.name);
+      const previous = (bot.mcpServers ?? []).find((item) => item.name === checked.name);
+      const sameTarget = previous && previous.url === checked.url;
+      const record: BotMcpServer = {
+        name: checked.name,
+        url: checked.url,
+        authHeader: checked.authHeader ?? (sameTarget ? previous.authHeader : undefined),
+        status: sameTarget ? previous.status : "unknown",
+        lastError: sameTarget ? previous.lastError : undefined,
+        lastCheckedAt: sameTarget ? previous.lastCheckedAt : undefined,
+        toolNames: sameTarget ? previous.toolNames : [],
+      };
+      const saved = await writeBotMcpServers(bot.id, upsertConnectorSnapshot(bot.mcpServers ?? [], record), root);
+      notifySse();
+      const secretKeys = await listMcpSecretKeys(root);
+      sendJson(response, 201, {
+        connector: publicBot(saved, env, secretKeys).mcpServers.find((item) => item.name === checked.name),
+      });
+      return;
+    }
     const botMatch = /^\/api\/bots\/([^/]+)$/.exec(url.pathname);
     if (request.method === "DELETE" && botMatch) {
       try {
@@ -636,7 +715,7 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
         return;
       }
       const effectiveEnv = applyProviderSettingsToEnv(await readProviderSettings(root), env);
-      sendJson(response, 200, { bot: publicBot(saved.bot, effectiveEnv) });
+      sendJson(response, 200, { bot: publicBot(saved.bot, effectiveEnv, await listMcpSecretKeys(root)) });
       return;
     }
     if (url.pathname === "/api/tasks") {
@@ -832,7 +911,7 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
                   persistProgress();
                 }, 400);
               }
-              if (["tool_call", "tool_call_update", "permission_allowed", "permission_denied", "session_reset"].includes(update.kind)) {
+              if (["tool_call", "tool_call_update", "permission_allowed", "permission_denied", "session_reset", "connector_error"].includes(update.kind)) {
                 const title = update.title ? `${agent.name}: ${update.title}` : agent.name;
                 eventWrites = eventWrites.then(() => recordTaskEvent(taskId, { kind: update.kind, title }, root)).catch((error) => { eventError = error; });
               }
@@ -1061,11 +1140,28 @@ function validEnvName(value: string | undefined): boolean {
   return typeof value === "string" && /^[A-Za-z_][A-Za-z0-9_]*$/.test(value);
 }
 
-function publicBot(bot: NonNullable<Awaited<ReturnType<typeof findBot>>>, env: NodeJS.ProcessEnv = process.env) {
+function publicBot(bot: NonNullable<Awaited<ReturnType<typeof findBot>>>, env: NodeJS.ProcessEnv = process.env, secretKeys: ReadonlySet<string> = new Set()) {
   const { id, name, role, runtime, isolation, network, workspace, provider, endpoint, apiKeyEnv, model, instructions, mcpServers, createdAt, updatedAt } = bot;
   const effectiveIsolation = isOcpAgentRuntime(runtime) ? isolation ?? "docker" : undefined;
   const providerKeyConfigured = provider ? missingProviderKey(bot, env) === undefined : undefined;
-  return { id, name, role, runtime, isolation: effectiveIsolation, network: effectiveIsolation === "docker" ? network ?? "disabled" : undefined, workspace, provider, endpoint, apiKeyEnv, model, instructions, mcpServers: mcpServers ?? [], providerKeyConfigured, createdAt, updatedAt };
+  return {
+    id,
+    name,
+    role,
+    runtime,
+    isolation: effectiveIsolation,
+    network: effectiveIsolation === "docker" ? network ?? "disabled" : undefined,
+    workspace,
+    provider,
+    endpoint,
+    apiKeyEnv,
+    model,
+    instructions,
+    mcpServers: (mcpServers ?? []).map((server) => publicConnector(server, secretKeys.has(mcpSecretKey(bot.id, server.name)))),
+    providerKeyConfigured,
+    createdAt,
+    updatedAt,
+  };
 }
 
 function boundedJson(value: unknown): unknown {
@@ -1114,24 +1210,36 @@ export function visibleWorkspaceChangeFiles<T extends { path: string }>(files: r
   return (files ?? []).filter((file) => !isHiddenWorkspacePath(file.path));
 }
 
-function parseMcpServers(raw: unknown, fallback?: { name: string; url: string }[]): { name: string; url: string }[] | undefined {
-  if (raw === undefined) return fallback;
+function parseMcpServers(raw: unknown, fallback?: BotMcpServer[]): BotMcpServer[] | undefined {
+  if (raw === undefined || raw === "") return fallback;
   const text = typeof raw === "string" ? raw.trim() : "";
   const list = Array.isArray(raw) ? raw : text ? (() => { try { return JSON.parse(text) as unknown; } catch { return null; } })() : [];
   if (!Array.isArray(list)) return fallback;
-  const servers: { name: string; url: string }[] = [];
+  const servers: BotMcpServer[] = [];
   for (const item of list) {
     if (!item || typeof item !== "object") continue;
-    const name = typeof (item as { name?: unknown }).name === "string" ? (item as { name: string }).name.trim() : "";
-    const url = typeof (item as { url?: unknown }).url === "string" ? (item as { url: string }).url.trim() : "";
+    const record = item as { name?: unknown; url?: unknown; authHeader?: unknown };
+    const name = typeof record.name === "string" ? record.name.trim() : "";
+    const url = typeof record.url === "string" ? record.url.trim() : "";
     if (!name || !url) continue;
     try {
       const parsed = new URL(url);
-      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") continue;
+      if ((parsed.protocol !== "http:" && parsed.protocol !== "https:") || parsed.username || parsed.password) continue;
     } catch {
       continue;
     }
-    servers.push({ name: name.slice(0, 80), url });
+    const previous = fallback?.find((server) => server.name === name.slice(0, 80));
+    const same = previous?.url === url;
+    const header = typeof record.authHeader === "string" ? record.authHeader.trim().slice(0, 80) : undefined;
+    servers.push({
+      name: name.slice(0, 80),
+      url,
+      authHeader: header || (same ? previous?.authHeader : undefined),
+      status: same ? previous?.status : "unknown",
+      lastError: same ? previous?.lastError : undefined,
+      lastCheckedAt: same ? previous?.lastCheckedAt : undefined,
+      toolNames: same ? previous?.toolNames : [],
+    });
   }
   return servers;
 }
@@ -1444,6 +1552,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;font:12.5px/1.45 "JetBrains Mono
       <button type="button" class="tab" data-tab="settings">Settings</button>
       <button type="button" class="tab" data-tab="credits">Credits</button>
       <button type="button" class="tab" data-tab="routines">Routines</button>
+      <button type="button" class="tab" data-tab="connectors">Connectors</button>
     </div>
 
     <div class="drawer-body">
@@ -1479,7 +1588,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;font:12.5px/1.45 "JetBrains Mono
             <label class="provider-field hidden">Model ID<input name="model" placeholder="Model id you configured"></label>
             <label class="provider-field hidden">OpenAI-compatible endpoint<input name="endpoint" placeholder="http://127.0.0.1:11434/v1"></label>
             <label class="provider-field hidden">API Key Env<input name="apiKeyEnv" value="LITELLM_API_KEY"></label>
-            <label>MCP servers (JSON array of name + url)<textarea name="mcpServers" placeholder='[{"name":"docs","url":"http://127.0.0.1:3100"}]'></textarea></label>
+            <label>MCP servers (JSON name + url only; tokens belong in Connectors)<textarea name="mcpServers" placeholder='[{"name":"docs","url":"http://127.0.0.1:3100"}]'></textarea></label>
           </details>
           <div class="row mt-sm">
             <button id="botSubmit">Save Bot</button>
@@ -1556,6 +1665,21 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;font:12.5px/1.45 "JetBrains Mono
           <button type="submit" class="secondary">Fire now</button>
         </form>
       </div>
+
+      <div id="tab-connectors" class="tab-pane hidden">
+        <h2>Connectors</h2>
+        <p class="sub">HTTP MCP servers for one bot. A token is stored locally and is never shown again. Test connection lists tools or shows the server error.</p>
+        <label>Bot<select id="connectorBot"></select></label>
+        <form id="connectorForm">
+          <label>Name<input name="name" required placeholder="docs" pattern="[A-Za-z0-9._-]{1,80}"></label>
+          <label>URL<input name="url" required placeholder="http://127.0.0.1:3100/mcp"></label>
+          <label>Auth header name<input name="authHeader" placeholder="Authorization"></label>
+          <label>Token<input type="password" name="authToken" autocomplete="off" placeholder="Leave blank to keep the saved token"></label>
+          <button type="submit">Add connector</button>
+        </form>
+        <div id="connectorStatus" class="status"></div>
+        <div id="connectorList" class="nav-list mt-sm"></div>
+      </div>
     </div>
   </aside>
 </main>
@@ -1572,7 +1696,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;font:12.5px/1.45 "JetBrains Mono
   <div id="paletteList" role="listbox"></div>
 </div>
 
-<script nonce="${token}">const TOKEN='${token}',DEFAULT_WS='${escapeJs(process.cwd())}';let state={projects:[],bots:[],tasks:[],routines:[],channels:{},activeBrainLabel:'',activeModel:''},activeWorkspace='',selected='',conversationBot='',computerBot='',computerMeta=null,bootstrapped=false,activeTab='detail',centerView='chat',lastClickPt=null,renderedCompBot='',lastFrameSrc='',lastSyncedUrl='',lastSidebarSig='',lastChatSig='',lastDetailSig='',keyBuffer='',keyTimer=null,lastCompInteract=0,compQueue=Promise.resolve(),paletteIndex=0,sseLive=false;
+<script nonce="${token}">const TOKEN='${token}',DEFAULT_WS='${escapeJs(process.cwd())}';let state={projects:[],bots:[],tasks:[],routines:[],channels:{},activeBrainLabel:'',activeModel:''},activeWorkspace='',selected='',conversationBot='',computerBot='',computerMeta=null,bootstrapped=false,activeTab='detail',centerView='chat',lastClickPt=null,renderedCompBot='',lastFrameSrc='',lastSyncedUrl='',lastSidebarSig='',lastChatSig='',lastDetailSig='',keyBuffer='',keyTimer=null,lastCompInteract=0,compQueue=Promise.resolve(),paletteIndex=0,sseLive=false,connectorBot='';
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const isAgentRuntime=r=>r==='ocp-agent'||r==='hermes';
 const runtimeLabel=r=>isAgentRuntime(r)?'OCP Agent':'OCP Coder';
@@ -1846,6 +1970,37 @@ function draw(){
   drawChatFeed(activeProj,pBots,pTasks);
   drawComputer(pBots);
   drawDetail(pTasks);
+  renderConnectors(pBots);
+}
+
+function renderConnectors(pBots){
+  const select=document.querySelector('#connectorBot');
+  const list=document.querySelector('#connectorList');
+  if(!select||!list)return;
+  const chosen=connectorBot&&pBots.some(b=>b.id===connectorBot)?connectorBot:(pBots[0]?.id||'');
+  connectorBot=chosen;
+  select.innerHTML=pBots.map(b=>'<option value="'+esc(b.id)+'">'+esc(b.name)+'</option>').join('');
+  if(chosen)select.value=chosen;
+  select.onchange=()=>{connectorBot=select.value;renderConnectors(projectBots())};
+  const bot=pBots.find(b=>b.id===chosen);
+  const servers=bot?.mcpServers||[];
+  list.innerHTML=servers.length?servers.map(server=>{
+    const tools=(server.toolNames||[]).length?(server.toolNames||[]).map(name=>esc(name)).join(', '):'No tools listed yet. Test connection to load them.';
+    const auth=server.authConfigured?'token saved':'no token';
+    return '<div class="nav-item"><div class="nav-main"><strong>'+esc(server.name)+'</strong><div class="meta">'+esc(server.status||'unknown')+' · '+esc(auth)+(server.authHeader?' · '+esc(server.authHeader):'')+'</div><div class="meta">'+esc(server.url)+'</div>'+(server.lastError?'<div class="err-text">'+esc(server.lastError)+'</div>':'')+'<div class="meta">Tools: '+tools+'</div></div><div class="nav-actions"><button type="button" class="secondary" data-connector-test="'+esc(server.name)+'">Test</button><button type="button" class="ghost" data-connector-remove="'+esc(server.name)+'">Remove</button></div></div>';
+  }).join(''):'<div class="meta">No connectors for this bot.</div>';
+  list.querySelectorAll('[data-connector-test]').forEach(el=>el.addEventListener('click',async()=>{
+    const status=document.querySelector('#connectorStatus');
+    try{
+      const data=await api('/api/bots/'+encodeURIComponent(chosen)+'/connectors/test',{name:el.dataset.connectorTest});
+      const names=(data.connector?.toolNames||[]).join(', ')||'none';
+      if(status)status.textContent='Connected. Tools: '+names;
+    }catch(err){if(status)status.textContent=err.message}
+    await load();
+  }));
+  list.querySelectorAll('[data-connector-remove]').forEach(el=>el.addEventListener('click',async()=>{
+    try{await api('/api/bots/'+encodeURIComponent(chosen)+'/connectors/'+encodeURIComponent(el.dataset.connectorRemove),{},'DELETE');document.querySelector('#connectorStatus').textContent='Connector removed.';await load()}catch(err){document.querySelector('#connectorStatus').textContent=err.message}
+  }));
 }
 
 function drawChatFeed(activeProj,pBots,pTasks){
@@ -2192,6 +2347,20 @@ document.querySelector('#routineEventForm')?.addEventListener('submit',async e=>
   const name=new FormData(e.target).get('name');
   try{const r=await api('/api/routines/event',{name});document.querySelector('#routineStatus').textContent='Fired '+r.fired+' routine(s).';await load()}catch(err){document.querySelector('#routineStatus').textContent=err.message}
 });
+document.querySelector('#connectorForm')?.addEventListener('submit',async e=>{
+  e.preventDefault();
+  const f=new FormData(e.target);
+  const botId=document.querySelector('#connectorBot')?.value||connectorBot;
+  const body={name:f.get('name'),url:f.get('url'),authHeader:f.get('authHeader')||undefined};
+  const token=String(f.get('authToken')||'');
+  if(token)body.authToken=token;
+  try{
+    await api('/api/bots/'+encodeURIComponent(botId)+'/connectors',body);
+    document.querySelector('#connectorStatus').textContent='Connector saved. Token is not shown again.';
+    e.target.reset();
+    await load();
+  }catch(err){document.querySelector('#connectorStatus').textContent=err.message}
+});
 document.querySelector('#settingsForm').addEventListener('submit',async e=>{
   e.preventDefault();
   const f=new FormData(e.target),body=Object.fromEntries(f.entries());
@@ -2218,6 +2387,7 @@ document.querySelector('#botForm').addEventListener('submit',async e=>{
   const body=Object.fromEntries(f.entries());
   body.provider=provider;
   if(!body.workspace)body.workspace=activeWorkspace||DEFAULT_WS;
+  if(!String(body.mcpServers||'').trim())delete body.mcpServers;
   if(!provider)body.model='';
   if(provider!=='litellm'){delete body.endpoint;delete body.apiKeyEnv}
   try{
@@ -2271,6 +2441,7 @@ const paletteCommands=[
   {id:'settings',label:'Settings',run:()=>document.querySelector('#openSettingsBtn').click()},
   {id:'credits',label:'Credits',run:()=>setTab('credits')},
   {id:'routines',label:'Routines',run:()=>setTab('routines')},
+  {id:'connectors',label:'Connectors',run:()=>setTab('connectors')},
   {id:'inbox',label:'Approvals inbox',run:()=>{setTab('detail');lastDetailSig='';drawDetail()}}
 ];
 function paletteVisible(){return !document.querySelector('#palette').classList.contains('hidden')}

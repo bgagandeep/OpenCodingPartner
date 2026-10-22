@@ -4,6 +4,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import path from "node:path";
 import { readFile, stat } from "node:fs/promises";
 import { readWorkspaceFile } from "./workspace-mcp.js";
+import { correctMemory, createResponsibility, createThread, forgetMemory, listAudit, listDenyRules, listMemory, listResponsibilities, listThreads, reachThread, recordAudit, saveDenyRule, updateResponsibility } from "./teammate.js";
 import {
   postSlackReply,
   postTelegramReply,
@@ -46,8 +47,10 @@ import {
   listTasks,
   missingProviderKey,
   productDataDir,
+  botComputerIdentity,
   readDesktopState,
   readProviderSettings,
+  resetBotComputer,
   recordTaskApproval,
   recordTaskEvent,
   resolveRuntimeCommand,
@@ -302,11 +305,13 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
         sendJson(response, 200, snap);
         return;
       }
-      const state = await readDesktopState(bot.workspace);
+      const state = await readDesktopState(bot.workspace, bot.id);
+      const identity = botComputerIdentity(bot.workspace, bot.id);
       const frameInfo = await stat(path.join(bot.workspace, "gtm", "last-frame.png")).catch(() => undefined);
       sendJson(response, 200, {
         ok: true,
         display: state.display,
+        profileDir: identity.profileDir,
         width: state.width,
         height: state.height,
         control: state.control,
@@ -520,6 +525,31 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
     }
     if (request.method === "GET" && url.pathname === "/api/routines") {
       sendJson(response, 200, { routines: await listProductRoutines(root) });
+      return;
+    }
+    if (request.method === "GET" && url.pathname === "/api/audit") {
+      sendJson(response, 200, { audit: await listAudit(root) });
+      return;
+    }
+    if (request.method === "GET" && url.pathname === "/api/responsibilities") {
+      sendJson(response, 200, { responsibilities: await listResponsibilities(root) });
+      return;
+    }
+    if (request.method === "GET" && url.pathname === "/api/threads") {
+      sendJson(response, 200, { threads: await listThreads(root) });
+      return;
+    }
+    if (request.method === "GET" && url.pathname === "/api/rules") {
+      sendJson(response, 200, await listDenyRules(root));
+      return;
+    }
+    if (request.method === "GET" && url.pathname === "/api/memory") {
+      const workspace = url.searchParams.get("workspace") ?? "";
+      if (!workspace) {
+        sendJson(response, 400, { error: "workspace is required" });
+        return;
+      }
+      sendJson(response, 200, { facts: await listMemory(workspace, root) });
       return;
     }
     if (request.method === "GET" && url.pathname === "/api/skills/export") {
@@ -991,19 +1021,24 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
       }
       const kind = typeof body.kind === "string" ? body.kind : "screen";
       if (kind === "takeover" || kind === "return" || kind === "allow") {
-        const res = await setComputerControl(bot.workspace, kind);
+        const res = await setComputerControl(bot.workspace, kind, bot.id);
         sendJson(response, 200, res);
         return;
       }
       if (kind === "stop") {
-        await stopComputerDesktop(bot.workspace);
-        const state = await readDesktopState(bot.workspace);
+        await stopComputerDesktop(bot.workspace, bot.id);
+        const state = await readDesktopState(bot.workspace, bot.id);
         sendJson(response, 200, { ok: true, detail: "Stopped virtual computer processes.", ...state });
+        return;
+      }
+      if (kind === "reset") {
+        const identity = await resetBotComputer(bot.workspace, bot.id);
+        sendJson(response, 200, { ok: true, ...identity });
         return;
       }
       if (kind === "browser") {
         const targetUrl = typeof body.url === "string" ? body.url : "";
-        const res = await computerOpenBrowser(bot.workspace, targetUrl, "human");
+        const res = await computerOpenBrowser(bot.workspace, targetUrl, "human", bot.id);
         sendJson(response, res.ok ? 200 : 400, res);
         return;
       }
@@ -1020,6 +1055,7 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
           amount: typeof body.amount === "number" ? body.amount : undefined,
           actor: "human",
           fast: body.fast === true,
+          botId: bot.id,
         });
         sendJson(response, res.ok ? 200 : 400, res);
         return;
@@ -1032,11 +1068,12 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
           key: typeof body.key === "string" ? body.key : undefined,
           actor: "human",
           fast: body.fast === true,
+          botId: bot.id,
         });
         sendJson(response, res.ok ? 200 : 400, res);
         return;
       }
-      const res = await captureComputerScreen(bot.workspace);
+      const res = await captureComputerScreen(bot.workspace, "Captured live computer screen", bot.id);
       sendJson(response, 200, res);
       return;
     }
@@ -1248,6 +1285,12 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
         autoApproveRemaining: decision === "always" && pendingKind !== "usage-cap" && pendingKind !== "usage-hard-cap" ? true : task.autoApproveRemaining,
       }, root);
       waiter?.resolve(allow ? waiter.optionId : undefined);
+      await recordAudit(root, {
+        outcome: allow ? "permitted" : "refused",
+        action: task.pendingApproval.title,
+        ruleId: allow ? undefined : "approval",
+        detail: decision,
+      });
       notifySse();
       sendJson(response, 200, { ok: true });
       return;
@@ -1268,6 +1311,78 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
         }
       }
       sendJson(response, 202, { ok: true });
+      return;
+    }
+    if (request.method === "POST" && url.pathname === "/api/responsibilities") {
+      try {
+        const saved = await createResponsibility(root, typeof body.botId === "string" ? body.botId : "", typeof body.goal === "string" ? body.goal : "");
+        sendJson(response, 201, { responsibility: saved });
+      } catch (error) {
+        sendJson(response, 400, { error: error instanceof Error ? error.message : "Could not save the responsibility." });
+      }
+      return;
+    }
+    const responsibilityMatch = /^\/api\/responsibilities\/([^/]+)$/.exec(url.pathname);
+    if (request.method === "POST" && responsibilityMatch) {
+      try {
+        const saved = await updateResponsibility(root, responsibilityMatch[1] ?? "", {
+          status: body.status === "done" || body.status === "open" ? body.status : undefined,
+          progress: typeof body.progress === "string" ? body.progress : undefined,
+        });
+        sendJson(response, 200, { responsibility: saved });
+      } catch (error) {
+        sendJson(response, 400, { error: error instanceof Error ? error.message : "Could not update the responsibility." });
+      }
+      return;
+    }
+    if (request.method === "POST" && url.pathname === "/api/threads") {
+      try {
+        const botIds = Array.isArray(body.botIds) ? body.botIds.filter((id): id is string => typeof id === "string") : [];
+        const thread = await createThread(root, botIds, typeof body.text === "string" ? body.text : "");
+        sendJson(response, 201, { thread });
+      } catch (error) {
+        sendJson(response, 400, { error: error instanceof Error ? error.message : "Could not start the thread." });
+      }
+      return;
+    }
+    const reachMatch = /^\/api\/threads\/([^/]+)\/reach$/.exec(url.pathname);
+    if (request.method === "POST" && reachMatch) {
+      try {
+        const channel = body.channel === "slack" || body.channel === "telegram" ? body.channel : "";
+        if (!channel) {
+          sendJson(response, 400, { error: "Reach needs slack or telegram." });
+          return;
+        }
+        const thread = await reachThread(root, reachMatch[1] ?? "", channel, typeof body.destination === "string" ? body.destination : "");
+        sendJson(response, 200, { thread });
+      } catch (error) {
+        sendJson(response, 400, { error: error instanceof Error ? error.message : "Could not draft the reach." });
+      }
+      return;
+    }
+    if (request.method === "POST" && url.pathname === "/api/memory") {
+      try {
+        const workspace = typeof body.workspace === "string" ? body.workspace : "";
+        const query = typeof body.query === "string" ? body.query : "";
+        if (body.action === "forget") {
+          sendJson(response, 200, { removed: await forgetMemory(workspace, query, root) });
+          return;
+        }
+        const facts = await correctMemory(workspace, query, typeof body.replacement === "string" ? body.replacement : "", root);
+        sendJson(response, 200, { facts });
+      } catch (error) {
+        sendJson(response, 400, { error: error instanceof Error ? error.message : "Could not edit memory." });
+      }
+      return;
+    }
+    if (request.method === "POST" && url.pathname === "/api/rules") {
+      try {
+        const rule = await saveDenyRule(root, typeof body.tool === "string" ? body.tool : "", typeof body.pathPrefix === "string" ? body.pathPrefix : undefined);
+        await recordAudit(root, { outcome: "permitted", action: "save deny rule", ruleId: rule.id, detail: rule.tool });
+        sendJson(response, 201, { rule });
+      } catch (error) {
+        sendJson(response, 400, { error: error instanceof Error ? error.message : "Could not save the rule." });
+      }
       return;
     }
     sendJson(response, 404, { error: "Not found." });
@@ -2161,6 +2276,7 @@ li{margin:4px 0}
       <div class="tab-group">
         <div class="tab-group-label">System</div>
         <button type="button" class="tab" data-tab="usage">Usage</button>
+        <button type="button" class="tab" data-tab="audit">Audit</button>
         <button type="button" class="tab" data-tab="settings">Settings</button>
         <button type="button" class="tab" data-tab="credits">Credits</button>
       </div>
@@ -2213,6 +2329,39 @@ li{margin:4px 0}
           </div>
         </form>
         <div id="botStatus" class="status"></div>
+        <h3>Responsibility</h3>
+        <p class="sub">A lasting goal for one bot. It stays until you mark it done. A routine can name its id in the prompt.</p>
+        <form id="responsibilityForm">
+          <label>Bot<select name="botId" id="responsibilityBot" required></select></label>
+          <label>Goal<input name="goal" required placeholder="Keep the README accurate"></label>
+          <button type="submit">Save responsibility</button>
+        </form>
+        <div id="responsibilityList" class="nav-list mt-sm"></div>
+        <h3>Thread</h3>
+        <p class="sub">Address two bots in one thread. With no model configured, each bot records that it will not invent an action.</p>
+        <form id="threadForm">
+          <label>First bot<select name="botA" id="threadBotA" required></select></label>
+          <label>Second bot<select name="botB" id="threadBotB" required></select></label>
+          <label>Message<input name="text" required placeholder="Look at this together"></label>
+          <button type="submit">Start thread</button>
+        </form>
+        <form id="reachForm" class="mt-sm">
+          <label>Thread id<input name="threadId" id="reachThread" required></label>
+          <label>Channel<select name="channel"><option value="slack">Slack</option><option value="telegram">Telegram</option></select></label>
+          <label>Destination<input name="destination" required placeholder="#project or a chat id"></label>
+          <button type="submit" class="secondary">Draft reach</button>
+        </form>
+        <p class="meta">Draft reach does not send. Nothing is sent automatically.</p>
+        <div id="threadList" class="nav-list mt-sm"></div>
+        <h3>Memory</h3>
+        <p class="sub">Facts this workspace remembers. Correct or forget them here. The model is not the only writer.</p>
+        <form id="memoryForm">
+          <input type="hidden" name="workspace" id="memoryWorkspace">
+          <label>Find<input name="query" required></label>
+          <label>Replacement<input name="replacement" placeholder="Leave blank to forget"></label>
+          <button type="submit">Update memory</button>
+        </form>
+        <div id="memoryList" class="meta mt-sm"></div>
       </div>
 
       <div id="tab-project" class="tab-pane hidden">
@@ -2230,6 +2379,17 @@ li{margin:4px 0}
           <button type="submit" class="mt-sm">Create Project &amp; Team</button>
         </form>
         <div id="projectStatus" class="status"></div>
+      </div>
+
+      <div id="tab-audit" class="tab-pane hidden">
+        <h2>Audit</h2>
+        <p class="sub">Permitted, refused, and failed actions. A refused row names the rule. Secrets are not stored here.</p>
+        <form id="ruleForm">
+          <label>Tool<input name="tool" required placeholder="workspace_delete"></label>
+          <label>Path prefix<input name="pathPrefix" placeholder="src/"></label>
+          <button type="submit">Save deny rule</button>
+        </form>
+        <div id="auditList" class="nav-list mt-sm"></div>
       </div>
 
       <div id="tab-settings" class="tab-pane hidden">
@@ -2274,6 +2434,7 @@ li{margin:4px 0}
         <h2>Credits</h2>
         <p class="credits">User-facing product name: <strong>Open Coding Partner (OCP)</strong>.</p>
         <p class="credits">Third-party components documented in NOTICE / THIRD_PARTY_NOTICES: OpenClaw, Hermes, Grok Build, Laya, LiteLLM, and xAI. They are not product names in the rest of this app.</p>
+        <p class="credits">OpenBot (MIT, CopilotKit) is credited for the coworker shape: a computer per coworker, a recorded gate, and taking the controls. This app implements that shape in its own code. No OpenBot source is copied.</p>
       </div>
 
       <div id="tab-routines" class="tab-pane hidden">
@@ -2799,6 +2960,7 @@ async function load(){
     activeWorkspace=workspaces[0]||state.bots[0]?.workspace||DEFAULT_WS;
   }
   draw();
+  refreshTeammate().catch(()=>{});
 }
 
 function showProviderFields(){
@@ -3505,6 +3667,62 @@ function applyTheme(choice){
   api('/api/settings',{theme:choice},'POST').catch(()=>{});
 }
 document.querySelectorAll('[data-theme-choice]').forEach(btn=>btn.addEventListener('click',()=>applyTheme(btn.getAttribute('data-theme-choice'))));
+async function refreshTeammate(){
+  const bots=projectBots();
+  const opts=bots.map(b=>'<option value="'+esc(b.id)+'">'+esc(b.name)+'</option>').join('');
+  ['responsibilityBot','threadBotA','threadBotB'].forEach(id=>{const el=document.querySelector('#'+id);if(el)el.innerHTML=opts});
+  const mem=document.querySelector('#memoryWorkspace');
+  if(mem)mem.value=activeWorkspace||'';
+  const audit=await api('/api/audit');
+  const box=document.querySelector('#auditList');
+  if(box)box.innerHTML=(audit.audit||[]).slice(-12).map(row=>'<div class="meta">'+esc(row.outcome)+' '+esc(row.action)+(row.ruleId?' '+esc(row.ruleId):'')+'</div>').join('')||'<div class="meta">No audit rows yet.</div>';
+  const resp=await api('/api/responsibilities');
+  const rbox=document.querySelector('#responsibilityList');
+  if(rbox)rbox.innerHTML=(resp.responsibilities||[]).map(item=>'<div class="meta"><strong>'+esc(item.goal)+'</strong> '+esc(item.id)+'</div>').join('')||'<div class="meta">No responsibilities yet.</div>';
+  const threads=await api('/api/threads');
+  const tbox=document.querySelector('#threadList');
+  if(tbox)tbox.innerHTML=(threads.threads||[]).map(item=>'<div class="meta">'+esc(item.title)+'</div>').join('')||'<div class="meta">No threads yet.</div>';
+  if(activeWorkspace){
+    const memory=await api('/api/memory?workspace='+encodeURIComponent(activeWorkspace));
+    const mbox=document.querySelector('#memoryList');
+    if(mbox)mbox.textContent=(memory.facts||[]).slice(-8).join('\\n')||'No memories yet.';
+  }
+}
+document.querySelector('#responsibilityForm')?.addEventListener('submit',async e=>{
+  e.preventDefault();
+  const f=e.target;
+  await api('/api/responsibilities',{botId:f.elements.botId.value,goal:f.elements.goal.value},'POST');
+  f.elements.goal.value='';
+  await refreshTeammate();
+});
+document.querySelector('#threadForm')?.addEventListener('submit',async e=>{
+  e.preventDefault();
+  const f=e.target;
+  const thread=await api('/api/threads',{botIds:[f.elements.botA.value,f.elements.botB.value],text:f.elements.text.value},'POST');
+  const slot=document.querySelector('#reachThread');
+  if(slot&&thread.thread)slot.value=thread.thread.id;
+  await refreshTeammate();
+});
+document.querySelector('#reachForm')?.addEventListener('submit',async e=>{
+  e.preventDefault();
+  const f=e.target;
+  await api('/api/threads/'+encodeURIComponent(f.elements.threadId.value)+'/reach',{channel:f.elements.channel.value,destination:f.elements.destination.value},'POST');
+  await refreshTeammate();
+});
+document.querySelector('#memoryForm')?.addEventListener('submit',async e=>{
+  e.preventDefault();
+  const f=e.target;
+  const replacement=f.elements.replacement.value.trim();
+  await api('/api/memory',{workspace:f.elements.workspace.value,query:f.elements.query.value,replacement,action:replacement?'correct':'forget'},'POST');
+  await refreshTeammate();
+});
+document.querySelector('#ruleForm')?.addEventListener('submit',async e=>{
+  e.preventDefault();
+  const f=e.target;
+  await api('/api/rules',{tool:f.elements.tool.value,pathPrefix:f.elements.pathPrefix.value},'POST');
+  f.reset();
+  await refreshTeammate();
+});
 const paletteCommands=[
   {id:'chat',label:'Team Chat',run:()=>setCenterView('chat')},
   {id:'theme-dark',label:'Theme Dark',run:()=>applyTheme('dark')},

@@ -61,7 +61,24 @@ const LEGACY_COMPUTER_REL = path.join(".ocp", "computer.json");
 const FRAME_REL = path.join("gtm", "last-frame.png");
 const LAST_RUN_REL = path.join("gtm", "last-run.json");
 
-function chromeProfileDir(workspaceRoot: string): string {
+export function botComputerIdentity(workspaceRoot: string, botId: string, env: NodeJS.ProcessEnv = process.env): { profileDir: string; display: string; statePath: string } {
+  const root = path.resolve(workspaceRoot);
+  const safe = botId.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 80) || "bot";
+  const hash = createHash("sha256").update(`${root}\0${safe}`).digest();
+  const dataHome = env.OCP_DATA_DIR
+    ? path.resolve(env.OCP_DATA_DIR)
+    : env.XDG_DATA_HOME && path.isAbsolute(env.XDG_DATA_HOME)
+      ? env.XDG_DATA_HOME
+      : path.join(homedir(), ".local", "share");
+  return {
+    profileDir: path.join(dataHome, "opencodingpartner", "chrome-profiles", hash.toString("hex").slice(0, 16)),
+    display: `:${100 + (hash.readUInt32BE(0) % 50_000)}`,
+    statePath: path.join(root, ".ocp", "computers", `${safe}.json`),
+  };
+}
+
+function chromeProfileDir(workspaceRoot: string, botId?: string): string {
+  if (botId) return botComputerIdentity(workspaceRoot, botId).profileDir;
   const hash = createHash("sha256").update(path.resolve(workspaceRoot)).digest("hex").slice(0, 16);
   const dataHome = process.env.OCP_DATA_DIR
     ? path.resolve(process.env.OCP_DATA_DIR)
@@ -92,7 +109,8 @@ function hostDesktopOptIn(): boolean {
   return process.env.OCP_COMPUTER_USE_HOST_DESKTOP === "1";
 }
 
-function desktopStatePath(workspaceRoot: string): string {
+function desktopStatePath(workspaceRoot: string, botId?: string): string {
+  if (botId) return botComputerIdentity(workspaceRoot, botId).statePath;
   return path.join(workspaceRoot, DESKTOP_STATE_REL);
 }
 
@@ -100,7 +118,8 @@ function legacyComputerPath(workspaceRoot: string): string {
   return path.join(workspaceRoot, LEGACY_COMPUTER_REL);
 }
 
-function defaultDisplayForWorkspace(workspaceRoot: string): string {
+function defaultDisplayForWorkspace(workspaceRoot: string, botId?: string): string {
+  if (botId) return botComputerIdentity(workspaceRoot, botId).display;
   if (process.env.OCP_COMPUTER_DISPLAY?.trim()) {
     return process.env.OCP_COMPUTER_DISPLAY.trim();
   }
@@ -124,14 +143,14 @@ function isNativeMacDesktop(): boolean {
   return process.platform === "darwin" && !process.env.NODE_TEST_CONTEXT && process.env.OCP_COMPUTER_HEADLESS !== "1";
 }
 
-export async function readDesktopState(workspaceRoot: string): Promise<ComputerDesktopState> {
+export async function readDesktopState(workspaceRoot: string, botId?: string): Promise<ComputerDesktopState> {
   const root = path.resolve(workspaceRoot);
   let state: Partial<ComputerDesktopState> = {};
   try {
-    state = JSON.parse(await readFile(desktopStatePath(root), "utf8")) as Partial<ComputerDesktopState>;
+    state = JSON.parse(await readFile(desktopStatePath(root, botId), "utf8")) as Partial<ComputerDesktopState>;
   } catch {
-    // Fallback to legacy .ocp/computer.json if present
-    try {
+    if (botId) state = {};
+    else try {
       const legacy = JSON.parse(await readFile(legacyComputerPath(root), "utf8")) as {
         control?: "partner" | "human";
         approved?: boolean;
@@ -149,7 +168,7 @@ export async function readDesktopState(workspaceRoot: string): Promise<ComputerD
   const validDisplay =
     typeof state.display === "string" && (state.display.startsWith(":") || state.display.startsWith("macos:"))
       ? state.display
-      : defaultDisplayForWorkspace(root);
+      : defaultDisplayForWorkspace(root, botId);
   return {
     display: validDisplay,
     xvncPid: typeof state.xvncPid === "number" && isProcessAlive(state.xvncPid) ? state.xvncPid : undefined,
@@ -164,14 +183,17 @@ export async function readDesktopState(workspaceRoot: string): Promise<ComputerD
   };
 }
 
-export async function writeDesktopState(workspaceRoot: string, state: ComputerDesktopState): Promise<ComputerDesktopState> {
+export async function writeDesktopState(workspaceRoot: string, state: ComputerDesktopState, botId?: string): Promise<ComputerDesktopState> {
   const root = path.resolve(workspaceRoot);
   const next: ComputerDesktopState = {
     ...state,
     updatedAt: new Date().toISOString(),
   };
+  const target = desktopStatePath(root, botId);
+  await mkdir(path.dirname(target), { recursive: true });
+  await writeFile(target, `${JSON.stringify(next, null, 2)}\n`, "utf8");
+  if (botId) return next;
   await mkdir(path.join(root, ".ocp"), { recursive: true });
-  await writeFile(desktopStatePath(root), `${JSON.stringify(next, null, 2)}\n`, "utf8");
   await writeFile(
     legacyComputerPath(root),
     `${JSON.stringify({ desktop: "sandbox", control: next.control, approved: next.approved, status: next.status }, null, 2)}\n`,
@@ -183,12 +205,12 @@ export async function writeDesktopState(workspaceRoot: string, state: ComputerDe
 const displayCheckCache = new Map<string, { ok: boolean; width?: number; height?: number; at: number }>();
 const deferredCaptures = new Map<string, NodeJS.Timeout>();
 
-function scheduleBackgroundCapture(workspaceRoot: string, note: string): void {
+function scheduleBackgroundCapture(workspaceRoot: string, note: string, botId?: string): void {
   const existing = deferredCaptures.get(workspaceRoot);
   if (existing) clearTimeout(existing);
   const timer = setTimeout(() => {
     deferredCaptures.delete(workspaceRoot);
-    void captureComputerScreen(workspaceRoot, note).catch(() => undefined);
+    void captureComputerScreen(workspaceRoot, note, botId).catch(() => undefined);
   }, 450);
   timer.unref?.();
   deferredCaptures.set(workspaceRoot, timer);
@@ -199,11 +221,12 @@ async function finishComputerAction(
   state: ComputerDesktopState,
   note: string,
   fast?: boolean,
+  botId?: string,
 ): Promise<ComputerActionResult> {
   const displayActive = state.status === "live" || state.status === "held";
   if (!displayActive) return actionFailure(state, missingDisplayDetail(state));
   if (fast) {
-    scheduleBackgroundCapture(workspaceRoot, note);
+    scheduleBackgroundCapture(workspaceRoot, note, botId);
     return {
       ok: true,
       detail: `${note} on ${state.display} (${state.width}x${state.height}).`,
@@ -216,7 +239,7 @@ async function finishComputerAction(
       frameMtimeMs: Date.now(),
     };
   }
-  return captureComputerScreen(workspaceRoot, note);
+  return captureComputerScreen(workspaceRoot, note, botId);
 }
 
 async function displayResponds(display: string): Promise<{ ok: boolean; width?: number; height?: number }> {
@@ -245,9 +268,9 @@ async function displayResponds(display: string): Promise<{ ok: boolean; width?: 
   }
 }
 
-export async function ensureComputerDisplay(workspaceRoot: string): Promise<ComputerDesktopState> {
+export async function ensureComputerDisplay(workspaceRoot: string, botId?: string): Promise<ComputerDesktopState> {
   const root = path.resolve(workspaceRoot);
-  const state = await readDesktopState(root);
+  const state = await readDesktopState(root, botId);
 
   // 1. Check if the assigned virtual display is already alive
   const currentCheck = await displayResponds(state.display);
@@ -255,7 +278,7 @@ export async function ensureComputerDisplay(workspaceRoot: string): Promise<Comp
     state.width = currentCheck.width ?? state.width;
     state.height = currentCheck.height ?? state.height;
     if (state.control !== "human") state.status = "live";
-    return writeDesktopState(root, state);
+    return writeDesktopState(root, state, botId);
   }
 
   // 2. Try starting an isolated Xvnc display for this workspace when Xvnc is available
@@ -294,9 +317,9 @@ export async function ensureComputerDisplay(workspaceRoot: string): Promise<Comp
           state.width = check.width ?? state.width;
           state.height = check.height ?? state.height;
           if (state.control !== "human") state.status = "live";
-          await writeDesktopState(root, state);
+          await writeDesktopState(root, state, botId);
           await waitForFirstPaint(root, state);
-          return readDesktopState(root);
+          return readDesktopState(root, botId);
         }
       }
     } catch {
@@ -313,7 +336,7 @@ export async function ensureComputerDisplay(workspaceRoot: string): Promise<Comp
       state.width = hostCheck.width ?? state.width;
       state.height = hostCheck.height ?? state.height;
       if (state.control !== "human") state.status = "live";
-      return writeDesktopState(root, state);
+      return writeDesktopState(root, state, botId);
     }
   }
 
@@ -338,11 +361,11 @@ export async function ensureComputerDisplay(workspaceRoot: string): Promise<Comp
       // Keep default 1280x800 if NSScreen query fails
     }
     if (state.control !== "human") state.status = "live";
-    return writeDesktopState(root, state);
+    return writeDesktopState(root, state, botId);
   }
 
   if (state.control !== "human") state.status = "idle";
-  return writeDesktopState(root, state);
+  return writeDesktopState(root, state, botId);
 }
 
 async function waitForFirstPaint(workspaceRoot: string, state: ComputerDesktopState): Promise<void> {
@@ -468,9 +491,9 @@ function missingDisplayDetail(state: ComputerDesktopState): string {
   return "Virtual computer display is not available. Start Xvnc for this workspace, or set OCP_COMPUTER_USE_HOST_DISPLAY=1 / OCP_COMPUTER_USE_HOST_DESKTOP=1 and approve host desktop use. OCP will not invent a screenshot or attach to the host desktop silently.";
 }
 
-export async function captureComputerScreen(workspaceRoot: string, note = "Captured live computer screen"): Promise<ComputerActionResult> {
+export async function captureComputerScreen(workspaceRoot: string, note = "Captured live computer screen", botId?: string): Promise<ComputerActionResult> {
   const root = path.resolve(workspaceRoot);
-  const state = await ensureComputerDisplay(root);
+  const state = await ensureComputerDisplay(root, botId);
   const displayActive = state.status === "live" || state.status === "held";
   if (!displayActive) {
     return actionFailure(state, missingDisplayDetail(state));
@@ -535,6 +558,7 @@ export interface MouseActionInput {
   amount?: number;
   actor?: "partner" | "human";
   fast?: boolean;
+  botId?: string;
 }
 
 function buttonCode(button?: "left" | "middle" | "right"): string {
@@ -553,7 +577,7 @@ async function runMacMouseEvent(script: string): Promise<void> {
 
 export async function computerMouse(workspaceRoot: string, input: MouseActionInput): Promise<ComputerActionResult> {
   const root = path.resolve(workspaceRoot);
-  const state = await ensureComputerDisplay(root);
+  const state = await ensureComputerDisplay(root, input.botId);
   const actor = input.actor ?? "partner";
   const blocked = assertActorAllowed(state, actor);
   if (blocked) {
@@ -586,7 +610,7 @@ export async function computerMouse(workspaceRoot: string, input: MouseActionInp
 
   try {
     if (input.action === "position") {
-      return captureComputerScreen(root, "Queried mouse position");
+      return captureComputerScreen(root, "Queried mouse position", input.botId);
     }
     if (input.action === "move") {
       const tx = clampX(x);
@@ -598,7 +622,7 @@ export async function computerMouse(workspaceRoot: string, input: MouseActionInp
       } else if (xdotoolReady) {
         await execFileAsync("xdotool", ["mousemove", "--sync", String(tx), String(ty)], { env, timeout: 4_000 });
       }
-      return captureComputerScreen(root, `Moved mouse to (${tx}, ${ty})`);
+      return captureComputerScreen(root, `Moved mouse to (${tx}, ${ty})`, input.botId);
     }
     if (input.action === "click" || input.action === "double_click" || input.action === "right_click" || input.action === "middle_click") {
       if (macReady) {
@@ -637,6 +661,7 @@ export async function computerMouse(workspaceRoot: string, input: MouseActionInp
         state,
         `Executed ${input.action}${x !== undefined && y !== undefined ? ` at (${x}, ${y})` : ""}`,
         input.fast,
+        input.botId,
       );
     }
     if (input.action === "down" || input.action === "up") {
@@ -655,7 +680,7 @@ export async function computerMouse(workspaceRoot: string, input: MouseActionInp
         args.push(input.action === "down" ? "mousedown" : "mouseup", buttonCode(input.button));
         await execFileAsync("xdotool", args, { env, timeout: 4_000 });
       }
-      return captureComputerScreen(root, `Mouse button ${input.action}`);
+      return captureComputerScreen(root, `Mouse button ${input.action}`, input.botId);
     }
     if (input.action === "drag") {
       const sx = clampX(input.fromX ?? 100);
@@ -675,7 +700,7 @@ export async function computerMouse(workspaceRoot: string, input: MouseActionInp
         );
         await new Promise((r) => setTimeout(r, 150));
       }
-      return captureComputerScreen(root, `Dragged mouse from (${sx}, ${sy}) to (${ex}, ${ey})`);
+      return captureComputerScreen(root, `Dragged mouse from (${sx}, ${sy}) to (${ex}, ${ey})`, input.botId);
     }
     if (input.action === "scroll") {
       const dir = input.direction ?? "down";
@@ -697,7 +722,7 @@ export async function computerMouse(workspaceRoot: string, input: MouseActionInp
         await execFileAsync("xdotool", args, { env, timeout: 4_000 });
         if (!input.fast) await new Promise((r) => setTimeout(r, 150));
       }
-      return finishComputerAction(root, state, `Scrolled ${dir} (${clicks} ticks)`, input.fast);
+      return finishComputerAction(root, state, `Scrolled ${dir} (${clicks} ticks)`, input.fast, input.botId);
     }
     return {
       ok: false,
@@ -723,6 +748,7 @@ export interface KeyboardActionInput {
   key?: string;
   actor?: "partner" | "human";
   fast?: boolean;
+  botId?: string;
 }
 
 function normalizeXdotoolKey(raw: string): string {
@@ -769,7 +795,7 @@ function normalizeXdotoolKey(raw: string): string {
 
 export async function computerKeyboard(workspaceRoot: string, input: KeyboardActionInput): Promise<ComputerActionResult> {
   const root = path.resolve(workspaceRoot);
-  const state = await ensureComputerDisplay(root);
+  const state = await ensureComputerDisplay(root, input.botId);
   const actor = input.actor ?? "partner";
   const blocked = assertActorAllowed(state, actor);
   if (blocked) {
@@ -821,7 +847,7 @@ export async function computerKeyboard(workspaceRoot: string, input: KeyboardAct
         });
         if (!input.fast) await new Promise((r) => setTimeout(r, 150));
       }
-      return finishComputerAction(root, state, `Typed ${text.length} character(s)`, input.fast);
+      return finishComputerAction(root, state, `Typed ${text.length} character(s)`, input.fast, input.botId);
     }
 
     const rawKey = typeof input.key === "string" && input.key.trim() ? input.key : typeof input.text === "string" ? input.text : "";
@@ -875,7 +901,7 @@ export async function computerKeyboard(workspaceRoot: string, input: KeyboardAct
       });
       if (!input.fast) await new Promise((r) => setTimeout(r, 150));
     }
-    return finishComputerAction(root, state, `Pressed key ${normalized}`, input.fast);
+    return finishComputerAction(root, state, `Pressed key ${normalized}`, input.fast, input.botId);
   } catch (error) {
     return actionFailure(
       state,
@@ -888,9 +914,10 @@ export async function computerOpenBrowser(
   workspaceRoot: string,
   url: string,
   actor: "partner" | "human" = "partner",
+  botId?: string,
 ): Promise<ComputerActionResult> {
   const root = path.resolve(workspaceRoot);
-  const state = await ensureComputerDisplay(root);
+  const state = await ensureComputerDisplay(root, botId);
   const blocked = assertActorAllowed(state, actor);
   if (blocked) {
     return {
@@ -924,7 +951,7 @@ export async function computerOpenBrowser(
     };
   }
 
-  const profileDir = chromeProfileDir(root);
+  const profileDir = chromeProfileDir(root, botId);
   await mkdir(profileDir, { recursive: true });
 
   if (state.chromePid && isProcessAlive(state.chromePid)) {
@@ -981,7 +1008,7 @@ export async function computerOpenBrowser(
       child.unref();
       state.chromePid = child.pid;
       state.lastUrl = parsed.toString();
-      await writeDesktopState(root, state);
+      await writeDesktopState(root, state, botId);
       // Give Chrome a moment to render before capturing the frame
       await new Promise((r) => setTimeout(r, 1_500));
     } catch (error) {
@@ -994,7 +1021,7 @@ export async function computerOpenBrowser(
     try {
       await execFileAsync("open", [parsed.toString()], { timeout: 4_000 });
       state.lastUrl = parsed.toString();
-      await writeDesktopState(root, state);
+      await writeDesktopState(root, state, botId);
       await new Promise((r) => setTimeout(r, 1_000));
     } catch (error) {
       return actionFailure(
@@ -1011,15 +1038,16 @@ export async function computerOpenBrowser(
     );
   }
 
-  return captureComputerScreen(root, `Opened ${parsed.toString()} in virtual computer browser`);
+  return captureComputerScreen(root, `Opened ${parsed.toString()} in virtual computer browser`, botId);
 }
 
 export async function setComputerControl(
   workspaceRoot: string,
   mode: "takeover" | "return" | "allow",
+  botId?: string,
 ): Promise<ComputerActionResult> {
   const root = path.resolve(workspaceRoot);
-  const state = await ensureComputerDisplay(root);
+  const state = await ensureComputerDisplay(root, botId);
   if (mode === "takeover") {
     state.control = "human";
     state.status = "held";
@@ -1030,7 +1058,7 @@ export async function setComputerControl(
     state.approved = true;
     if (state.control !== "human") state.status = "live";
   }
-  await writeDesktopState(root, state);
+  await writeDesktopState(root, state, botId);
   return captureComputerScreen(
     root,
     mode === "takeover"
@@ -1038,12 +1066,20 @@ export async function setComputerControl(
       : mode === "return"
         ? "Returned computer mouse and keyboard control to bot"
         : "Approved computer desktop use",
+    botId,
   );
 }
 
-export async function stopComputerDesktop(workspaceRoot: string): Promise<void> {
+export async function resetBotComputer(workspaceRoot: string, botId: string): Promise<{ profileDir: string; display: string }> {
+  const identity = botComputerIdentity(workspaceRoot, botId);
+  const { unlink } = await import("node:fs/promises");
+  await unlink(identity.statePath).catch(() => undefined);
+  return { profileDir: identity.profileDir, display: identity.display };
+}
+
+export async function stopComputerDesktop(workspaceRoot: string, botId?: string): Promise<void> {
   const root = path.resolve(workspaceRoot);
-  const state = await readDesktopState(root);
+  const state = await readDesktopState(root, botId);
   for (const pid of [state.chromePid, state.xvncPid]) {
     if (pid && isProcessAlive(pid)) {
       try {
@@ -1061,5 +1097,5 @@ export async function stopComputerDesktop(workspaceRoot: string): Promise<void> 
   state.chromePid = undefined;
   state.xvncPid = undefined;
   state.status = state.control === "human" ? "held" : "idle";
-  await writeDesktopState(root, state);
+  await writeDesktopState(root, state, botId);
 }

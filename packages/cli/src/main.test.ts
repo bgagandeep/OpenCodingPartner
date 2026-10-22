@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createServer } from "node:http";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -138,6 +138,34 @@ test("ocp doctor prints a status and does not print the meter key", async () => 
     if (previous === undefined) delete process.env.LITELLM_API_KEY;
     else process.env.LITELLM_API_KEY = previous;
     process.stdout.write = original;
+  }
+});
+
+test("ocp doctor names a local model without printing the key or calling out", async () => {
+  let captured = "";
+  const original = process.stdout.write.bind(process.stdout);
+  process.stdout.write = ((chunk: string | Uint8Array, encoding?: BufferEncoding, cb?: (err?: Error | null) => void) => {
+    captured += String(chunk);
+    return original(chunk, encoding, cb);
+  }) as typeof process.stdout.write;
+  const dir = mkdtempSync(path.join(tmpdir(), "ocp-doctor-model-"));
+  writeFileSync(path.join(dir, "settings.json"), `${JSON.stringify({ litellmBaseUrl: "http://127.0.0.1:11434/v1", openrouterApiKey: "sk-or-doctor-secret" })}\n`);
+  const previousDir = process.env.OCP_DATA_DIR;
+  const previousKey = process.env.LITELLM_API_KEY;
+  process.env.OCP_DATA_DIR = dir;
+  delete process.env.LITELLM_API_KEY;
+  try {
+    const code = await main(["doctor"]);
+    assert.ok(code === 0 || code === 1);
+    assert.match(captured, /Model: local http:\/\/127\.0\.0\.1:11434\/v1/);
+    assert.doesNotMatch(captured, /sk-or-doctor-secret/);
+  } finally {
+    if (previousDir === undefined) delete process.env.OCP_DATA_DIR;
+    else process.env.OCP_DATA_DIR = previousDir;
+    if (previousKey === undefined) delete process.env.LITELLM_API_KEY;
+    else process.env.LITELLM_API_KEY = previousKey;
+    process.stdout.write = original;
+    rmSync(dir, { recursive: true, force: true });
   }
 });
 

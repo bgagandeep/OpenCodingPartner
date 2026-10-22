@@ -53,6 +53,7 @@ import { pageStoredToolOutput, toolOutputDataDir } from "./tool-trim.js";
 import { fillVaultLogin, type VaultChallenge } from "./vault.js";
 import { ACCOUNT_TOOL_DEFS, isAccountTool, runAccountTool } from "./accounts.js";
 import { skillCatalog } from "./skills.js";
+import { gateTool, recordAudit } from "./teammate.js";
 
 const acceptedPlans = new Set<string>();
 const WRITE_TOOLS = new Set([
@@ -183,6 +184,11 @@ async function safeExternalCatalog(): Promise<ExternalToolCatalog> {
 }
 
 async function executeToolCall(root: string, name: string, args: Record<string, unknown>, viaDiscovery: boolean): Promise<unknown> {
+  const decision = await gateTool(resolveDataDir(), name, typeof args.path === "string" ? args.path : "");
+  if (!decision.ok) {
+    await recordAudit(resolveDataDir(), { outcome: "refused", action: name, ruleId: decision.ruleId, detail: decision.detail });
+    return mcpToolResult({ ok: false, detail: decision.detail });
+  }
   if (name === "tool_search") {
     if (viaDiscovery) return mcpToolResult({ ok: false, detail: "A discovery tool cannot call another discovery tool." });
     const query = (typeof args.query === "string" ? args.query : "").trim().toLowerCase();

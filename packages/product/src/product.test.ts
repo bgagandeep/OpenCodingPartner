@@ -609,10 +609,10 @@ test("startProductApp serves OCP Agent and OCP Coder UI, health check, model-ove
     assert.doesNotMatch(html, /Ask Ada/);
     assert.doesNotMatch(html, /Open Gmail/);
     assert.doesNotMatch(html, /mail\.google\.com/);
-    assert.match(html, /Google sign-in stays in this virtual computer/);
-    assert.match(html, /OCP does not connect a Google account/);
-    assert.match(html, /no Gmail, Calendar, or Drive connection/);
-    assert.doesNotMatch(html, /Connect Google/);
+    assert.match(html, /OCP ships no OAuth client/);
+    assert.match(html, /Connect Google with these scopes/);
+    assert.match(html, /Take Control on this virtual computer/);
+    assert.doesNotMatch(html, /mail\.google\.com/);
     const inlineScript = /<script[^>]*>([\s\S]*?)<\/script>/.exec(html)?.[1] ?? "";
     assert.ok(inlineScript.length > 100);
     assert.doesNotThrow(() => new Function(inlineScript));

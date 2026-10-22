@@ -51,6 +51,7 @@ import {
 import { runWorkspaceCommand, runWorkspaceTests } from "./sandbox-run.js";
 import { pageStoredToolOutput, toolOutputDataDir } from "./tool-trim.js";
 import { fillVaultLogin, type VaultChallenge } from "./vault.js";
+import { ACCOUNT_TOOL_DEFS, isAccountTool, runAccountTool } from "./accounts.js";
 
 const acceptedPlans = new Set<string>();
 const WRITE_TOOLS = new Set([
@@ -108,7 +109,7 @@ const DISCOVERY_TOOLS = [
   { name: "tool_call", description: "Invoke a built-in workspace tool or an attached external MCP tool (mcp:server/tool) by name and arguments. External calls are approved by the session before they run.", inputSchema: { type: "object", properties: { name: { type: "string" }, arguments: { type: "object" } }, required: ["name"] } },
 ];
 
-const TOOLS = [...DIRECT_TOOLS, ...DISCOVERY_TOOLS];
+const TOOLS = [...DIRECT_TOOLS, ...ACCOUNT_TOOL_DEFS, ...DISCOVERY_TOOLS];
 const DISCOVERY_NAMES = new Set(DISCOVERY_TOOLS.map((t) => t.name));
 const MAX_FILE_BYTES = 500_000;
 
@@ -185,7 +186,7 @@ async function executeToolCall(root: string, name: string, args: Record<string, 
     if (viaDiscovery) return mcpToolResult({ ok: false, detail: "A discovery tool cannot call another discovery tool." });
     const query = (typeof args.query === "string" ? args.query : "").trim().toLowerCase();
     const catalog = await safeExternalCatalog();
-    const scored = [...DIRECT_TOOLS.map((tool) => ({ name: tool.name, description: tool.description })), ...catalog.tools.map((tool) => ({ name: tool.qualifiedName, description: tool.description }))]
+    const scored = [...DIRECT_TOOLS.map((tool) => ({ name: tool.name, description: tool.description })), ...ACCOUNT_TOOL_DEFS.map((tool) => ({ name: tool.name, description: tool.description })), ...catalog.tools.map((tool) => ({ name: tool.qualifiedName, description: tool.description }))]
       .map((tool) => {
         const hay = `${tool.name} ${tool.description}`.toLowerCase();
         const score = !query ? 1 : tool.name.toLowerCase() === query ? 3 : tool.name.toLowerCase().includes(query) ? 2 : hay.includes(query) ? 1 : 0;
@@ -209,6 +210,7 @@ async function executeToolCall(root: string, name: string, args: Record<string, 
     const catalog = await safeExternalCatalog();
     const described = [
       ...DIRECT_TOOLS.filter((tool) => names.includes(tool.name)),
+      ...ACCOUNT_TOOL_DEFS.filter((tool) => names.includes(tool.name)),
       ...catalog.tools.filter((tool) => names.includes(tool.qualifiedName)).map((tool) => ({
         name: tool.qualifiedName,
         description: tool.description,
@@ -384,6 +386,11 @@ async function executeToolCall(root: string, name: string, args: Record<string, 
         return { ok: typed.ok, detail: typed.detail };
       },
     });
+    return mcpToolResult({ ok: outcome.ok, detail: outcome.text });
+  }
+
+  if (isAccountTool(name)) {
+    const outcome = await runAccountTool(resolveDataDir(), name, args);
     return mcpToolResult({ ok: outcome.ok, detail: outcome.text });
   }
 

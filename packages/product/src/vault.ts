@@ -386,6 +386,37 @@ export async function deleteVaultItem(root: string, id: string, env: NodeJS.Proc
   await writeVaultFile(root, { items: file.items.filter((entry) => entry.id !== id) });
 }
 
+export async function deleteVaultItemByName(root: string, name: string, env: NodeJS.ProcessEnv = process.env): Promise<void> {
+  const file = await readVaultFile(root);
+  const item = file.items.find((entry) => entry.name === name);
+  if (!item) return;
+  await deleteVaultItem(root, item.id, env);
+}
+
+export async function upsertVaultItem(
+  root: string,
+  input: { name?: unknown; kind?: unknown; account?: unknown; secret?: unknown },
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<VaultItemPublic> {
+  const name = cleanLine(input.name, 80);
+  const account = cleanLine(input.account, 200);
+  const secret = typeof input.secret === "string" ? input.secret : "";
+  if (!name) throw new VaultError("Vault item name must be 1 to 80 characters.");
+  if (!validKind(input.kind)) throw new VaultError("Vault item kind must be login, oauth, token, or note.");
+  if (!secret || secret.length > 8_000) throw new VaultError("Vault secret must be 1 to 8,000 characters.");
+  const file = await readVaultFile(root);
+  const existing = file.items.find((item) => item.name === name);
+  if (!existing) return createVaultItem(root, { ...input, name, account, secret, storage: "local" }, env);
+  if (existing.storage !== "local") throw new VaultError("This vault item cannot be replaced in place.");
+  const opened = await openVaultKey(root, env);
+  existing.kind = input.kind;
+  existing.account = account;
+  existing.updatedAt = new Date().toISOString();
+  Object.assign(existing, encryptSecret(opened.key, secret));
+  await writeVaultFile(root, file);
+  return toPublic(existing);
+}
+
 export async function readVaultSecret(root: string, name: string, env: NodeJS.ProcessEnv = process.env): Promise<string | undefined> {
   const file = await readVaultFile(root);
   const item = file.items.find((entry) => entry.name === name);

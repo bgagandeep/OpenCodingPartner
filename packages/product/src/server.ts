@@ -77,6 +77,7 @@ import { probeConnectors, publicConnector, upsertConnectorSnapshot, validateConn
 import { usageSnapshot } from "./usage.js";
 import { deleteMcpSecret, listMcpSecretKeys, mcpSecretKey, readMcpSecret, writeMcpSecret } from "./mcp-secrets.js";
 import { createVaultItem, deleteVaultItem, publicVault, VaultError } from "./vault.js";
+import { AccountError, completeAccountLogin, disconnectAccount, GOOGLE_SCOPES, MICROSOFT_SCOPES, publicAccounts, saveAccountClient, startAccountLogin } from "./accounts.js";
 
 interface AppOptions {
   host?: string;
@@ -447,6 +448,7 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
         routines,
         channelLog: await listChannelLog(root),
         vault: await publicVault(root, env),
+        accounts: await publicAccounts(root, env),
         usage: await usageSnapshot(root),
         modelPrices: settings.modelPrices ?? [],
         usageCaps: settings.usageCaps ?? { perBot: [] },
@@ -500,6 +502,32 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
     }
     if (request.method === "GET" && url.pathname === "/api/vault") {
       sendJson(response, 200, await publicVault(root, env));
+      return;
+    }
+    if (request.method === "GET" && url.pathname === "/api/accounts") {
+      sendJson(response, 200, await publicAccounts(root, env));
+      return;
+    }
+    if (request.method === "GET" && (url.pathname === "/api/accounts/google/callback" || url.pathname === "/api/accounts/microsoft/callback")) {
+      const provider = url.pathname.includes("google") ? "google" : "microsoft";
+      const providerLabel = provider === "google" ? "Google" : "Microsoft";
+      try {
+        if (url.searchParams.get("error")) throw new AccountError("Consent was denied. No token was stored.");
+        const result = await completeAccountLogin({
+          root,
+          env,
+          provider,
+          code: url.searchParams.get("code") ?? "",
+          state: url.searchParams.get("state") ?? "",
+        });
+        const who = result.account ? ` as ${escapeAttribute(result.account)}` : "";
+        response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+        response.end(`<!doctype html><title>Connected</title><p>${providerLabel} is connected${who}. You can close this window. No token is shown here.</p>`);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Sign-in failed. No token was stored.";
+        response.writeHead(400, { "content-type": "text/html; charset=utf-8" });
+        response.end(`<!doctype html><title>Not connected</title><p>${escapeAttribute(message)}</p>`);
+      }
       return;
     }
     if (request.method === "GET" && url.pathname === "/api/workspace/file") {
@@ -684,6 +712,34 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
       } catch (error) {
         sendJson(response, 400, { error: error instanceof Error ? error.message : "Could not create routine." });
       }
+      return;
+    }
+    if (request.method === "POST" && (url.pathname === "/api/accounts/google/client" || url.pathname === "/api/accounts/microsoft/client")) {
+      const provider = url.pathname.includes("google") ? "google" : "microsoft";
+      try {
+        const saved = await saveAccountClient(root, provider, body.clientId, body.clientSecret, env);
+        sendJson(response, 200, saved);
+      } catch (error) {
+        const status = error instanceof AccountError ? error.status : 400;
+        sendJson(response, status, { error: error instanceof Error ? error.message : "OAuth client was not stored." });
+      }
+      return;
+    }
+    if (request.method === "POST" && (url.pathname === "/api/accounts/google/start" || url.pathname === "/api/accounts/microsoft/start")) {
+      const provider = url.pathname.includes("google") ? "google" : "microsoft";
+      try {
+        const started = await startAccountLogin(root, provider, body.acceptScopes, `http://127.0.0.1:${boundPort}/api/accounts/${provider}/callback`, env);
+        sendJson(response, 200, { authorizeUrl: started.authorizeUrl, scopes: started.scopes, redirectUri: started.redirectUri });
+      } catch (error) {
+        const status = error instanceof AccountError ? error.status : 400;
+        sendJson(response, status, { error: error instanceof Error ? error.message : "Sign-in did not start." });
+      }
+      return;
+    }
+    if (request.method === "POST" && (url.pathname === "/api/accounts/google/disconnect" || url.pathname === "/api/accounts/microsoft/disconnect")) {
+      const provider = url.pathname.includes("google") ? "google" : "microsoft";
+      await disconnectAccount(root, provider, env);
+      sendJson(response, 200, { ok: true });
       return;
     }
     if (request.method === "POST" && url.pathname === "/api/vault") {
@@ -1839,6 +1895,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;font:12.5px/1.45 "JetBrains Mono
       <button type="button" class="tab" data-tab="connectors">Connectors</button>
       <button type="button" class="tab" data-tab="channels">Channels</button>
       <button type="button" class="tab" data-tab="vault">Vault</button>
+      <button type="button" class="tab" data-tab="accounts">Accounts</button>
     </div>
 
     <div class="drawer-body">
@@ -1986,6 +2043,16 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;font:12.5px/1.45 "JetBrains Mono
         <p class="sub">Logins, tokens, and OAuth secrets stay in this vault. A bot fills a virtual-computer login by item name. The secret is not sent to the model and is not written in the task log. A sign-in, 2FA, or captcha asks you to Take Control.</p>
         <div id="vaultPanel"></div>
       </div>
+
+      <div id="tab-accounts" class="tab-pane hidden">
+        <h2>Accounts</h2>
+        <p class="sub">OCP ships no OAuth client. Paste a Google or Microsoft client you created. These are the only scopes requested, and they are shown again before consent. See docs/oauth-setup.md. Refresh tokens stay in the vault.</p>
+        <h3>Google scopes</h3>
+        <ul>${GOOGLE_SCOPES.map((scope) => `<li><code>${escapeAttribute(scope.id)}</code> — ${escapeAttribute(scope.label)}</li>`).join("")}</ul>
+        <h3>Microsoft scopes</h3>
+        <ul>${MICROSOFT_SCOPES.map((scope) => `<li><code>${escapeAttribute(scope.id)}</code> — ${escapeAttribute(scope.label)}</li>`).join("")}</ul>
+        <div id="accountsPanel"></div>
+      </div>
     </div>
   </aside>
 </main>
@@ -2002,9 +2069,9 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;font:12.5px/1.45 "JetBrains Mono
   <div id="paletteList" role="listbox"></div>
 </div>
 
-<script nonce="${token}">const TOKEN='${token}',DEFAULT_WS='${escapeJs(process.cwd())}';let state={projects:[],bots:[],tasks:[],routines:[],channels:{},channelLog:[],vault:{items:[]},activeBrainLabel:'',activeModel:''},activeWorkspace='',selected='',conversationBot='',computerBot='',computerMeta=null,bootstrapped=false,activeTab='detail',centerView='chat',lastClickPt=null,renderedCompBot='',lastFrameSrc='',lastSyncedUrl='',lastSidebarSig='',lastChatSig='',lastDetailSig='',keyBuffer='',keyTimer=null,lastCompInteract=0,compQueue=Promise.resolve(),paletteIndex=0,sseLive=false,connectorBot='';
+<script nonce="${token}">const TOKEN='${token}',DEFAULT_WS='${escapeJs(process.cwd())}';let state={projects:[],bots:[],tasks:[],routines:[],channels:{},channelLog:[],vault:{items:[]},accounts:{},activeBrainLabel:'',activeModel:''},activeWorkspace='',selected='',conversationBot='',computerBot='',computerMeta=null,bootstrapped=false,activeTab='detail',centerView='chat',lastClickPt=null,renderedCompBot='',lastFrameSrc='',lastSyncedUrl='',lastSidebarSig='',lastChatSig='',lastDetailSig='',keyBuffer='',keyTimer=null,lastCompInteract=0,compQueue=Promise.resolve(),paletteIndex=0,sseLive=false,connectorBot='';
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const googleSignInNote='Google sign-in stays in this virtual computer. Take Control and sign in yourself. OCP does not connect a Google account, and there is no Gmail, Calendar, or Drive connection.';
+const googleSignInNote='Google and Microsoft connectors use an OAuth client you paste in Accounts. OCP ships no OAuth client. Take Control on this virtual computer to sign in on a page yourself.';
 const isAgentRuntime=r=>r==='ocp-agent'||r==='hermes';
 const runtimeLabel=r=>isAgentRuntime(r)?'OCP Agent':'OCP Coder';
 const roleIcon=r=>({general:'✦',coding:'⚡',qa:'✔',security:'◆',research:'◎',computer:'▣'}[r]||'●');
@@ -2157,6 +2224,47 @@ function renderVault(){
   box.querySelectorAll('[data-vault-delete]').forEach(el=>el.addEventListener('click',async()=>{
     const status=document.querySelector('#vaultStatus');
     try{await api('/api/vault/'+encodeURIComponent(el.dataset.vaultDelete),{},'DELETE');lastVaultSig='';if(status)status.textContent='Deleted.';await load()}catch(err){if(status)status.textContent=err.message}
+  }));
+}
+let lastAccountsSig='';
+function renderAccounts(){
+  const box=document.querySelector('#accountsPanel');
+  if(!box)return;
+  const accounts=state.accounts||{};
+  const sig=JSON.stringify(accounts);
+  if(sig===lastAccountsSig)return;
+  lastAccountsSig=sig;
+  const block=(provider,label)=>{
+    const info=accounts[provider]||{};
+    const connected=info.connected?'Connected as '+esc(info.account||provider):'Not connected';
+    const client=info.clientConfigured?'Client saved ('+esc(info.clientId)+'). The secret is not shown.':'No client saved. OCP ships no client.';
+    return '<h3>'+label+'</h3><p class="meta">'+connected+'</p><p class="meta">'+client+'</p><form class="account-client-form" data-provider="'+provider+'"><label>Client id<input name="clientId" required autocomplete="off" value="'+esc(info.clientId||'')+'"></label><label>Client secret<input type="password" name="clientSecret" required autocomplete="off" placeholder="Paste the client secret. It is not shown again."></label><button type="submit">Save '+label+' client</button></form><label class="cheap-toggle"><input type="checkbox" data-accept="'+provider+'"> I reviewed the '+label+' scopes above</label><div class="row"><button type="button" data-connect="'+provider+'">'+(provider==='google'?'Connect Google with these scopes':'Connect Microsoft with these scopes')+'</button>'+(info.connected?'<button type="button" class="secondary" data-disconnect="'+provider+'">Disconnect</button>':'')+'</div>';
+  };
+  box.innerHTML=block('google','Google')+block('microsoft','Microsoft')+'<div id="accountsStatus" class="status"></div>';
+  box.querySelectorAll('.account-client-form').forEach(form=>form.addEventListener('submit',async e=>{
+    e.preventDefault();
+    const provider=form.dataset.provider;
+    const f=new FormData(form);
+    const status=document.querySelector('#accountsStatus');
+    try{
+      await api('/api/accounts/'+provider+'/client',{clientId:String(f.get('clientId')||''),clientSecret:String(f.get('clientSecret')||'')});
+      lastAccountsSig='';
+      if(status)status.textContent='Client saved. The secret is not shown again.';
+      await load();
+    }catch(err){if(status)status.textContent=err.message}
+  }));
+  box.querySelectorAll('[data-connect]').forEach(el=>el.addEventListener('click',async()=>{
+    const status=document.querySelector('#accountsStatus');
+    const boxCheck=document.querySelector('[data-accept="'+el.dataset.connect+'"]');
+    if(!boxCheck||!boxCheck.checked){if(status)status.textContent='Review the scopes and check the box before consent.';return}
+    try{
+      const data=await api('/api/accounts/'+el.dataset.connect+'/start',{acceptScopes:true});
+      if(data.authorizeUrl)location.href=data.authorizeUrl;
+    }catch(err){if(status)status.textContent=err.message}
+  }));
+  box.querySelectorAll('[data-disconnect]').forEach(el=>el.addEventListener('click',async()=>{
+    const status=document.querySelector('#accountsStatus');
+    try{await api('/api/accounts/'+el.dataset.disconnect+'/disconnect',{});lastAccountsSig='';if(status)status.textContent='Disconnected. The refresh token was removed.';await load()}catch(err){if(status)status.textContent=err.message}
   }));
 }
 function homeDashboard(pBots,pTasks){const running=pTasks.filter(t=>['running','queued','awaiting-approval'].includes(t.status)).length;const waiting=pTasks.filter(t=>t.status==='awaiting-approval').length;const done=pTasks.filter(t=>t.status==='succeeded').length;return '<div class="home-grid"><div class="home-card"><span class="meta">Active tasks</span><strong>'+running+'</strong></div><div class="home-card"><span class="meta">Waiting on you</span><strong>'+waiting+'</strong></div><div class="home-card"><span class="meta">Completed</span><strong>'+done+'</strong></div><div class="home-card"><span class="meta">Active model</span><strong style="font-size:13px">'+esc(state.activeBrainLabel||state.activeModel||'No model configured')+'</strong></div></div>'}
@@ -2428,6 +2536,7 @@ function draw(){
 
   renderChannels(pBots);
   renderVault();
+  renderAccounts();
   renderUsage(pBots);
   drawChatFeed(activeProj,pBots,pTasks);
   drawComputer(pBots);
@@ -2918,6 +3027,7 @@ const paletteCommands=[
   {id:'connectors',label:'Connectors',run:()=>setTab('connectors')},
   {id:'channels',label:'Channels',run:()=>setTab('channels')},
   {id:'vault',label:'Vault',run:()=>setTab('vault')},
+  {id:'accounts',label:'Accounts',run:()=>setTab('accounts')},
   {id:'inbox',label:'Approvals inbox',run:()=>{setTab('detail');lastDetailSig='';drawDetail()}}
 ];
 function paletteVisible(){return !document.querySelector('#palette').classList.contains('hidden')}

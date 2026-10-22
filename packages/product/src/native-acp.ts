@@ -8,6 +8,7 @@ import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import { externalToolNeedsApproval } from "./connectors.js";
 import { vaultFillInvocation } from "./vault.js";
+import { accountToolNeedsApproval, accountWriteTool } from "./accounts.js";
 import { listHttpMcpTools, type HttpMcpEndpoint } from "./http-mcp.js";
 import { formatPins, splitRecent, summarizeTurns, takePins, type PinnedNotes } from "./context.js";
 import { layoutCachedPrompt } from "./prompt-cache.js";
@@ -868,6 +869,10 @@ export async function runNativeAcpAgent(): Promise<void> {
             if (vaultArgs) {
               parsedArgs = toolName === "tool_call" ? { name: "vault_fill", arguments: vaultArgs } : vaultArgs;
             }
+            const accountGate = accountToolNeedsApproval(toolName, parsedArgs);
+            const accountToolName = accountGate
+              ? (toolName === "tool_call" && typeof parsedArgs.name === "string" ? parsedArgs.name : toolName)
+              : "";
 
             send({
               jsonrpc: "2.0",
@@ -884,10 +889,10 @@ export async function runNativeAcpAgent(): Promise<void> {
             const externalTarget = externalToolNeedsApproval(toolName, parsedArgs)
               ? (toolName === "tool_call" && typeof parsedArgs.name === "string" ? parsedArgs.name : toolName)
               : undefined;
-            if (vaultArgs || MUTATING_TOOLS.has(toolName) || externalTarget) {
+            if (vaultArgs || accountGate || MUTATING_TOOLS.has(toolName) || externalTarget) {
               const allowed = await requestPermissionFromClient(
-                vaultArgs ? "Allow vault_fill on the virtual computer keyboard?" : externalTarget ? `Allow external MCP tool ${externalTarget}?` : `Allow ${toolName}?`,
-                vaultArgs ? "vault-fill" : externalTarget ? "external-mcp" : "edit",
+                vaultArgs ? "Allow vault_fill on the virtual computer keyboard?" : accountGate ? `Allow ${accountToolName} on the connected account?` : externalTarget ? `Allow external MCP tool ${externalTarget}?` : `Allow ${toolName}?`,
+                vaultArgs ? "vault-fill" : accountGate ? "account" : externalTarget ? "external-mcp" : "edit",
                 parsedArgs,
               );
               if (!allowed) {
@@ -930,7 +935,7 @@ export async function runNativeAcpAgent(): Promise<void> {
                 state.responseCache = storeResponse(state.responseCache, "tool", cacheKey, toolResult.text);
               }
             }
-            if (MUTATING_TOOLS.has(toolName)) state.responseCache = forgetToolResponses(state.responseCache);
+            if (MUTATING_TOOLS.has(toolName) || accountWriteTool(toolName) || accountWriteTool(accountToolName)) state.responseCache = forgetToolResponses(state.responseCache);
             let content = toolResult.text;
             if (toolName !== "tool_output_read") {
               const presented = await presentToolOutput({

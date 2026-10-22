@@ -215,9 +215,9 @@ test("the usage panel keeps provider tokens, prices, and a cap pause separate fr
     const running = during.tasks.find((task) => task.id === capApproval.taskId);
     assert.equal(running?.autoApproveRemaining, true);
     assert.match(running?.pendingApproval?.title ?? "", /Usage cap reached/);
-    assert.match(running?.pendingApproval?.title ?? "", /25 tokens/);
+    assert.match(running?.pendingApproval?.title ?? "", /50 tokens/);
     assert.match((running?.events ?? []).map((event) => event.title ?? "").join("\n"), /workspace_write/);
-    assert.equal(llmCalls, 1);
+    assert.equal(llmCalls, 2);
     const denied = await fetch(`${app.url}/api/tasks/${capApproval.taskId}/approval`, {
       method: "POST",
       headers,
@@ -226,10 +226,12 @@ test("the usage panel keeps provider tokens, prices, and a cap pause separate fr
     assert.equal(denied.status, 200);
     const finished = await waitForStatus(app.url, capApproval.taskId);
     assert.equal(finished, "needs-attention");
-    assert.equal(llmCalls, 1);
+    assert.equal(llmCalls, 2);
     const after = await (await fetch(`${app.url}/api/state`)).json() as {
-      usage: { recent: Array<{ model: string; estimated: boolean; promptTokens: number; completionTokens: number; costBasis?: string }> };
+      usage: { recent: Array<{ model: string; step?: string; estimated: boolean; promptTokens: number; completionTokens: number; costBasis?: string }> };
     };
+    assert.equal(after.usage.recent.some((call) => call.step === "classify"), true);
+    assert.equal(after.usage.recent.some((call) => call.step === "edit"), true);
     const localCall = after.usage.recent.find((call) => call.model === "stub-model");
     assert.equal(localCall?.estimated, false);
     assert.equal(localCall?.promptTokens, 20);

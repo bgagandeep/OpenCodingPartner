@@ -182,7 +182,7 @@ test("a local stub model receives retrieved snippets and not the rest of the rep
       prompt: [{ type: "text", text: RETRIEVAL_REPLAY_QUERY }],
     });
     assert.equal((prompt.result as { stopReason?: string } | undefined)?.stopReason, "end_turn");
-    const body = seen.find((item) => !item.includes("Summarize earlier coding turns.")) ?? "";
+    const body = seen.find((item) => !item.includes("Summarize earlier coding turns.") && !item.includes("Classify this user turn for OCP.")) ?? "";
     assert.match(body, /hashed n-gram index \(not a neural model\)/);
     assert.match(body, /workspace_patch failed/);
     assert.match(body, /Decision: replies stay drafts until a person sends them/);

@@ -15,6 +15,9 @@ export interface UsageCall {
   estimated: boolean;
   costUsd?: number;
   costBasis?: "entered" | "local-default";
+  step?: string;
+  tier?: "cheap" | "strong";
+  routeFallback?: boolean;
   createdAt: string;
 }
 
@@ -179,6 +182,9 @@ export async function noteModelUsage(root: string, input: {
   usage: unknown;
   promptText: string;
   completionText: string;
+  step?: string;
+  tier?: "cheap" | "strong";
+  routeFallback?: boolean;
 }): Promise<UsageCall> {
   const measured = measureUsage(input.usage, input.promptText, input.completionText);
   const provider = usageProviderKind(input.provider, input.baseUrl);
@@ -195,6 +201,9 @@ export async function noteModelUsage(root: string, input: {
     ...(measured.cachedPromptTokens !== undefined ? { cachedPromptTokens: measured.cachedPromptTokens } : {}),
     estimated: measured.estimated,
     ...priced,
+    ...(input.step && input.step.length <= 40 && !/[\r\n]/.test(input.step) ? { step: input.step } : {}),
+    ...(input.tier === "cheap" || input.tier === "strong" ? { tier: input.tier } : {}),
+    ...(input.routeFallback ? { routeFallback: true } : {}),
     createdAt: new Date().toISOString(),
   };
   await appendUsageCall(root, call);
@@ -322,7 +331,10 @@ function isUsageCall(value: unknown): value is UsageCall {
     && typeof call.promptTokens === "number"
     && typeof call.completionTokens === "number"
     && typeof call.estimated === "boolean"
-    && typeof call.createdAt === "string";
+    && typeof call.createdAt === "string"
+    && (call.step === undefined || (typeof call.step === "string" && call.step.length <= 40))
+    && (call.tier === undefined || call.tier === "cheap" || call.tier === "strong")
+    && (call.routeFallback === undefined || typeof call.routeFallback === "boolean");
 }
 
 function finiteToken(value: unknown): number | undefined {

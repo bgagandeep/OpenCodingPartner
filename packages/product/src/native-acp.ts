@@ -12,6 +12,7 @@ import { formatPins, splitRecent, summarizeTurns, takePins, type PinnedNotes } f
 import { layoutCachedPrompt } from "./prompt-cache.js";
 import { retrieveWorkspaceSnippets } from "./retrieval.js";
 import { recentTokenBudget } from "./provider-presets.js";
+import { classifyPrompt, formatRouteUsage, nextRouteStep, parseRouteLabel, selectStepModel, type RouteStep } from "./routing.js";
 import { presentToolOutput, toolOutputDataDir } from "./tool-trim.js";
 import type { ReadStamp } from "./tool-trim.js";
 import { noteModelUsage, usageCapReason, usageProviderKind } from "./usage.js";
@@ -535,10 +536,65 @@ export async function runNativeAcpAgent(): Promise<void> {
         }));
 
         const activeModel = state.modelOverride || config.model;
+        const routeMode = process.env.OCP_ROUTE_MODE === "cheap" || process.env.OCP_ROUTE_MODE === "strong" ? process.env.OCP_ROUTE_MODE : "auto";
+        const cheapModel = process.env.OCP_CHEAP_MODEL?.trim() || undefined;
+        const localProvider = usageProviderKind(config.provider, config.baseUrl) === "local";
+        const choiceFor = (step: RouteStep) => selectStepModel({
+          step,
+          mode: routeMode,
+          strongModel: activeModel,
+          cheapModel: step === "summary" ? process.env.OCP_SUMMARY_MODEL?.trim() || cheapModel : cheapModel,
+          local: localProvider,
+        });
         let usageContinued = false;
+        const recordStep = async (input: {
+          model: string;
+          step: RouteStep;
+          tier: "cheap" | "strong";
+          routeFallback: boolean;
+          usage: unknown;
+          promptText: string;
+          completionText: string;
+        }): Promise<void> => {
+          if (!process.env.OCP_DATA_DIR || !process.env.OCP_ACTOR_BOT_ID) return;
+          const recorded = await noteModelUsage(process.env.OCP_DATA_DIR, {
+            botId: process.env.OCP_ACTOR_BOT_ID,
+            taskId: process.env.OCP_TASK_ID,
+            model: input.model,
+            provider: config.provider,
+            baseUrl: config.baseUrl,
+            usage: input.usage,
+            promptText: input.promptText,
+            completionText: input.completionText,
+            step: input.step,
+            tier: input.tier,
+            routeFallback: input.routeFallback,
+          });
+          send({
+            jsonrpc: "2.0",
+            method: "session/update",
+            params: {
+              sessionId,
+              update: {
+                sessionUpdate: "usage",
+                title: formatRouteUsage({
+                  step: input.step,
+                  tier: input.tier,
+                  fallback: input.routeFallback,
+                  model: recorded.model,
+                  promptTokens: recorded.promptTokens,
+                  completionTokens: recorded.completionTokens,
+                  estimated: recorded.estimated,
+                  costUsd: recorded.costUsd,
+                  costBasis: recorded.costBasis,
+                }),
+              },
+            },
+          });
+        };
         let retrievalFor = "";
         let retrievalText = "";
-        const messagesForModel = async () => {
+        const messagesForModel = async (cacheModel: string) => {
           const rest = state.messages.slice(1);
           const budget = recentTokenBudget(config.provider, config.baseUrl);
           const { older, recent } = splitRecent(rest, budget);
@@ -546,30 +602,27 @@ export async function runNativeAcpAgent(): Promise<void> {
           const portion = older.slice(start).map((message) => ({ role: message.role, content: message.content ?? "" }));
           if (portion.length > 0) {
             const folded = await summarizeTurns(portion, state.summary ?? "", async (prompt) => {
-              const summaryModel = process.env.OCP_SUMMARY_MODEL?.trim();
-              const local = usageProviderKind(config.provider, config.baseUrl) === "local";
-              if ((!summaryModel && !local) || !config.apiKey) return undefined;
+              const summaryChoice = choiceFor("summary");
+              const summaryConfigured = Boolean(process.env.OCP_SUMMARY_MODEL?.trim() || cheapModel || localProvider);
+              if (!summaryConfigured || !config.apiKey) return undefined;
               try {
                 const summaryResponse = await fetch(`${config.baseUrl}/chat/completions`, {
                   method: "POST",
                   headers: { "content-type": "application/json", authorization: `Bearer ${config.apiKey}` },
-                  body: JSON.stringify({ model: summaryModel || activeModel, messages: [{ role: "user", content: prompt }] }),
+                  body: JSON.stringify({ model: summaryChoice.model, messages: [{ role: "user", content: prompt }] }),
                 });
                 if (!summaryResponse.ok) return undefined;
                 const summaryPayload = await summaryResponse.json() as { choices?: Array<{ message?: { content?: string | null } }>; usage?: unknown };
                 const text = summaryPayload.choices?.[0]?.message?.content;
-                if (process.env.OCP_DATA_DIR && process.env.OCP_ACTOR_BOT_ID) {
-                  await noteModelUsage(process.env.OCP_DATA_DIR, {
-                    botId: process.env.OCP_ACTOR_BOT_ID,
-                    taskId: process.env.OCP_TASK_ID,
-                    model: summaryModel || activeModel,
-                    provider: config.provider,
-                    baseUrl: config.baseUrl,
-                    usage: summaryPayload.usage,
-                    promptText: prompt,
-                    completionText: typeof text === "string" ? text : "",
-                  }).catch(() => undefined);
-                }
+                await recordStep({
+                  model: summaryChoice.model,
+                  step: "summary",
+                  tier: summaryChoice.tier,
+                  routeFallback: summaryChoice.fallback,
+                  usage: summaryPayload.usage,
+                  promptText: prompt,
+                  completionText: typeof text === "string" ? text : "",
+                }).catch(() => undefined);
                 return typeof text === "string" ? text : undefined;
               } catch {
                 return undefined;
@@ -595,10 +648,12 @@ export async function runNativeAcpAgent(): Promise<void> {
             summary: state.summary ?? "",
             retrieved: retrievalText,
             recent,
-            model: activeModel,
+            model: cacheModel,
           }).messages;
         };
-        for (let step = 0; step < 12; step += 1) {
+        let routeStep: RouteStep = routeMode === "cheap" ? "answer" : "edit";
+        let classified = false;
+        for (let turn = 0; turn < 12; turn += 1) {
           if (!usageContinued && process.env.OCP_DATA_DIR && process.env.OCP_ACTOR_BOT_ID) {
             const reason = await usageCapReason(process.env.OCP_DATA_DIR, process.env.OCP_ACTOR_BOT_ID);
             if (reason) {
@@ -618,7 +673,41 @@ export async function runNativeAcpAgent(): Promise<void> {
               usageContinued = true;
             }
           }
-          const modelMessages = await messagesForModel();
+          if (!classified) {
+            classified = true;
+            const classifyChoice = choiceFor("classify");
+            if (routeMode !== "strong" && classifyChoice.tier === "cheap" && !classifyChoice.fallback) {
+              const latestUser = [...state.messages].reverse().find((message) => message.role === "user")?.content ?? "";
+              try {
+                const classifyResponse = await fetch(`${config.baseUrl}/chat/completions`, {
+                  method: "POST",
+                  headers: { "content-type": "application/json", authorization: `Bearer ${config.apiKey}` },
+                  body: JSON.stringify({
+                    model: classifyChoice.model,
+                    messages: [{ role: "user", content: classifyPrompt(latestUser) }],
+                  }),
+                });
+                if (classifyResponse.ok) {
+                  const classifyPayload = await classifyResponse.json() as { choices?: Array<{ message?: { content?: string | null } }>; usage?: unknown };
+                  const classifyText = classifyPayload.choices?.[0]?.message?.content ?? "";
+                  await recordStep({
+                    model: classifyChoice.model,
+                    step: "classify",
+                    tier: classifyChoice.tier,
+                    routeFallback: classifyChoice.fallback,
+                    usage: classifyPayload.usage,
+                    promptText: latestUser,
+                    completionText: typeof classifyText === "string" ? classifyText : "",
+                  });
+                  routeStep = (typeof classifyText === "string" ? parseRouteLabel(classifyText) : undefined) ?? routeStep;
+                }
+              } catch {
+                routeStep = routeMode === "cheap" ? "answer" : "edit";
+              }
+            }
+          }
+          const routeChoice = choiceFor(routeStep);
+          const modelMessages = await messagesForModel(routeChoice.model);
           const promptText = JSON.stringify(modelMessages);
           const response = await fetch(`${config.baseUrl}/chat/completions`, {
             method: "POST",
@@ -627,7 +716,7 @@ export async function runNativeAcpAgent(): Promise<void> {
               authorization: `Bearer ${config.apiKey}`,
             },
             body: JSON.stringify({
-              model: activeModel,
+              model: routeChoice.model,
               messages: modelMessages,
               ...(openAiTools.length > 0 ? { tools: openAiTools } : {}),
             }),
@@ -656,32 +745,15 @@ export async function runNativeAcpAgent(): Promise<void> {
 
           const assistantText = typeof choice.content === "string" ? choice.content : "";
           const toolCalls = Array.isArray(choice.tool_calls) ? choice.tool_calls : [];
-          if (process.env.OCP_DATA_DIR && process.env.OCP_ACTOR_BOT_ID) {
-            const recorded = await noteModelUsage(process.env.OCP_DATA_DIR, {
-              botId: process.env.OCP_ACTOR_BOT_ID,
-              taskId: process.env.OCP_TASK_ID,
-              model: activeModel,
-              provider: config.provider,
-              baseUrl: config.baseUrl,
-              usage: (payload as { usage?: unknown }).usage,
-              promptText,
-              completionText: assistantText || JSON.stringify(toolCalls),
-            });
-            const tokenLabel = recorded.estimated
-              ? `estimated ${recorded.promptTokens} in / ${recorded.completionTokens} out`
-              : `${recorded.promptTokens} in / ${recorded.completionTokens} out`;
-            send({
-              jsonrpc: "2.0",
-              method: "session/update",
-              params: {
-                sessionId,
-                update: {
-                  sessionUpdate: "usage",
-                  title: `${recorded.model}: ${tokenLabel}`,
-                },
-              },
-            });
-          }
+          await recordStep({
+            model: routeChoice.model,
+            step: routeStep,
+            tier: routeChoice.tier,
+            routeFallback: routeChoice.fallback,
+            usage: (payload as { usage?: unknown }).usage,
+            promptText,
+            completionText: assistantText || JSON.stringify(toolCalls),
+          });
 
           state.messages.push({
             role: "assistant",
@@ -709,6 +781,8 @@ export async function runNativeAcpAgent(): Promise<void> {
             return;
           }
 
+          const usedTools: string[] = [];
+          const usedTexts: string[] = [];
           for (const call of toolCalls) {
             const toolName = call.function.name;
             let parsedArgs: Record<string, unknown> = {};
@@ -773,12 +847,16 @@ export async function runNativeAcpAgent(): Promise<void> {
               state.reads = presented.reads;
               content = presented.display;
             }
+            const shown = content.length > 16_000 ? content.slice(0, 16_000) : content;
+            usedTools.push(toolName);
+            usedTexts.push(shown);
             state.messages.push({
               role: "tool",
               tool_call_id: call.id,
-              content: content.length > 16_000 ? content.slice(0, 16_000) : content,
+              content: shown,
             });
           }
+          routeStep = nextRouteStep(routeStep, usedTools, usedTexts);
         }
 
         await saveSession(state);

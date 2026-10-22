@@ -229,7 +229,7 @@ test("a local stub model sees the trimmed read and can retrieve the middle", { t
       prompt: [{ type: "text", text: "Read the server file." }],
     });
     assert.equal((prompt.result as { stopReason?: string } | undefined)?.stopReason, "end_turn");
-    const modelCalls = seen.filter((body) => !body.includes("Summarize earlier coding turns."));
+    const modelCalls = seen.filter((body) => !body.includes("Summarize earlier coding turns.") && !body.includes("Classify this user turn for OCP."));
     assert.equal(modelCalls.length, 3);
     assert.doesNotMatch(modelCalls[1] ?? "", /hunk did not match/);
     assert.match(modelCalls[1] ?? "", /toolout:[a-z0-9]+/);

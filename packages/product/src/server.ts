@@ -74,6 +74,7 @@ import {
   type RuntimePermissionRequest,
 } from "./index.js";
 import { probeConnectors, publicConnector, upsertConnectorSnapshot, validateConnectorInput } from "./connectors.js";
+import { usageSnapshot } from "./usage.js";
 import { deleteMcpSecret, listMcpSecretKeys, mcpSecretKey, readMcpSecret, writeMcpSecret } from "./mcp-secrets.js";
 
 interface AppOptions {
@@ -444,6 +445,9 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
         activeModel: effectiveEnv.OCP_DEFAULT_MODEL || settings.defaultModel || "",
         routines,
         channelLog: await listChannelLog(root),
+        usage: await usageSnapshot(root),
+        modelPrices: settings.modelPrices ?? [],
+        usageCaps: settings.usageCaps ?? { perBot: [] },
         channels: {
           slackConfigured: Boolean(settings.slackBotToken && settings.slackSigningSecret),
           telegramConfigured: Boolean(settings.telegramBotToken && settings.telegramWebhookSecret),
@@ -483,6 +487,8 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
         defaultModel: settings.defaultModel || effectiveEnv.OCP_DEFAULT_MODEL || "",
         slackConfigured: Boolean(settings.slackBotToken && settings.slackSigningSecret),
         telegramConfigured: Boolean(settings.telegramBotToken && settings.telegramWebhookSecret),
+        modelPrices: settings.modelPrices ?? [],
+        usageCaps: settings.usageCaps ?? { perBot: [] },
       });
       return;
     }
@@ -621,33 +627,41 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
       return;
     }
     if (request.method === "POST" && url.pathname === "/api/settings") {
-      const saved = await saveProviderSettings(
-        {
-          ...(typeof body.openrouterApiKey === "string" ? { openrouterApiKey: body.openrouterApiKey } : {}),
-          ...(typeof body.litellmApiKey === "string" ? { litellmApiKey: body.litellmApiKey } : {}),
-          ...(typeof body.litellmBaseUrl === "string" ? { litellmBaseUrl: body.litellmBaseUrl } : {}),
-          ...(typeof body.openaiApiKey === "string" ? { openaiApiKey: body.openaiApiKey } : {}),
-          ...(typeof body.defaultModel === "string" ? { defaultModel: body.defaultModel } : {}),
-          ...(typeof body.slackBotToken === "string" ? { slackBotToken: body.slackBotToken } : {}),
-          ...(typeof body.slackSigningSecret === "string" ? { slackSigningSecret: body.slackSigningSecret } : {}),
-          ...(typeof body.telegramBotToken === "string" ? { telegramBotToken: body.telegramBotToken } : {}),
-          ...(typeof body.telegramWebhookSecret === "string" ? { telegramWebhookSecret: body.telegramWebhookSecret } : {}),
-          ...(typeof body.slackBotId === "string" ? { slackBotId: body.slackBotId } : {}),
-          ...(typeof body.telegramBotId === "string" ? { telegramBotId: body.telegramBotId } : {}),
-        },
-        root,
-      );
-      const effectiveEnv = applyProviderSettingsToEnv(saved, env);
-      sendJson(response, 200, {
-        ok: true,
-        openrouterConfigured: Boolean(effectiveEnv.OPENROUTER_API_KEY),
-        litellmConfigured: Boolean(effectiveEnv.LITELLM_API_KEY || effectiveEnv.LITELLM_MASTER_KEY),
-        openaiConfigured: Boolean(effectiveEnv.OPENAI_API_KEY),
-        litellmBaseUrl: saved.litellmBaseUrl || effectiveEnv.LITELLM_BASE_URL || "http://127.0.0.1:4000/v1",
-        defaultModel: saved.defaultModel || effectiveEnv.OCP_DEFAULT_MODEL || "",
-        slackConfigured: Boolean(saved.slackBotToken && saved.slackSigningSecret),
-        telegramConfigured: Boolean(saved.telegramBotToken && saved.telegramWebhookSecret),
-      });
+      try {
+        const saved = await saveProviderSettings(
+          {
+            ...(typeof body.openrouterApiKey === "string" ? { openrouterApiKey: body.openrouterApiKey } : {}),
+            ...(typeof body.litellmApiKey === "string" ? { litellmApiKey: body.litellmApiKey } : {}),
+            ...(typeof body.litellmBaseUrl === "string" ? { litellmBaseUrl: body.litellmBaseUrl } : {}),
+            ...(typeof body.openaiApiKey === "string" ? { openaiApiKey: body.openaiApiKey } : {}),
+            ...(typeof body.defaultModel === "string" ? { defaultModel: body.defaultModel } : {}),
+            ...(typeof body.slackBotToken === "string" ? { slackBotToken: body.slackBotToken } : {}),
+            ...(typeof body.slackSigningSecret === "string" ? { slackSigningSecret: body.slackSigningSecret } : {}),
+            ...(typeof body.telegramBotToken === "string" ? { telegramBotToken: body.telegramBotToken } : {}),
+            ...(typeof body.telegramWebhookSecret === "string" ? { telegramWebhookSecret: body.telegramWebhookSecret } : {}),
+            ...(typeof body.slackBotId === "string" ? { slackBotId: body.slackBotId } : {}),
+            ...(typeof body.telegramBotId === "string" ? { telegramBotId: body.telegramBotId } : {}),
+            ...(Object.prototype.hasOwnProperty.call(body, "modelPrices") ? { modelPrices: body.modelPrices } : {}),
+            ...(Object.prototype.hasOwnProperty.call(body, "usageCaps") ? { usageCaps: body.usageCaps } : {}),
+          },
+          root,
+        );
+        const effectiveEnv = applyProviderSettingsToEnv(saved, env);
+        sendJson(response, 200, {
+          ok: true,
+          openrouterConfigured: Boolean(effectiveEnv.OPENROUTER_API_KEY),
+          litellmConfigured: Boolean(effectiveEnv.LITELLM_API_KEY || effectiveEnv.LITELLM_MASTER_KEY),
+          openaiConfigured: Boolean(effectiveEnv.OPENAI_API_KEY),
+          litellmBaseUrl: saved.litellmBaseUrl || effectiveEnv.LITELLM_BASE_URL || "http://127.0.0.1:4000/v1",
+          defaultModel: saved.defaultModel || effectiveEnv.OCP_DEFAULT_MODEL || "",
+          slackConfigured: Boolean(saved.slackBotToken && saved.slackSigningSecret),
+          telegramConfigured: Boolean(saved.telegramBotToken && saved.telegramWebhookSecret),
+          modelPrices: saved.modelPrices ?? [],
+          usageCaps: saved.usageCaps ?? { perBot: [] },
+        });
+      } catch (error) {
+        sendJson(response, 400, { error: error instanceof Error ? error.message : "Could not save settings." });
+      }
       return;
     }
     if (request.method === "POST" && url.pathname === "/api/routines") {
@@ -981,10 +995,11 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
         requestId,
       }, root);
       const allow = decision === "allow-once" || decision === "always";
+      const pendingKind = permissionSubjectKind(task.pendingApproval.subject);
       await updateTask(taskId, {
         status: "running",
         pendingApproval: undefined,
-        autoApproveRemaining: decision === "always" ? true : task.autoApproveRemaining,
+        autoApproveRemaining: decision === "always" && pendingKind !== "usage-cap" ? true : task.autoApproveRemaining,
       }, root);
       waiter?.resolve(allow ? waiter.optionId : undefined);
       notifySse();
@@ -1088,7 +1103,7 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
                   persistProgress();
                 }, 400);
               }
-              if (["tool_call", "tool_call_update", "permission_allowed", "permission_denied", "session_reset", "connector_error"].includes(update.kind)) {
+              if (["tool_call", "tool_call_update", "permission_allowed", "permission_denied", "session_reset", "connector_error", "usage"].includes(update.kind)) {
                 const title = update.title ? `${agent.name}: ${update.title}` : agent.name;
                 eventWrites = eventWrites.then(() => recordTaskEvent(taskId, { kind: update.kind, title }, root)).catch((error) => { eventError = error; });
               }
@@ -1170,7 +1185,8 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
     const allow = request.options.find((option) => option.kind === "allow_once");
     if (!allow) return undefined;
     const current = await findTask(taskId, root);
-    if (current?.autoApproveRemaining) return allow.optionId;
+    const requestKind = permissionSubjectKind(request.subject);
+    if (current?.autoApproveRemaining && requestKind !== "usage-cap") return allow.optionId;
     const id = randomUUID();
     const pending: PendingTaskApproval = {
       id,
@@ -1341,6 +1357,12 @@ function publicBot(bot: NonNullable<Awaited<ReturnType<typeof findBot>>>, env: N
     createdAt,
     updatedAt,
   };
+}
+
+function permissionSubjectKind(subject: unknown): string {
+  if (!subject || typeof subject !== "object") return "";
+  const kind = (subject as { kind?: unknown }).kind;
+  return typeof kind === "string" ? kind : "";
 }
 
 function boundedJson(value: unknown): unknown {
@@ -1738,6 +1760,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;font:12.5px/1.45 "JetBrains Mono
       <button type="button" class="tab" data-tab="bot">+ Bot</button>
       <button type="button" class="tab" data-tab="project">◈ Project</button>
       <button type="button" class="tab" data-tab="settings">Settings</button>
+      <button type="button" class="tab" data-tab="usage">Usage</button>
       <button type="button" class="tab" data-tab="credits">Credits</button>
       <button type="button" class="tab" data-tab="routines">Routines</button>
       <button type="button" class="tab" data-tab="connectors">Connectors</button>
@@ -1831,6 +1854,12 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;font:12.5px/1.45 "JetBrains Mono
         <div id="settingsStatus" class="status"></div>
       </div>
 
+      <div id="tab-usage" class="tab-pane hidden">
+        <h2>Usage</h2>
+        <p class="sub">Tokens come from the provider. A number is marked estimated only when the provider sent none. Cost uses prices you enter. Local models stay at the $0 default until you enter one. OCP does not invent prices.</p>
+        <div id="usagePanel"></div>
+      </div>
+
       <div id="tab-credits" class="tab-pane hidden">
         <h2>Credits</h2>
         <p class="credits">User-facing product name: <strong>Open Coding Partner (OCP)</strong>.</p>
@@ -1901,12 +1930,91 @@ function hiddenPath(p){return String(p||'').replace(/\\\\/g,'/').split('/').some
 function visibleFiles(files){return (files||[]).filter(f=>!hiddenPath(f.path))}
 function orbClass(bot,tasks){const t=tasks.find(x=>x.botId===bot.id&&['queued','running','awaiting-approval'].includes(x.status));if(!t)return 'orb idle';if(t.status==='awaiting-approval')return 'orb wait';if((t.events||[]).length)return 'orb tool';return 'orb thinking'}
 function pendingApprovals(){return (state.tasks||[]).filter(t=>t.pendingApproval)}
-function approvalCard(t,p){const title=String(p.title||'').toLowerCase();const risk=/delete|shell|browser|mouse|key/.test(title)?'High':'Normal';const bot=state.bots.find(x=>x.id===t.botId);const preview=p.description?'<pre>'+esc(typeof p.description==='string'?p.description:JSON.stringify(p.description,null,2))+'</pre>':'';const opts=projectBots().filter(b=>b.id!==t.botId).map(b=>'<option value="'+esc(b.id)+'">'+esc(b.name)+'</option>').join('');return '<div class="approval" role="alertdialog" aria-label="Approval needed"><h3>'+esc(p.title||'Permission requested')+'</h3><div class="meta mb-sm">Bot: '+esc(bot?.name||t.botId)+' · Action: '+esc(p.title||'')+' · Risk: '+risk+'</div>'+preview+'<div class="row"><button type="button" data-appr="allow-once" data-tid="'+esc(t.id)+'" data-req="'+esc(p.id)+'">Allow once <span class="kbd">⌘↵</span></button><button type="button" class="secondary" data-appr="always" data-tid="'+esc(t.id)+'" data-req="'+esc(p.id)+'">Always for task</button><button type="button" class="danger" data-appr="cancelled" data-tid="'+esc(t.id)+'" data-req="'+esc(p.id)+'">Deny <span class="kbd">Esc</span></button></div><div class="row mt-sm"><select data-redirect-select="'+esc(t.id)+'"><option value="">Redirect to…</option>'+opts+'</select><button type="button" class="secondary" data-appr="redirect" data-tid="'+esc(t.id)+'" data-req="'+esc(p.id)+'">Redirect</button></div></div>'}
+function approvalCard(t,p){const title=String(p.title||'').toLowerCase();const risk=/delete|shell|browser|mouse|key/.test(title)?'High':'Normal';const bot=state.bots.find(x=>x.id===t.botId);const preview=p.description?'<pre>'+esc(typeof p.description==='string'?p.description:JSON.stringify(p.description,null,2))+'</pre>':'';const opts=projectBots().filter(b=>b.id!==t.botId).map(b=>'<option value="'+esc(b.id)+'">'+esc(b.name)+'</option>').join('');const usageCap=p.subject&&p.subject.kind==='usage-cap';const allowLabel=usageCap?'Continue':'Allow once <span class="kbd">⌘↵</span>';const denyLabel=usageCap?'Leave paused':'Deny <span class="kbd">Esc</span>';const alwaysBtn=usageCap?'':'<button type="button" class="secondary" data-appr="always" data-tid="'+esc(t.id)+'" data-req="'+esc(p.id)+'">Always for task</button>';const redirect=usageCap?'':'<div class="row mt-sm"><select data-redirect-select="'+esc(t.id)+'"><option value="">Redirect to…</option>'+opts+'</select><button type="button" class="secondary" data-appr="redirect" data-tid="'+esc(t.id)+'" data-req="'+esc(p.id)+'">Redirect</button></div>';return '<div class="approval" role="alertdialog" aria-label="Approval needed"><h3>'+esc(p.title||'Permission requested')+'</h3><div class="meta mb-sm">Bot: '+esc(bot?.name||t.botId)+' · Action: '+esc(p.title||'')+(usageCap?'':' · Risk: '+risk)+'</div>'+preview+'<div class="row"><button type="button" data-appr="allow-once" data-tid="'+esc(t.id)+'" data-req="'+esc(p.id)+'">'+allowLabel+'</button>'+alwaysBtn+'<button type="button" class="danger" data-appr="cancelled" data-tid="'+esc(t.id)+'" data-req="'+esc(p.id)+'">'+denyLabel+'</button></div>'+redirect+'</div>'}
 function bindApprovals(){document.querySelectorAll('[data-appr]').forEach(el=>el.addEventListener('click',async e=>{e.stopPropagation();const decision=el.dataset.appr;const body={requestId:el.dataset.req,decision,approved:decision==='allow-once'||decision==='always'};if(decision==='redirect'){const sel=document.querySelector('[data-redirect-select="'+el.dataset.tid+'"]');body.redirectBotId=sel&&sel.value}try{await api('/api/tasks/'+encodeURIComponent(el.dataset.tid)+'/approval',body);await load()}catch(err){alert(err.message)}}))}
 function channelDrafts(){return (state.channelLog||[]).filter(m=>m.direction==='out'&&m.status==='draft')}
 function draftCard(m){const bot=state.bots.find(b=>b.id===m.botId);return '<div class="approval" role="alertdialog" aria-label="Reply draft"><h3>Send '+esc(m.channel)+' reply?</h3><div class="meta mb-sm">'+(bot?esc(bot.name)+' · ':'')+esc(m.destination)+'</div><pre>'+esc(m.text||'')+'</pre><div class="row"><button type="button" data-draft="allow" data-draft-id="'+esc(m.id)+'">Send reply</button><button type="button" class="danger" data-draft="deny" data-draft-id="'+esc(m.id)+'">Do not send</button></div></div>'}
 function bindDrafts(){document.querySelectorAll('[data-draft]').forEach(el=>el.addEventListener('click',async()=>{try{await api('/api/channels/drafts/'+encodeURIComponent(el.dataset.draftId),{decision:el.dataset.draft});await load()}catch(err){alert(err.message)}}))}
 let lastChannelSig='';
+let lastUsageSig='';
+function usd(n){const r=Math.round(Number(n)*1e6)/1e6;return String(r)}
+function tokenLine(b){
+  if(!b||!b.calls)return '0 in / 0 out';
+  const estimated=b.estimatedPromptTokens||b.estimatedCompletionTokens;
+  const allEstimated=estimated&&b.estimatedPromptTokens===b.promptTokens&&b.estimatedCompletionTokens===b.completionTokens;
+  const bits=[];
+  if(!allEstimated)bits.push((b.promptTokens-b.estimatedPromptTokens)+' in / '+(b.completionTokens-b.estimatedCompletionTokens)+' out');
+  if(estimated)bits.push('estimated '+b.estimatedPromptTokens+' in / '+b.estimatedCompletionTokens+' out');
+  if(b.cachedPromptTokens)bits.push(b.cachedPromptTokens+' cached');
+  return bits.join(' · ');
+}
+function costLine(b){
+  if(!b||!b.calls)return 'No usage yet';
+  const bits=[];
+  if(b.enteredCostUsd!==undefined)bits.push('$'+usd(b.enteredCostUsd)+' from entered prices');
+  if(b.localDefaultCalls)bits.push(b.localDefaultCalls+' local at $0 default');
+  if(b.unpricedCalls)bits.push(b.unpricedCalls+(b.unpricedCalls===1?' call has no price entered':' calls have no price entered'));
+  return bits.join(' · ')||'No usage yet';
+}
+function usageRow(title,b){return '<div class="event"><strong>'+esc(title)+'</strong><div class="meta">'+esc(tokenLine(b))+'</div><div class="meta">'+esc(costLine(b))+'</div></div>'}
+function renderUsage(pBots){
+  const box=document.querySelector('#usagePanel');
+  if(!box)return;
+  const usage=state.usage||{byBot:[],byTask:[],today:{calls:0},recent:[]};
+  const prices=state.modelPrices||[];
+  const caps=state.usageCaps||{perBot:[]};
+  const sig=JSON.stringify([usage,prices,caps,pBots.map(b=>[b.id,b.name])]);
+  if(sig===lastUsageSig)return;
+  lastUsageSig=sig;
+  const botName=id=>{const b=(state.bots||[]).find(x=>x.id===id);return b?b.name:id};
+  const tasks=(usage.byTask||[]).slice(-8).map(b=>usageRow('Task '+b.key.slice(0,8),b)).join('');
+  const recent=(usage.recent||[]).slice(0,8).map(c=>{
+    const label=c.estimated?('estimated '+c.promptTokens+' in / '+c.completionTokens+' out'):(c.promptTokens+' in / '+c.completionTokens+' out');
+    const cost=c.costBasis==='entered'?'$'+usd(c.costUsd)+' from entered prices':c.costBasis==='local-default'?'$0 local default':'no price entered';
+    return '<div class="event"><time>'+esc(new Date(c.createdAt).toLocaleTimeString())+'</time>'+esc(c.model)+' · '+esc(label)+'<div class="meta">'+esc(botName(c.botId))+' · '+esc(cost)+'</div></div>';
+  }).join('')||'<div class="meta">No model calls yet.</div>';
+  const priceRows=prices.map(p=>'<div class="nav-item"><div class="nav-main"><strong>'+esc(p.model)+'</strong><div class="meta">$'+esc(String(p.inputPerMillion))+' in / $'+esc(String(p.outputPerMillion))+' out per 1M tokens</div></div><button type="button" class="ghost" data-price-remove="'+esc(p.model)+'">Remove</button></div>').join('')||'<div class="meta">No prices entered.</div>';
+  const day=caps.perDay||{};
+  const capList=(caps.perBot||[]).map(c=>'<div class="meta">'+esc(botName(c.botId))+(c.maxTokens!==undefined?' · '+esc(String(c.maxTokens))+' tokens':'')+(c.maxCostUsd!==undefined?' · $'+esc(String(c.maxCostUsd))+' cost':'')+'</div>').join('')||'<div class="meta">No bot caps.</div>';
+  const botOptions=pBots.map(b=>'<option value="'+esc(b.id)+'">'+esc(b.name)+'</option>').join('');
+  const botRows=(usage.byBot||[]).map(b=>usageRow(botName(b.key),b)).join('')||'<div class="meta">No bot usage yet.</div>';
+  box.innerHTML=usageRow('Today',usage.today)+'<h3>Per bot</h3>'+botRows+(tasks?'<h3>Per task</h3>'+tasks:'')+'<h3>Recent calls</h3>'+recent+'<h3>Prices</h3><p class="meta">Enter USD per 1M tokens. Local models stay at the $0 default until you enter a price. A call with no matching price stays labeled no price entered.</p>'+priceRows+'<form id="usagePriceForm" class="mt-sm"><label>Model id<input name="model" required placeholder="openai/gpt-4.1 or a local model id"></label><label>Input USD per 1M<input name="inputPerMillion" type="number" min="0" step="any" required></label><label>Output USD per 1M<input name="outputPerMillion" type="number" min="0" step="any" required></label><button type="submit">Save price</button></form><h3>Caps</h3><p class="meta">A cap pauses before the next model call and asks you. It does not stop an edit that already started. Always for task does not skip this question.</p>'+capList+'<form id="usageCapForm"><label>Per-day token cap<input name="dayTokens" type="number" min="0" step="1" value="'+(day.maxTokens??'')+'" placeholder="blank means no cap"></label><label>Per-day cost cap USD<input name="dayCost" type="number" min="0" step="any" value="'+(day.maxCostUsd??'')+'" placeholder="blank means no cap"></label><label>Bot<select name="botId"><option value="">No bot cap</option>'+botOptions+'</select></label><label>Bot token cap<input name="botTokens" type="number" min="0" step="1" placeholder="blank means no cap"></label><label>Bot cost cap USD<input name="botCost" type="number" min="0" step="any" placeholder="blank means no cap"></label><button type="submit">Save caps</button></form><div id="usageStatus" class="status"></div>';
+  box.querySelectorAll('[data-price-remove]').forEach(el=>el.addEventListener('click',async()=>{
+    try{await api('/api/settings',{modelPrices:prices.filter(p=>p.model!==el.dataset.priceRemove)});lastUsageSig='';await load()}catch(err){const status=document.querySelector('#usageStatus');if(status)status.textContent=err.message}
+  }));
+  const priceForm=document.querySelector('#usagePriceForm');
+  if(priceForm)priceForm.addEventListener('submit',async e=>{
+    e.preventDefault();
+    const f=new FormData(e.target);
+    const model=String(f.get('model')||'').trim();
+    const next=prices.filter(p=>p.model!==model).concat([{model,inputPerMillion:Number(f.get('inputPerMillion')),outputPerMillion:Number(f.get('outputPerMillion'))}]);
+    try{await api('/api/settings',{modelPrices:next});lastUsageSig='';const status=document.querySelector('#usageStatus');if(status)status.textContent='Price saved.';await load()}catch(err){const status=document.querySelector('#usageStatus');if(status)status.textContent=err.message}
+  });
+  const capForm=document.querySelector('#usageCapForm');
+  if(capForm)capForm.addEventListener('submit',async e=>{
+    e.preventDefault();
+    const f=new FormData(e.target);
+    const dayTokens=String(f.get('dayTokens')||'');
+    const dayCost=String(f.get('dayCost')||'');
+    const perDay={};
+    if(dayTokens!=='')perDay.maxTokens=Number(dayTokens);
+    if(dayCost!=='')perDay.maxCostUsd=Number(dayCost);
+    const botId=String(f.get('botId')||'');
+    let perBot=(caps.perBot||[]).slice();
+    if(botId){
+      const botTokens=String(f.get('botTokens')||'');
+      const botCost=String(f.get('botCost')||'');
+      const entry={botId};
+      if(botTokens!=='')entry.maxTokens=Number(botTokens);
+      if(botCost!=='')entry.maxCostUsd=Number(botCost);
+      perBot=perBot.filter(item=>item.botId!==botId);
+      if(entry.maxTokens!==undefined||entry.maxCostUsd!==undefined)perBot.push(entry);
+    }
+    const body={perBot};
+    if(perDay.maxTokens!==undefined||perDay.maxCostUsd!==undefined)body.perDay=perDay;
+    try{await api('/api/settings',{usageCaps:body});lastUsageSig='';const status=document.querySelector('#usageStatus');if(status)status.textContent='Caps saved.';await load()}catch(err){const status=document.querySelector('#usageStatus');if(status)status.textContent=err.message}
+  });
+}
 function renderChannels(pBots){
   const box=document.querySelector('#channelPanel');
   if(!box)return;
@@ -2190,6 +2298,7 @@ function draw(){
   }
 
   renderChannels(pBots);
+  renderUsage(pBots);
   drawChatFeed(activeProj,pBots,pTasks);
   drawComputer(pBots);
   drawDetail(pTasks);
@@ -2665,6 +2774,7 @@ const paletteCommands=[
   {id:'spawn',label:'Spawn Team',run:()=>document.querySelector('#spawnTeamBtn').click()},
   {id:'bot',label:'Add Bot',run:()=>document.querySelector('#openNewBotBtn').click()},
   {id:'settings',label:'Settings',run:()=>document.querySelector('#openSettingsBtn').click()},
+  {id:'usage',label:'Usage',run:()=>setTab('usage')},
   {id:'credits',label:'Credits',run:()=>setTab('credits')},
   {id:'routines',label:'Routines',run:()=>setTab('routines')},
   {id:'connectors',label:'Connectors',run:()=>setTab('connectors')},

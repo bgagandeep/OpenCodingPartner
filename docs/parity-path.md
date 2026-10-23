@@ -34,6 +34,7 @@ Each item has a test. None of them starts Xvnc, dials a model, or sends a channe
 12. **WhatsApp drafts.** Reach into WhatsApp writes a draft and a local outbox. Allowing the draft still sends nothing.
 13. **Pages.** A person can save a page. A secret-shaped token is redacted before it is stored.
 14. **Coder confinement on request.** `OCP_CODER_CONFINEMENT=workspace` builds a bubblewrap launch that bind-mounts the workspace and drops the network. If bubblewrap is missing, the launch refuses. The default launch still uses the operator's OS permissions.
+15. **A start guide and a loopback Docker publish.** With no bot yet, the page shows the guide. Saving a model id and opening the desk creates the starter teammates and one standing responsibility. `OCP_DOCKER_BIND=bridge` is the only way to listen beyond loopback, and a foreign `Host` is still refused. The compose file publishes `127.0.0.1:4317` only.
 
 ## Where we already match
 
@@ -47,7 +48,7 @@ Each item has a test. None of them starts Xvnc, dials a model, or sends a channe
 | Secrets stay out of the transcript | Vault fills by item name. A sign-in, 2FA, or captcha page is not typed by the bot. Audit rows redact `sk-` keys. |
 | Skills and routines | Skills are instructions with a "When to use" line. Routines take five-field cron plus an IANA timezone, or an interval, or an event. A routine can name a responsibility id. |
 | Reach, as a draft | Slack and Telegram drafts stay in the channel log until a person sends them. Mail waits on a draft card. |
-| Loopback | The process refuses `0.0.0.0`. A foreign `Origin` or `Host` is refused. |
+| Loopback | The process refuses `0.0.0.0` unless `OCP_DOCKER_BIND=bridge`. A foreign `Origin` or `Host` is refused. Docker compose publishes `127.0.0.1:4317` only. |
 
 ## Not now
 
@@ -60,7 +61,7 @@ These hosted-operations surfaces are not yet in this tree.
 - A container runtime harder than bubblewrap, such as gVisor.
 - A Helm chart.
 - A database inside the app image.
-- Their hosted model, their hosted accounts, and a public signup. The app still binds to loopback only.
+- Their hosted model, their hosted accounts, and a public signup. The compose file publishes `127.0.0.1:4317` only.
 - Standalone OCP Coder without `OCP_CODER_CONFINEMENT=workspace`. That default still uses the operator's OS permissions.
 
 ## What we will not say

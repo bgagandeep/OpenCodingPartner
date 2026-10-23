@@ -75,6 +75,14 @@ corepack pnpm test
 
 ## Quick Start
 
+### Start here
+
+On this machine: `sh scripts/start-local.sh`
+
+In Docker, published on loopback only: `sh scripts/start-docker.sh`
+
+Open **<http://127.0.0.1:4317>**. The start guide asks for a model id and can open a desk (lead, coder, reviewer, security, and computer) with one standing responsibility on the coder. `ocp onboard` prints both commands. The full first hour is [Onboarding](docs/onboarding.md).
+
 ### 1. Start the Local Web Dashboard
 
 Export your model provider API key (for example `OPENROUTER_API_KEY` or `LITELLM_API_KEY`) and start the local web application:

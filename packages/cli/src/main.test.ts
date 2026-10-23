@@ -3398,6 +3398,25 @@ test("a partner orchestration write lands in the partner workspace", async () =>
   }
 });
 
+test("ocp onboard prints the local and docker start", async () => {
+  let captured = "";
+  const original = process.stdout.write.bind(process.stdout);
+  process.stdout.write = ((chunk: string | Uint8Array, encoding?: BufferEncoding, cb?: (err?: Error | null) => void) => {
+    captured += String(chunk);
+    return original(chunk, encoding, cb);
+  }) as typeof process.stdout.write;
+  try {
+    assert.equal(await main(["onboard"]), 0);
+    assert.equal(await main(["onboard", "--extra"]), 2);
+  } finally {
+    process.stdout.write = original;
+  }
+  assert.match(captured, /scripts\/start-local\.sh/);
+  assert.match(captured, /scripts\/start-docker\.sh/);
+  assert.match(captured, /127\.0\.0\.1:4317/);
+  assert.match(captured, /WhatsApp draft is not sent/);
+});
+
 test("the cli file is the ocp entry when spawned", () => {
   const root = mkdtempSync(path.join(tmpdir(), "ocp-spawn-"));
   try {

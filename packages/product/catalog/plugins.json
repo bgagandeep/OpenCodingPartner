@@ -1,0 +1,496 @@
+[
+  {
+    "id": "github",
+    "name": "GitHub",
+    "description": "Read issues and pull requests through an HTTP MCP server you run. Opening a pull request still waits for a person. Merging stays with a person.",
+    "version": "1.0.0",
+    "minOcpVersion": "0.2.0",
+    "mcpServers": [
+      {
+        "name": "github",
+        "authHeader": "Authorization",
+        "urlField": "mcpUrl"
+      }
+    ],
+    "skills": [
+      {
+        "name": "Work a GitHub issue",
+        "whenToUse": "A GitHub issue should become a reviewed local change.",
+        "body": "1. Read the issue.\n2. Draft a plan and wait for approval.\n3. Do not merge."
+      }
+    ],
+    "secrets": [
+      {
+        "name": "github-token",
+        "kind": "token",
+        "label": "GitHub token from the operator's own account",
+        "storage": "vault"
+      }
+    ],
+    "setupFields": [
+      {
+        "name": "mcpUrl",
+        "label": "HTTP MCP URL for this bot",
+        "kind": "url",
+        "required": true
+      }
+    ],
+    "permissions": [
+      "network",
+      "workspace.read",
+      "draft.message"
+    ],
+    "accounts": [],
+    "checksum": "sha256:37d394de909f1af871201ebbbdddd10a3a7cbbaf3edab9ebeb6e1d0bfa7a5dcf"
+  },
+  {
+    "id": "linear",
+    "name": "Linear",
+    "description": "Read Linear issues through an HTTP MCP server you run. Changing a workflow state waits for approval.",
+    "version": "1.0.0",
+    "minOcpVersion": "0.2.0",
+    "mcpServers": [
+      {
+        "name": "linear",
+        "authHeader": "Authorization",
+        "urlField": "mcpUrl"
+      }
+    ],
+    "skills": [
+      {
+        "name": "Work a Linear issue",
+        "whenToUse": "A Linear issue should become a reviewed local change.",
+        "body": "1. Read the issue.\n2. Draft a plan and wait for approval.\n3. Do not change the workflow state until a person approves."
+      }
+    ],
+    "secrets": [
+      {
+        "name": "linear-token",
+        "kind": "token",
+        "label": "Linear API key from the operator's own account",
+        "storage": "vault"
+      }
+    ],
+    "setupFields": [
+      {
+        "name": "mcpUrl",
+        "label": "HTTP MCP URL for this bot",
+        "kind": "url",
+        "required": true
+      }
+    ],
+    "permissions": [
+      "network",
+      "workspace.read"
+    ],
+    "accounts": [],
+    "checksum": "sha256:d3414ac24bd16e0a0e998d1799560275eb04dff58af4a1fe97b49ed446024f5c"
+  },
+  {
+    "id": "jira",
+    "name": "Jira",
+    "description": "Read Jira issues through an HTTP MCP server you run. Writing or transitioning an issue waits for approval. OCP does not ship an Atlassian app.",
+    "version": "1.0.0",
+    "minOcpVersion": "0.2.0",
+    "mcpServers": [
+      {
+        "name": "jira",
+        "authHeader": "Authorization",
+        "urlField": "mcpUrl"
+      }
+    ],
+    "skills": [
+      {
+        "name": "Work a Jira issue",
+        "whenToUse": "A Jira issue should become a reviewed local change.",
+        "body": "1. Read the issue.\n2. Draft a plan and wait for approval.\n3. Do not transition the issue until a person approves."
+      }
+    ],
+    "secrets": [
+      {
+        "name": "jira-token",
+        "kind": "token",
+        "label": "Jira API token from the operator's own account",
+        "storage": "vault"
+      }
+    ],
+    "setupFields": [
+      {
+        "name": "siteUrl",
+        "label": "Jira site URL",
+        "kind": "url",
+        "required": true
+      },
+      {
+        "name": "email",
+        "label": "Account email",
+        "kind": "text",
+        "required": true
+      },
+      {
+        "name": "mcpUrl",
+        "label": "HTTP MCP URL for this bot",
+        "kind": "url",
+        "required": true
+      }
+    ],
+    "permissions": [
+      "network",
+      "workspace.read"
+    ],
+    "accounts": [],
+    "checksum": "sha256:77b132f002c358fa017f609e28ebdd1f9cb30210d1c839d30e7f2bc2898a7296"
+  },
+  {
+    "id": "confluence",
+    "name": "Confluence",
+    "description": "Read Confluence pages through an HTTP MCP server you run. Writing a page waits for approval.",
+    "version": "1.0.0",
+    "minOcpVersion": "0.2.0",
+    "mcpServers": [
+      {
+        "name": "confluence",
+        "authHeader": "Authorization",
+        "urlField": "mcpUrl"
+      }
+    ],
+    "skills": [
+      {
+        "name": "Read a Confluence page",
+        "whenToUse": "A Confluence page should be read before a local change.",
+        "body": "1. Read the page.\n2. Summarize the parts that affect the change.\n3. Do not write a page until a person approves."
+      }
+    ],
+    "secrets": [
+      {
+        "name": "confluence-token",
+        "kind": "token",
+        "label": "Confluence API token from the operator's own account",
+        "storage": "vault"
+      }
+    ],
+    "setupFields": [
+      {
+        "name": "siteUrl",
+        "label": "Confluence site URL",
+        "kind": "url",
+        "required": true
+      },
+      {
+        "name": "mcpUrl",
+        "label": "HTTP MCP URL for this bot",
+        "kind": "url",
+        "required": true
+      }
+    ],
+    "permissions": [
+      "network",
+      "workspace.read"
+    ],
+    "accounts": [],
+    "checksum": "sha256:f3306bf656ae057f5a8a84f7066bceea94c183f16c449c7727522fc069ca51fa"
+  },
+  {
+    "id": "slack-drafts",
+    "name": "Slack drafts",
+    "description": "Draft a Slack reply with the bot token already saved in Settings. A person still decides before anything leaves this machine. This plugin adds no send tool.",
+    "version": "1.0.0",
+    "minOcpVersion": "0.2.0",
+    "skills": [
+      {
+        "name": "Draft a Slack reply",
+        "whenToUse": "A Slack reply should stay a draft until a person allows it.",
+        "body": "1. Draft the reply.\n2. Leave it as a draft.\n3. A person uses the channel Allow path. This skill does not send."
+      }
+    ],
+    "secrets": [],
+    "setupFields": [],
+    "permissions": [
+      "draft.message"
+    ],
+    "accounts": [],
+    "checksum": "sha256:7a5892f9bfccdf2058cd2d5ecb3c5411b5ce6ace2014321662189e5e101001ec"
+  },
+  {
+    "id": "telegram-drafts",
+    "name": "Telegram drafts",
+    "description": "Draft a Telegram reply with the bot token already saved in Settings. A person still decides before anything leaves this machine.",
+    "version": "1.0.0",
+    "minOcpVersion": "0.2.0",
+    "skills": [
+      {
+        "name": "Draft a Telegram reply",
+        "whenToUse": "A Telegram reply should stay a draft until a person allows it.",
+        "body": "1. Draft the reply.\n2. Leave it as a draft.\n3. A person uses the channel Allow path. This skill does not send."
+      }
+    ],
+    "secrets": [],
+    "setupFields": [],
+    "permissions": [
+      "draft.message"
+    ],
+    "accounts": [],
+    "checksum": "sha256:0a523644cfb354b370c458c34bde192402ca9aed13ee7775e550f4d11736e658"
+  },
+  {
+    "id": "notion",
+    "name": "Notion",
+    "description": "Read Notion pages the operator's integration can see. Writing a page waits for approval. OCP does not host Notion.",
+    "version": "1.0.0",
+    "minOcpVersion": "0.2.0",
+    "mcpServers": [
+      {
+        "name": "notion",
+        "authHeader": "Authorization",
+        "urlField": "mcpUrl"
+      }
+    ],
+    "skills": [
+      {
+        "name": "Read a Notion page",
+        "whenToUse": "A Notion page should be read before a local change.",
+        "body": "1. Read the page the integration can see.\n2. Summarize what matters to the change.\n3. Do not write a page until a person approves."
+      }
+    ],
+    "secrets": [
+      {
+        "name": "notion-token",
+        "kind": "token",
+        "label": "Notion integration token from the operator's own account",
+        "storage": "vault"
+      }
+    ],
+    "setupFields": [
+      {
+        "name": "mcpUrl",
+        "label": "HTTP MCP URL for this bot",
+        "kind": "url",
+        "required": true
+      }
+    ],
+    "permissions": [
+      "network",
+      "workspace.read"
+    ],
+    "accounts": [],
+    "checksum": "sha256:513a9bf3a9afbb5d8e90b130ea7c133b1c469e60ea368ebd02d452a3ccfa7617"
+  },
+  {
+    "id": "google",
+    "name": "Google",
+    "description": "Use the Google account connected in Accounts. Gmail drafts stay drafts. A person sends from the draft card. A send scope is not requested.",
+    "version": "1.0.0",
+    "minOcpVersion": "0.2.0",
+    "skills": [
+      {
+        "name": "Use the connected Google account",
+        "whenToUse": "A task needs the Google account the operator connected in Accounts.",
+        "body": "1. Use the Google account the operator connected in Accounts.\n2. Gmail writes stay draft cards.\n3. Do not request a send scope.\n4. Stop for approval before creating a calendar event."
+      }
+    ],
+    "secrets": [],
+    "setupFields": [],
+    "permissions": [
+      "account.read",
+      "account.draft"
+    ],
+    "accounts": [
+      "google"
+    ],
+    "checksum": "sha256:f095de23ad9995808e8a0e5201506d8c6c475328179a97444087790e64089a17"
+  },
+  {
+    "id": "microsoft",
+    "name": "Microsoft",
+    "description": "Use the Microsoft account connected in Accounts. Outlook drafts stay drafts. A person sends from the draft card. Full file write scope is not requested.",
+    "version": "1.0.0",
+    "minOcpVersion": "0.2.0",
+    "skills": [
+      {
+        "name": "Use the connected Microsoft account",
+        "whenToUse": "A task needs the Microsoft account the operator connected in Accounts.",
+        "body": "1. Use the Microsoft account the operator connected in Accounts.\n2. Outlook writes stay draft cards.\n3. Do not request full file write scope.\n4. A person sends mail from the draft card."
+      }
+    ],
+    "secrets": [],
+    "setupFields": [],
+    "permissions": [
+      "account.read",
+      "account.draft"
+    ],
+    "accounts": [
+      "microsoft"
+    ],
+    "checksum": "sha256:3a8031db2b34eb8633405cad7ce8e5872e0da88fb2f88f102aaa594e5d4249a4"
+  },
+  {
+    "id": "figma",
+    "name": "Figma",
+    "description": "Read Figma files through an HTTP MCP server you run, using a personal access token you provide.",
+    "version": "1.0.0",
+    "minOcpVersion": "0.2.0",
+    "mcpServers": [
+      {
+        "name": "figma",
+        "authHeader": "Authorization",
+        "urlField": "mcpUrl"
+      }
+    ],
+    "skills": [
+      {
+        "name": "Read a Figma file",
+        "whenToUse": "A Figma file should be read before a local change.",
+        "body": "1. Read the file the token can see.\n2. Summarize the frames that matter.\n3. Do not change the file."
+      }
+    ],
+    "secrets": [
+      {
+        "name": "figma-token",
+        "kind": "token",
+        "label": "Figma personal access token from the operator's own account",
+        "storage": "vault"
+      }
+    ],
+    "setupFields": [
+      {
+        "name": "mcpUrl",
+        "label": "HTTP MCP URL for this bot",
+        "kind": "url",
+        "required": true
+      }
+    ],
+    "permissions": [
+      "network"
+    ],
+    "accounts": [],
+    "checksum": "sha256:1e9d21b34363baf41e30a6e73e6575756a3dd1d77a82088084b7eb08b5269072"
+  },
+  {
+    "id": "sentry",
+    "name": "Sentry",
+    "description": "Read Sentry issues through an HTTP MCP server you run. Resolving an issue waits for approval.",
+    "version": "1.0.0",
+    "minOcpVersion": "0.2.0",
+    "mcpServers": [
+      {
+        "name": "sentry",
+        "authHeader": "Authorization",
+        "urlField": "mcpUrl"
+      }
+    ],
+    "skills": [
+      {
+        "name": "Read a Sentry issue",
+        "whenToUse": "A Sentry issue should be read before a local change.",
+        "body": "1. Read the issue.\n2. Draft a plan and wait for approval.\n3. Do not resolve the issue until a person approves."
+      }
+    ],
+    "secrets": [
+      {
+        "name": "sentry-token",
+        "kind": "token",
+        "label": "Sentry auth token from the operator's own account",
+        "storage": "vault"
+      }
+    ],
+    "setupFields": [
+      {
+        "name": "mcpUrl",
+        "label": "HTTP MCP URL for this bot",
+        "kind": "url",
+        "required": true
+      }
+    ],
+    "permissions": [
+      "network"
+    ],
+    "accounts": [],
+    "checksum": "sha256:1530795b4bbd308d66ff8fed500e5ce95e5e8d786d0d4cbce9466e85db5648d9"
+  },
+  {
+    "id": "pagerduty",
+    "name": "PagerDuty",
+    "description": "Read PagerDuty incidents through an HTTP MCP server you run. Acknowledging or paging waits for approval.",
+    "version": "1.0.0",
+    "minOcpVersion": "0.2.0",
+    "mcpServers": [
+      {
+        "name": "pagerduty",
+        "authHeader": "Authorization",
+        "urlField": "mcpUrl"
+      }
+    ],
+    "skills": [
+      {
+        "name": "Read a PagerDuty incident",
+        "whenToUse": "A PagerDuty incident should be read before a local change.",
+        "body": "1. Read the incident.\n2. Draft a plan and wait for approval.\n3. Do not acknowledge or page until a person approves."
+      }
+    ],
+    "secrets": [
+      {
+        "name": "pagerduty-token",
+        "kind": "token",
+        "label": "PagerDuty API token from the operator's own account",
+        "storage": "vault"
+      }
+    ],
+    "setupFields": [
+      {
+        "name": "mcpUrl",
+        "label": "HTTP MCP URL for this bot",
+        "kind": "url",
+        "required": true
+      }
+    ],
+    "permissions": [
+      "network"
+    ],
+    "accounts": [],
+    "checksum": "sha256:1b116b8e305f67b01c7df5fa46ea134fe4529816bd85ab08704ea9768afdf608"
+  },
+  {
+    "id": "teams-drafts",
+    "name": "Teams drafts",
+    "description": "Draft a Teams reach message. Allowing it still writes the local outbox and sends nothing. No Graph application is included.",
+    "version": "1.0.0",
+    "minOcpVersion": "0.2.0",
+    "draftOnly": true,
+    "skills": [
+      {
+        "name": "Draft a Teams message",
+        "whenToUse": "A Teams reach message should stay a local draft.",
+        "body": "1. Use the existing Teams reach draft.\n2. Allowing it still writes the local outbox and sends nothing.\n3. Do not claim a message was delivered."
+      }
+    ],
+    "secrets": [],
+    "setupFields": [],
+    "permissions": [
+      "draft.message"
+    ],
+    "accounts": [],
+    "checksum": "sha256:5afc6da09d88a9009bf810fcc932756da257587c5ab1d48be6dd8516e8306331"
+  },
+  {
+    "id": "whatsapp-drafts",
+    "name": "WhatsApp drafts",
+    "description": "Draft a WhatsApp message. Allowing it still sends nothing. No Cloud API client is included.",
+    "version": "1.0.0",
+    "minOcpVersion": "0.2.0",
+    "draftOnly": true,
+    "skills": [
+      {
+        "name": "Draft a WhatsApp message",
+        "whenToUse": "A WhatsApp message should stay a local draft.",
+        "body": "1. Use the existing WhatsApp draft.\n2. Allowing it still sends nothing.\n3. Do not claim a message was delivered."
+      }
+    ],
+    "secrets": [],
+    "setupFields": [],
+    "permissions": [
+      "draft.message"
+    ],
+    "accounts": [],
+    "checksum": "sha256:038e8a152a96be012d58da3896eb6f603bb432f8eb646eee35963a8ee3621254"
+  }
+]

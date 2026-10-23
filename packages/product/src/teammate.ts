@@ -61,7 +61,7 @@ export interface GateContext {
   initiator?: "person" | "routine";
 }
 
-const TOOL_NAME = /^[A-Za-z0-9_.:-]{1,80}$/;
+const TOOL_NAME = /^[A-Za-z0-9_.:/-]{1,80}$/;
 
 function file(root: string, name: string): string {
   return path.join(root, name);

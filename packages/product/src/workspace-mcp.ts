@@ -53,7 +53,7 @@ import { runWorkspaceCommand, runWorkspaceTests } from "./sandbox-run.js";
 import { pageStoredToolOutput, toolOutputDataDir } from "./tool-trim.js";
 import { fillVaultLogin, type VaultChallenge } from "./vault.js";
 import { ACCOUNT_TOOL_DEFS, isAccountTool, runAccountTool } from "./accounts.js";
-import { skillCatalog } from "./skills.js";
+import { visibleSkillCatalog } from "./plugins.js";
 import { gateTool, recordAudit } from "./teammate.js";
 
 const PROACTIVE_ALLOWED = new Set([
@@ -253,7 +253,7 @@ async function executeToolCall(root: string, name: string, args: Record<string, 
     if (viaDiscovery) return mcpToolResult({ ok: false, detail: "A discovery tool cannot call another discovery tool." });
     const query = (typeof args.query === "string" ? args.query : "").trim().toLowerCase();
     const catalog = await safeExternalCatalog();
-    const skills = await skillCatalog(resolveDataDir()).catch(() => []);
+    const skills = await visibleSkillCatalog(resolveDataDir(), process.env.OCP_ACTOR_BOT_ID?.trim() || undefined).catch(() => []);
     const scored = [...DIRECT_TOOLS.map((tool) => ({ name: tool.name, description: tool.description, body: undefined as string | undefined })), ...ACCOUNT_TOOL_DEFS.map((tool) => ({ name: tool.name, description: tool.description, body: undefined as string | undefined })), ...skills, ...catalog.tools.map((tool) => ({ name: tool.qualifiedName, description: tool.description, body: undefined as string | undefined }))]
       .map((tool) => {
         const hay = `${tool.name} ${tool.description}`.toLowerCase();
@@ -276,7 +276,7 @@ async function executeToolCall(root: string, name: string, args: Record<string, 
         : [];
     const names = rawNames.filter((n): n is string => typeof n === "string").slice(0, 10);
     const catalog = await safeExternalCatalog();
-    const skills = await skillCatalog(resolveDataDir()).catch(() => []);
+    const skills = await visibleSkillCatalog(resolveDataDir(), process.env.OCP_ACTOR_BOT_ID?.trim() || undefined).catch(() => []);
     const described = [
       ...DIRECT_TOOLS.filter((tool) => names.includes(tool.name)),
       ...ACCOUNT_TOOL_DEFS.filter((tool) => names.includes(tool.name)),

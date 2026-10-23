@@ -107,8 +107,15 @@ body {
 
 .theme-btn {
   width: 32px; height: 32px; border-radius: 50%;
-  border: 1px solid var(--line); background: transparent; cursor: pointer;
-  transition: transform 0.4s var(--ease);
+  border: 1px solid var(--line); background: var(--accent-soft); cursor: pointer;
+  transition: transform 0.4s var(--ease), background 0.35s var(--ease);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+}
+.theme-btn::after {
+  content: "";
+  display: block; width: 10px; height: 10px; margin: 10px auto;
+  border-radius: 50%; background: var(--text);
+  box-shadow: -3px -2px 0 0 var(--bg);
 }
 .theme-btn:hover { transform: scale(1.06); }
 

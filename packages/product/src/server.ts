@@ -90,6 +90,7 @@ import { deleteMcpSecret, listMcpSecretKeys, mcpSecretKey, readMcpSecret, writeM
 import { createVaultItem, deleteVaultItem, publicVault, VaultError } from "./vault.js";
 import { parseActionRules } from "./action-rules.js";
 import { createSkill, deleteSkill, exportSkillPack, importSkillGit, importSkillZip, listSkills, SkillError, updateSkill } from "./skills.js";
+import { installPlugin, listPlugins, PluginError, uninstallPlugin } from "./plugins.js";
 import { approveIssuePlan, IssuePrError, listIssueRuns, openIssuePullRequest, runIssueTests, startIssueRun } from "./issue-pr.js";
 import { consumeWebhookReplay, followingRunAt, readWebhookSecret, verifyRoutineWebhook } from "./cron.js";
 import { AccountError, completeAccountLogin, deliverMailDraft, disconnectAccount, GOOGLE_SCOPES, MICROSOFT_SCOPES, publicAccounts, saveAccountClient, startAccountLogin } from "./accounts.js";
@@ -607,6 +608,15 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
       sendJson(response, 200, { skills: await listSkills(root) });
       return;
     }
+    if (request.method === "GET" && url.pathname === "/api/plugins") {
+      try {
+        sendJson(response, 200, await listPlugins(root));
+      } catch (error) {
+        const status = error instanceof PluginError ? error.status : 500;
+        sendJson(response, status, { error: error instanceof Error ? error.message : "Plugins could not be loaded." });
+      }
+      return;
+    }
     if (request.method === "GET" && url.pathname === "/api/vault") {
       sendJson(response, 200, await publicVault(root, env));
       return;
@@ -933,6 +943,28 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
       } catch (error) {
         const status = error instanceof SkillError ? error.status : 400;
         sendJson(response, status, { error: error instanceof Error ? error.message : "Nothing was imported." });
+      }
+      return;
+    }
+    const pluginInstallMatch = /^\/api\/plugins\/([^/]+)\/install$/.exec(url.pathname);
+    if (request.method === "POST" && pluginInstallMatch) {
+      try {
+        const result = await installPlugin(root, decodeURIComponent(pluginInstallMatch[1] ?? ""), body, { fetchImpl, env });
+        sendJson(response, 200, result);
+      } catch (error) {
+        const status = error instanceof PluginError ? error.status : 400;
+        sendJson(response, status, { error: error instanceof Error ? error.message : "Plugin install failed." });
+      }
+      return;
+    }
+    const pluginUninstallMatch = /^\/api\/plugins\/([^/]+)\/uninstall$/.exec(url.pathname);
+    if (request.method === "POST" && pluginUninstallMatch) {
+      try {
+        const result = await uninstallPlugin(root, decodeURIComponent(pluginUninstallMatch[1] ?? ""), body, { env });
+        sendJson(response, 200, result);
+      } catch (error) {
+        const status = error instanceof PluginError ? error.status : 400;
+        sendJson(response, status, { error: error instanceof Error ? error.message : "Plugin uninstall failed." });
       }
       return;
     }
@@ -2219,6 +2251,13 @@ button.chip:hover{background:var(--chip-hover);box-shadow:none}
 .nav-item.selected button.ghost:hover{background:var(--hover)}
 .nav-item.selected .orb{box-shadow:var(--selection-orb)}
 .nav-item .nav-main{display:flex;align-items:center;gap:8px;min-width:0;flex:1}
+.plugin-card{flex-direction:column;align-items:stretch;cursor:default;gap:6px;min-width:0}
+.plugin-card>*{min-width:0;max-width:100%}
+.plugin-card .nav-main{flex-wrap:wrap}
+.plugin-card strong,.plugin-card p,.plugin-card .meta{white-space:normal;overflow-wrap:anywhere}
+.plugin-card p{margin:0}
+.plugin-card form,.plugin-card details{display:grid;gap:6px}
+.plugin-card summary{cursor:pointer}
 .nav-item strong{font-size:14px;font-weight:590;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .nav-actions{display:none;gap:2px}
 .nav-item:hover .nav-actions,.nav-item:focus-within .nav-actions{display:flex}
@@ -2500,6 +2539,7 @@ li{margin:4px 0}
       <div class="tab-group">
         <div class="tab-group-label">Connect</div>
         <button type="button" class="tab" data-tab="connectors">Connectors</button>
+        <button type="button" class="tab" data-tab="plugins">Plugins</button>
         <button type="button" class="tab" data-tab="channels">Channels</button>
         <button type="button" class="tab" data-tab="accounts">Accounts</button>
         <button type="button" class="tab" data-tab="vault">Vault</button>
@@ -2769,6 +2809,15 @@ li{margin:4px 0}
         <div id="connectorList" class="nav-list mt-sm"></div>
       </div>
 
+      <div id="tab-plugins" class="tab-pane hidden">
+        <h2>Plugins</h2>
+        <p class="sub">Install a plugin on one bot. Skills and connectors stay on that bot. A checksum proves the manifest. It does not constrain the remote server after install.</p>
+        <p class="meta">Drafts still wait for a person. Allowing a WhatsApp or Teams draft still sends nothing.</p>
+        <label>Search<input id="pluginSearch" placeholder="Search plugins" autocomplete="off"></label>
+        <div id="pluginStatus" class="status"></div>
+        <div id="pluginList" class="nav-list mt-sm"></div>
+      </div>
+
       <div id="tab-channels" class="tab-pane hidden">
         <h2>Channels</h2>
         <p class="sub">Slack and Telegram messages become tasks for the assigned bot. Replies stay as drafts until you send them. Nothing is sent automatically. Tokens stay in Settings.</p>
@@ -2862,7 +2911,7 @@ li{margin:4px 0}
   <div id="paletteList" role="listbox"></div>
 </div>
 
-<script nonce="${token}">const TOKEN='${token}',DEFAULT_WS='${escapeJs(process.cwd())}';let state={projects:[],bots:[],tasks:[],routines:[],channels:{},channelLog:[],handoffs:[],skills:[],issueRuns:[],vault:{items:[]},accounts:{},activeBrainLabel:'',activeModel:''},activeWorkspace='',selected='',conversationBot='',computerBot='',computerMeta=null,bootstrapped=false,activeTab='detail',centerView='chat',lastClickPt=null,renderedCompBot='',lastFrameSrc='',lastSyncedUrl='',lastSidebarSig='',lastChatSig='',lastDetailSig='',keyBuffer='',keyTimer=null,lastCompInteract=0,compQueue=Promise.resolve(),paletteIndex=0,sseLive=false,connectorBot='';
+<script nonce="${token}">const TOKEN='${token}',DEFAULT_WS='${escapeJs(process.cwd())}';let state={projects:[],bots:[],tasks:[],routines:[],channels:{},channelLog:[],handoffs:[],skills:[],plugins:[],issueRuns:[],vault:{items:[]},accounts:{},activeBrainLabel:'',activeModel:''},activeWorkspace='',selected='',conversationBot='',computerBot='',computerMeta=null,bootstrapped=false,activeTab='detail',centerView='chat',lastClickPt=null,renderedCompBot='',lastFrameSrc='',lastSyncedUrl='',lastSidebarSig='',lastChatSig='',lastDetailSig='',keyBuffer='',keyTimer=null,lastCompInteract=0,compQueue=Promise.resolve(),paletteIndex=0,sseLive=false,connectorBot='';
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const googleSignInNote='Google and Microsoft connectors use an OAuth client you paste in Accounts. OCP ships no OAuth client. Take Control on this virtual computer to sign in on a page yourself.';
 const isAgentRuntime=r=>r==='ocp-agent'||r==='hermes';
@@ -3226,6 +3275,7 @@ function setTab(tabName){
   document.querySelectorAll('.tab-pane').forEach(pane=>pane.classList.toggle('hidden',pane.id!=='tab-'+tabName));
 }
 document.querySelectorAll('.tab').forEach(btn=>btn.addEventListener('click',()=>setTab(btn.dataset.tab)));
+document.querySelector('#pluginSearch').addEventListener('input',()=>renderPlugins());
 document.querySelector('#viewChatBtn').addEventListener('click',()=>setCenterView('chat'));
 document.querySelector('#viewComputerBtn').addEventListener('click',()=>setCenterView('computer'));
 document.querySelector('#openComputerFromChatBtn').addEventListener('click',()=>setCenterView('computer'));
@@ -3347,6 +3397,7 @@ async function load(){
   if(!activeWorkspace||(!workspaces.includes(activeWorkspace)&&!state.bots.some(b=>b.workspace===activeWorkspace))){
     activeWorkspace=workspaces[0]||state.bots[0]?.workspace||DEFAULT_WS;
   }
+  try{const catalog=await api('/api/plugins');state.plugins=catalog.plugins||[]}catch{state.plugins=[]}
   draw();
   refreshTeammate().catch(()=>{});
 }
@@ -3494,6 +3545,51 @@ function draw(){
   drawComputer(pBots);
   drawDetail(pTasks);
   renderConnectors(pBots);
+  renderPlugins();
+}
+
+function renderPlugins(){
+  const box=document.querySelector('#pluginList');
+  if(!box)return;
+  const q=(document.querySelector('#pluginSearch').value||'').trim().toLowerCase();
+  const bots=projectBots();
+  const options=bots.map(b=>'<option value="'+esc(b.id)+'">'+esc(b.name)+'</option>').join('')||'<option value="">Add a bot first</option>';
+  const plugins=(state.plugins||[]).filter(p=>!q||(p.name+' '+(p.description||'')).toLowerCase().includes(q));
+  if(!plugins.length){box.innerHTML='<div class="meta">'+(q?'No plugins match.':'No plugins are available.')+'</div>';return}
+  box.innerHTML=plugins.map(p=>{
+    const draft=p.draftOnly?' <span class="pill">Draft only</span>':'';
+    const installed=(p.installedBotIds||[]).some(id=>bots.some(b=>b.id===id))?' <span class="pill">Installed</span>':'';
+    const perms=(p.permissions||[]).map(name=>'<span class="pill">'+esc(name)+'</span>').join(' ');
+    const fields=(p.setupFields||[]).map(field=>'<label>'+esc(field.label)+'<input name="field:'+esc(field.name)+'" type="'+(field.kind==='url'?'url':'text')+'"'+(field.required?' required':'')+'></label>').join('');
+    const secrets=(p.secrets||[]).map(secret=>'<label>'+esc(secret.label)+'<input type="password" name="secret:'+esc(secret.name)+'" autocomplete="off"></label>').join('');
+    const accounts=(p.accounts||[]).length?'<p class="meta">Uses the '+esc(p.accounts.join(' and '))+' account already saved in Accounts. This plugin does not add another OAuth client.</p>':'';
+    const skills=(p.skillNames||[]).length?'<div class="meta">Skill: '+esc(p.skillNames.join(', '))+'</div>':'';
+    return '<div class="nav-item plugin-card" data-plugin="'+esc(p.id)+'"><div class="nav-main"><strong>'+esc(p.name)+'</strong>'+draft+installed+' <span class="pill">Shipped</span></div><div class="meta">'+esc(p.version)+' · '+esc(p.checksumPrefix)+'</div><p>'+esc(p.description)+'</p>'+skills+'<div class="meta">'+perms+'</div>'+accounts+'<details><summary>Install</summary><form data-plugin-install="'+esc(p.id)+'"><label>Bot<select name="botId" required>'+options+'</select></label>'+fields+secrets+'<button type="submit">Install</button></form></details><details><summary>Uninstall</summary><form data-plugin-uninstall="'+esc(p.id)+'"><label>Bot<select name="botId" required>'+options+'</select></label><label><input type="checkbox" name="deleteSecrets"> also delete saved secrets</label><button type="submit" class="secondary">Uninstall</button></form></details></div>';
+  }).join('');
+  box.querySelectorAll('[data-plugin-install]').forEach(form=>form.addEventListener('submit',async e=>{
+    e.preventDefault();
+    const fields={};const secrets={};
+    new FormData(form).forEach((value,key)=>{
+      if(key.indexOf('field:')===0)fields[key.slice(6)]=String(value);
+      else if(key.indexOf('secret:')===0&&String(value))secrets[key.slice(7)]=String(value);
+    });
+    const status=document.querySelector('#pluginStatus');
+    try{
+      await api('/api/plugins/'+encodeURIComponent(form.dataset.pluginInstall)+'/install',{botId:form.elements.botId.value,fields,secrets});
+      if(status)status.textContent='Installed on this bot.';
+      await load();
+    }catch(err){if(status)status.textContent=err.message}
+  }));
+  box.querySelectorAll('[data-plugin-uninstall]').forEach(form=>form.addEventListener('submit',async e=>{
+    e.preventDefault();
+    const status=document.querySelector('#pluginStatus');
+    try{
+      const result=await api('/api/plugins/'+encodeURIComponent(form.dataset.pluginUninstall)+'/uninstall',{botId:form.elements.botId.value,deleteSecrets:form.elements.deleteSecrets.checked});
+      const kept=result.keptSkills&&result.keptSkills.length?' Kept edited skills: '+result.keptSkills.join(', ')+'.':'';
+      if(status)status.textContent='Uninstalled.'+kept;
+      await load();
+    }catch(err){if(status)status.textContent=err.message}
+  }));
 }
 
 function renderConnectors(pBots){

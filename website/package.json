@@ -1,0 +1,12 @@
+{
+  "name": "opencodingpartner-website",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Public marketing site for Open Coding Partner",
+  "scripts": {
+    "start": "npx --yes serve@14.2.4 -s . -l ${PORT:-8080}"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

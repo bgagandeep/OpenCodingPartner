@@ -69,6 +69,45 @@
     featureList.classList.add("is-visible");
   }
 
+  /* Studio assets from sibling session (website/assets/) */
+  async function probeAsset(path) {
+    try {
+      const res = await fetch(path, { method: "HEAD" });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  }
+
+  (async function loadHeroMedia() {
+    const wrap = document.getElementById("heroMedia");
+    const video = document.getElementById("heroVideo");
+    const picture = document.getElementById("heroPicture");
+    if (!wrap) return;
+
+    const hasVideo = await probeAsset("/assets/studio-demo.mp4");
+    const hasShot = await probeAsset("/assets/hero-studio.webp");
+    if (!hasVideo && !hasShot) return;
+
+    wrap.hidden = false;
+    wrap.classList.remove("hidden");
+    wrap.classList.add("is-visible");
+
+    if (hasVideo && video) {
+      video.src = "/assets/studio-demo.mp4";
+      video.style.display = "block";
+      if (picture) picture.style.display = "none";
+      try {
+        await video.play();
+      } catch {
+        /* autoplay blocked — poster still shows */
+      }
+    } else if (picture) {
+      picture.style.display = "block";
+      if (video) video.style.display = "none";
+    }
+  })();
+
   /* Animated bot icons */
   const BOTS = [
     { name: "OCP Coder", role: "Coding", state: "working", hue: 195 },

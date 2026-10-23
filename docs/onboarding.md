@@ -12,7 +12,7 @@ Open Coding Partner is a local agentic coding partner. You run it on your machin
 ## What this install does not include
 
 - A model. There is no default model. The header shows **No model configured** until you set one.
-- A hosted account, a public website, or a signup. The server refuses to bind to anything except `127.0.0.1`, `localhost`, or `::1`.
+- A hosted account, a public website, or a signup. The server refuses a public bind. Docker may listen on all container interfaces only when `OCP_DOCKER_BIND=bridge`, and the compose file still publishes `127.0.0.1:4317` only.
 - A bundled OAuth client. Google and Microsoft connectors use a client you create. See [OAuth setup](oauth-setup.md).
 - Voice and meetings. Those are not now.
 - WhatsApp delivery. A WhatsApp reach is a draft. Allowing it still sends nothing.
@@ -28,6 +28,30 @@ Ads are off. Payments are off. Seats and credit packs in Settings are design onl
 - An API key for OpenRouter, or a local OpenAI-compatible server such as Ollama on `http://127.0.0.1:11434/v1`.
 - Optional: Docker, when you want container isolation for **OCP Agent** terminal commands. Without Docker, create bots with host isolation and accept that those commands run on the host.
 - Optional, for the virtual computer on Linux: `Xvnc`, `xdotool`, `ffmpeg`, and Chrome or Chromium. On macOS the desktop tools are built in, and Screen Recording plus Accessibility must be granted.
+
+## Two ways to start
+
+On this machine:
+
+```bash
+git clone https://github.com/bgagandeep/OpenCodingPartner.git
+cd OpenCodingPartner
+sh scripts/start-local.sh
+```
+
+In Docker, with the published port kept on loopback:
+
+```bash
+git clone https://github.com/bgagandeep/OpenCodingPartner.git
+cd OpenCodingPartner
+sh scripts/start-docker.sh
+```
+
+Both open <http://127.0.0.1:4317>. The first page is the start guide when this data directory has no bot yet. It asks for a model id, then **Open the desk** creates a lead, a coder, a reviewer, a security bot, and a computer bot, and gives the coder one standing responsibility. **Coder only** creates the coding teammate. **Skip for now** leaves the header on **No model configured** until Settings has one.
+
+`ocp onboard` prints the same two paths. `ocp app --host 0.0.0.0` is refused unless `OCP_DOCKER_BIND=bridge`. The compose file sets that variable and publishes `127.0.0.1:4317:4317`. Do not change that publish address to every interface.
+
+The Docker image does not include a virtual display. On Linux the virtual computer still needs `Xvnc`, `xdotool`, `ffmpeg`, and Chrome or Chromium. Inside the container, a model on the host is `http://host.docker.internal:11434/v1`. `docker compose --profile ollama up -d` starts a model server the container reaches at `http://ollama:11434/v1`.
 
 ## Install and check
 

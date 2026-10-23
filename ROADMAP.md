@@ -17,7 +17,8 @@ The public announcement window for this local tool is **1 November 2026 through 
 - Usage meter and a hard cap. Cheap mode is a routing choice, not a second product.
 - CLI: `ocp bot`, `ocp task`, `ocp backup` / `restore`, `ocp doctor`, `ocp prove`.
 - Fail-closed approvals. Docker isolation unless a person sets host. The desktop says so when Xvnc is missing.
-- The app binds to loopback only. A foreign `Origin` or `Host` is refused.
+- The app binds to loopback only. A foreign `Origin` or `Host` is refused. Docker may listen on all container interfaces only when `OCP_DOCKER_BIND=bridge`, and the compose file publishes `127.0.0.1:4317` only.
+- First-run guide at `/` when no bot exists yet, and `ocp onboard` for the local and Docker commands.
 - CI: build, lint, branding guard (strict), full `pnpm test`.
 
 The product is a chat agent plus an orchestration agent swarm (Lead) that can stand up a coding agent, QA agent, security agent, and computer agent. A temporary early-test cap of 8 agents remains in the code. Ads are off. Payments are off in the core.

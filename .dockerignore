@@ -1,0 +1,14 @@
+node_modules
+**/node_modules
+dist
+**/dist
+.git
+.sandbox
+.sandbox-proof
+.bundle
+.ocp
+**/*.tsbuildinfo
+*.log
+.env
+.env.*
+gtm

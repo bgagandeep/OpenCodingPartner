@@ -1,6 +1,10 @@
 # Optional OpenClaw gateway. The image is upstream. This file does not build OpenClaw from source.
 # Pin matches packages/bundle/pins.json. Start it after you want a live gateway:
 #   docker compose up -d openclaw-gateway
+#
+# The dashboard:
+#   sh scripts/start-docker.sh
+# That publishes 127.0.0.1:4317 only. Do not change it to 0.0.0.0.
 services:
   openclaw-gateway:
     image: ghcr.io/openclaw/openclaw:2026.9.6
@@ -19,3 +23,29 @@ services:
     volumes:
       - ./examples/litellm/config.yaml:/app/config.yaml:ro
     restart: unless-stopped
+  ocp:
+    build: .
+    ports:
+      - "127.0.0.1:4317:4317"
+    environment:
+      OCP_DOCKER_BIND: bridge
+      OCP_DATA_DIR: /data
+      OCP_WORKSPACE: /workspace
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ocp-data:/data
+      - ${OCP_WORKSPACE:-.}:/workspace
+    restart: unless-stopped
+  ollama:
+    profiles: ["ollama"]
+    image: ollama/ollama:latest
+    ports:
+      - "127.0.0.1:11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    restart: unless-stopped
+
+volumes:
+  ocp-data:
+  ollama-data:

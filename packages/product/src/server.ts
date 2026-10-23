@@ -78,6 +78,7 @@ import {
   type PendingTaskApproval,
   type RuntimePermissionRequest,
 } from "./index.js";
+import { handleOnboardingPost, loadOnboardingView } from "./onboarding.js";
 import { probeConnectors, publicConnector, upsertConnectorSnapshot, validateConnectorInput } from "./connectors.js";
 import { usageSnapshot } from "./usage.js";
 import { deleteMcpSecret, listMcpSecretKeys, mcpSecretKey, readMcpSecret, writeMcpSecret } from "./mcp-secrets.js";
@@ -108,12 +109,11 @@ interface ApprovalWaiter {
 }
 
 export async function startProductApp(options: AppOptions = {}): Promise<{ server: Server; url: string; close: () => Promise<void> }> {
-  const host = options.host ?? "127.0.0.1";
   const port = options.port ?? 4317;
   const root = options.root ?? productDataDir(options.env);
   const env = options.env ?? process.env;
   const fetchImpl = options.fetchImpl ?? fetch;
-  if (!isLoopback(host)) throw new Error("The OpenCodingPartner app can only bind to a loopback address.");
+  const host = resolveBindHost(options.host ?? "127.0.0.1", env);
   const token = randomBytes(32).toString("hex");
   const activeRuns = new Map<string, ActiveRun>();
   const approvalWaiters = new Map<string, ApprovalWaiter>();
@@ -527,6 +527,10 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
         usageCaps: settings.usageCaps ?? { perBot: [] },
         theme: studioTheme(settings.theme),
       });
+      return;
+    }
+    if (request.method === "GET" && url.pathname === "/api/onboarding") {
+      sendJson(response, 200, await loadOnboardingView(root, env));
       return;
     }
     if (request.method === "GET" && url.pathname === "/api/routines") {
@@ -994,6 +998,16 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
       await deleteProductRoutine(routineMatch[1] ?? "", root);
       notifySse();
       sendJson(response, 200, { ok: true });
+      return;
+    }
+    if (request.method === "POST" && url.pathname === "/api/onboarding") {
+      try {
+        const view = await handleOnboardingPost(root, body, env);
+        notifySse();
+        sendJson(response, 200, view);
+      } catch (error) {
+        sendJson(response, 400, { error: error instanceof Error ? error.message : "Could not update the start guide." });
+      }
       return;
     }
     if (request.method === "POST" && url.pathname === "/api/bootstrap") {
@@ -1873,6 +1887,12 @@ function isLoopback(host: string): boolean {
   return host === "127.0.0.1" || host === "localhost" || host === "::1";
 }
 
+export function resolveBindHost(host: string, env: NodeJS.ProcessEnv): string {
+  if (isLoopback(host)) return host;
+  if ((host === "0.0.0.0" || host === "::") && env.OCP_DOCKER_BIND === "bridge") return host;
+  throw new Error("The OpenCodingPartner app can only bind to a loopback address. Docker may bind all container interfaces only when OCP_DOCKER_BIND=bridge, and the published port must stay on 127.0.0.1.");
+}
+
 function validHostHeader(value: string, port: number): boolean {
   const host = value.toLowerCase();
   return host === `localhost:${port}` || host === `127.0.0.1:${port}` || host === `[::1]:${port}` || host === "localhost" || host === "127.0.0.1" || host === "[::1]";
@@ -2182,6 +2202,13 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;font:12.5px/1.45 ui-monospace,SF
 code{font:12.5px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace}
 ul{padding-left:18px}
 li{margin:4px 0}
+.onboard{position:fixed;inset:0;z-index:60;background:var(--scrim);display:grid;place-items:center;padding:20px}
+.onboard-card{width:min(760px,100%);max-height:min(860px,calc(100vh - 40px));overflow:auto;background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:22px 22px 18px}
+.onboard-card h2{margin:0 0 8px;font-size:22px;letter-spacing:-.03em}
+.onboard-paths{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:12px 0}
+.onboard-paths strong{display:block;margin-bottom:6px}
+.onboard-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+@media(max-width:820px){.onboard-paths{grid-template-columns:1fr}}
 @media (prefers-reduced-motion:reduce){
   *,*::before,*::after{animation:none!important;transition:none!important}
 }
@@ -2664,6 +2691,13 @@ li{margin:4px 0}
   <button type="button" data-mobile="more">More</button>
 </nav>
 <div id="paletteScrim" class="palette-scrim hidden" hidden></div>
+<div id="onboard" class="onboard hidden" hidden role="dialog" aria-modal="true" aria-labelledby="onboardTitle">
+  <div class="onboard-card">
+    <h2 id="onboardTitle">Start Open Coding Partner</h2>
+    <p class="sub">A local coding partner. Pick a model, then open a desk on this machine or in Docker.</p>
+    <div id="onboardBody"></div>
+  </div>
+</div>
 <div id="palette" class="palette hidden" hidden role="dialog" aria-modal="true" aria-label="Command palette">
   <input id="paletteInput" placeholder="Jump to chat, computer, settings, spawn team…" aria-label="Command search">
   <div id="paletteList" role="listbox"></div>
@@ -3058,11 +3092,97 @@ function projectTasks(){
   return state.tasks.filter(t=>botIds.has(t.botId)||botIds.has(t.reviewerBotId));
 }
 
+let onboardPayload=null;
+function onboardWorkspace(){return (onboardPayload&&onboardPayload.workspace)||DEFAULT_WS}
+function onboardField(label,input){const wrap=document.createElement('label');wrap.appendChild(document.createTextNode(label));wrap.appendChild(input);return wrap}
+function syncOnboardFields(){
+  const form=document.querySelector('#onboardForm');
+  if(!form)return;
+  const provider=form.elements.provider.value;
+  form.elements.baseUrl.parentElement.classList.toggle('hidden',provider!=='custom');
+  form.elements.apiKey.parentElement.classList.toggle('hidden',provider!=='openrouter'&&provider!=='custom');
+}
+function renderOnboard(ob){
+  onboardPayload=ob;
+  const root=document.querySelector('#onboard');
+  const body=document.querySelector('#onboardBody');
+  if(!root||!body)return;
+  if(!ob.required){root.classList.add('hidden');root.hidden=true;return}
+  root.classList.remove('hidden');root.hidden=false;
+  body.replaceChildren();
+  const limits=document.createElement('ul');
+  (ob.limits||[]).forEach(line=>{const li=document.createElement('li');li.textContent=line;limits.appendChild(li)});
+  body.appendChild(limits);
+  const paths=document.createElement('div');
+  paths.className='onboard-paths';
+  [['On this machine',ob.local],['In Docker',ob.docker]].forEach(pair=>{
+    const box=document.createElement('div');
+    const title=document.createElement('strong');title.textContent=pair[0];
+    const pre=document.createElement('pre');pre.textContent=(pair[1]||[]).join('\\n');
+    box.appendChild(title);box.appendChild(pre);paths.appendChild(box);
+  });
+  body.appendChild(paths);
+  if(ob.modelNote){const note=document.createElement('p');note.className='sub';note.textContent=ob.modelNote;body.appendChild(note)}
+  const form=document.createElement('form');
+  form.id='onboardForm';
+  const provider=document.createElement('select');
+  provider.name='provider';
+  [['ollama','Local Ollama'],['lmstudio','Local LM Studio'],['vllm','Local vLLM'],['openrouter','OpenRouter'],['custom','Other OpenAI-compatible URL']].forEach(pair=>{const opt=document.createElement('option');opt.value=pair[0];opt.textContent=pair[1];provider.appendChild(opt)});
+  if(ob.inDocker)provider.value='custom';
+  const model=document.createElement('input');model.name='model';model.placeholder='Model id this server serves';
+  const apiKey=document.createElement('input');apiKey.name='apiKey';apiKey.type='password';apiKey.placeholder='Key, if this server asks for one';apiKey.autocomplete='off';
+  const baseUrl=document.createElement('input');baseUrl.name='baseUrl';baseUrl.placeholder=ob.inDocker?'http://ollama:11434/v1':'http://127.0.0.1:11434/v1';
+  form.appendChild(onboardField('Model server',provider));
+  form.appendChild(onboardField('Model id',model));
+  form.appendChild(onboardField('Base URL',baseUrl));
+  form.appendChild(onboardField('Key',apiKey));
+  provider.addEventListener('change',syncOnboardFields);
+  body.appendChild(form);
+  syncOnboardFields();
+  const actions=document.createElement('div');actions.className='onboard-actions';
+  (ob.presets||[]).forEach(preset=>{
+    const button=document.createElement('button');button.type='button';button.textContent=preset.title;button.title=preset.detail;
+    if(preset.id!=='desk')button.className='secondary';
+    button.addEventListener('click',()=>finishOnboard(preset.id));
+    actions.appendChild(button);
+  });
+  const skip=document.createElement('button');skip.type='button';skip.className='ghost';skip.textContent='Skip for now';skip.addEventListener('click',()=>finishOnboard('skip'));
+  actions.appendChild(skip);
+  body.appendChild(actions);
+  const status=document.createElement('p');status.id='onboardStatus';status.className='status';body.appendChild(status);
+}
+async function finishOnboard(action){
+  const status=document.querySelector('#onboardStatus');
+  try{
+    const form=document.querySelector('#onboardForm');
+    const body={action,workspace:onboardWorkspace()};
+    if(form&&action!=='skip'&&action!=='reopen'){
+      body.provider=form.elements.provider.value;
+      body.model=form.elements.model.value;
+      body.apiKey=form.elements.apiKey.value;
+      body.baseUrl=form.elements.baseUrl.value;
+    }
+    const ob=await api('/api/onboarding',body);
+    renderOnboard(ob);
+    if(action==='skip'&&state.bots.length===0){
+      try{await api('/api/bootstrap',{mode:'lead',workspace:DEFAULT_WS})}catch{}
+    }
+    bootstrapped=true;
+    await load();
+  }catch(err){if(status)status.textContent=err.message}
+}
 async function load(){
   state=await api('/api/state');
-  if(!bootstrapped&&state.bots.length===0){
+  if(!bootstrapped){
     bootstrapped=true;
-    try{await api('/api/bootstrap',{mode:'lead',workspace:DEFAULT_WS});state=await api('/api/state')}catch{}
+    try{
+      const ob=await api('/api/onboarding');
+      renderOnboard(ob);
+      if(!ob.required&&state.bots.length===0){
+        await api('/api/bootstrap',{mode:'lead',workspace:DEFAULT_WS});
+        state=await api('/api/state');
+      }
+    }catch{}
   }
   const workspaces=(state.projects||[]).map(p=>p.workspace);
   if(!activeWorkspace||(!workspaces.includes(activeWorkspace)&&!state.bots.some(b=>b.workspace===activeWorkspace))){
@@ -3879,6 +3999,7 @@ const paletteCommands=[
   {id:'theme-system',label:'Theme System',run:()=>applyTheme('system')},
   {id:'computer',label:'Virtual Computer',run:()=>setCenterView('computer')},
   {id:'spawn',label:'Spawn Team',run:()=>document.querySelector('#spawnTeamBtn').click()},
+  {id:'start',label:'Start guide',run:async()=>{const ob=await api('/api/onboarding',{action:'reopen'});renderOnboard(ob)}},
   {id:'bot',label:'Add Bot',run:()=>document.querySelector('#openNewBotBtn').click()},
   {id:'settings',label:'Settings',run:()=>document.querySelector('#openSettingsBtn').click()},
   {id:'usage',label:'Usage',run:()=>setTab('usage')},

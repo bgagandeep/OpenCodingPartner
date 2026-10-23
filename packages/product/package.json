@@ -5,7 +5,8 @@
   "type": "module",
   "exports": {
     ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" },
-    "./server": { "types": "./dist/server.d.ts", "import": "./dist/server.js" }
+    "./server": { "types": "./dist/server.d.ts", "import": "./dist/server.js" },
+    "./onboarding": { "types": "./dist/onboarding.d.ts", "import": "./dist/onboarding.js" }
   },
   "dependencies": {
     "@opencodingpartner/gateway": "workspace:*",

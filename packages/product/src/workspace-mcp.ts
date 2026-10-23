@@ -33,6 +33,7 @@ import {
   defaultBotInstructions,
   deleteBot,
   findBot,
+  findTask,
   listBots,
   listTasks,
   productDataDir,
@@ -54,6 +55,34 @@ import { fillVaultLogin, type VaultChallenge } from "./vault.js";
 import { ACCOUNT_TOOL_DEFS, isAccountTool, runAccountTool } from "./accounts.js";
 import { skillCatalog } from "./skills.js";
 import { gateTool, recordAudit } from "./teammate.js";
+
+const PROACTIVE_ALLOWED = new Set([
+  "workspace_read",
+  "workspace_list",
+  "memory_search",
+  "history_search",
+  "history_read",
+  "tool_search",
+  "tool_describe",
+  "tool_call",
+  "bot_list",
+]);
+
+export function proactiveToolAllowed(name: string): boolean {
+  return PROACTIVE_ALLOWED.has(name);
+}
+
+/** A proactive pass may read. It does not write, send, shell, or drive the computer. */
+export async function proactiveBlock(name: string, dataDir = resolveDataDir()): Promise<{ ok: false; detail: string } | undefined> {
+  const taskId = process.env.OCP_TASK_ID;
+  if (!taskId) return undefined;
+  const task = await findTask(taskId, dataDir);
+  if (!task?.proactive) return undefined;
+  if (proactiveToolAllowed(name)) return undefined;
+  const detail = "A proactive pass is read-only. This tool was not called.";
+  await recordAudit(dataDir, { outcome: "refused", action: name, ruleId: "proactive", detail });
+  return { ok: false, detail };
+}
 
 const acceptedPlans = new Set<string>();
 const WRITE_TOOLS = new Set([
@@ -117,6 +146,29 @@ const MAX_FILE_BYTES = 500_000;
 
 function resolveDataDir(env: NodeJS.ProcessEnv = process.env): string {
   return productDataDir(env);
+}
+
+export async function decideToolGate(name: string, args: Record<string, unknown>, dataDir = resolveDataDir()): Promise<{ ok: true } | { ok: false; ruleId: string; detail: string }> {
+  const argv = Array.isArray(args.argv) ? args.argv.filter((item): item is string => typeof item === "string") : [];
+  const taskId = process.env.OCP_TASK_ID;
+  let initiator: "person" | "routine" = "person";
+  if (taskId) {
+    const task = await findTask(taskId, dataDir);
+    if (task?.initiator === "routine") initiator = "routine";
+  }
+  return gateTool(dataDir, name, typeof args.path === "string" ? args.path : "", { argv, initiator });
+}
+
+export async function runGatedShell(workspace: string, argv: string[], dataDir = resolveDataDir()): Promise<{ ok: boolean; detail: string }> {
+  const blocked = await proactiveBlock("workspace_shell", dataDir);
+  if (blocked) return blocked;
+  const decision = await decideToolGate("workspace_shell", { argv }, dataDir);
+  if (!decision.ok) {
+    await recordAudit(dataDir, { outcome: "refused", action: "workspace_shell", ruleId: decision.ruleId, detail: decision.detail });
+    return { ok: false, detail: decision.detail };
+  }
+  const ran = await runWorkspaceCommand(workspace, argv);
+  return { ok: ran.ok, detail: JSON.stringify(ran, null, 2).slice(0, 16_000) };
 }
 
 function workspaceMemoryFilePath(root: string): string {
@@ -184,7 +236,15 @@ async function safeExternalCatalog(): Promise<ExternalToolCatalog> {
 }
 
 async function executeToolCall(root: string, name: string, args: Record<string, unknown>, viaDiscovery: boolean): Promise<unknown> {
-  const decision = await gateTool(resolveDataDir(), name, typeof args.path === "string" ? args.path : "");
+  if (name !== "workspace_shell") {
+    const blocked = await proactiveBlock(name);
+    if (blocked) return mcpToolResult(blocked);
+  }
+  if (name === "workspace_shell") {
+    const argv = Array.isArray(args.argv) ? args.argv.filter((item): item is string => typeof item === "string") : [];
+    return mcpToolResult(await runGatedShell(root, argv));
+  }
+  const decision = await decideToolGate(name, args);
   if (!decision.ok) {
     await recordAudit(resolveDataDir(), { outcome: "refused", action: name, ruleId: decision.ruleId, detail: decision.detail });
     return mcpToolResult({ ok: false, detail: decision.detail });
@@ -590,11 +650,6 @@ async function executeToolCall(root: string, name: string, args: Record<string, 
     return mcpToolResult({ ok: true, detail: "Plan approved. You may edit files and run workspace_test." });
   }
 
-  if (name === "workspace_shell") {
-    const argv = Array.isArray(args.argv) ? args.argv.filter((item): item is string => typeof item === "string") : [];
-    const ran = await runWorkspaceCommand(root, argv);
-    return mcpToolResult({ ok: ran.ok, detail: JSON.stringify(ran, null, 2).slice(0, 16_000) });
-  }
   if (name === "workspace_test") {
     const ran = await runWorkspaceTests(root);
     return mcpToolResult({ ok: ran.ok, detail: JSON.stringify(ran, null, 2).slice(0, 16_000) });

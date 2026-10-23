@@ -261,6 +261,12 @@ export async function appendWhatsappOutbox(root: string, text: string, destinati
   await writeJson(file(root, "whatsapp-outbox.json"), rows.slice(-100));
 }
 
+export async function appendTeamsOutbox(root: string, text: string, destination: string): Promise<void> {
+  const rows = await readJson<Array<{ text: string; destination: string; at: string }>>(file(root, "teams-outbox.json"), []);
+  rows.push({ text: redactStored(text), destination: destination.slice(0, 200), at: new Date().toISOString() });
+  await writeJson(file(root, "teams-outbox.json"), rows.slice(-100));
+}
+
 export function confineCoderLaunch(input: { workspace: string; command: string; args: string[]; bwrap?: string }): { command: string; args: string[] } {
   if (!input.bwrap) throw new Error("OCP Coder confinement needs bubblewrap. Refusing to run with the operator OS permissions.");
   const workspace = path.resolve(input.workspace);

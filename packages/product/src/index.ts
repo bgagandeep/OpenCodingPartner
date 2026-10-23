@@ -68,6 +68,9 @@ export interface ProductTask {
   result?: string;
   error?: string;
   workspaceChanges?: WorkspaceChangeReview;
+  initiator?: "person" | "routine";
+  routineId?: string;
+  proactive?: boolean;
 }
 
 export interface TaskAgentSnapshot {
@@ -130,6 +133,8 @@ export interface ProductRoutine {
   nextRunAt?: number;
   lastRunAt?: string;
   createdAt: string;
+  failureCount?: number;
+  proactive?: boolean;
 }
 
 interface ProductState {
@@ -191,7 +196,7 @@ export interface ChannelOrigin {
 export interface ChannelLogEntry {
   id: string;
   externalId?: string;
-  channel: "slack" | "telegram" | "gmail" | "outlook" | "whatsapp";
+  channel: "slack" | "telegram" | "gmail" | "outlook" | "whatsapp" | "teams";
   direction: "in" | "out";
   text: string;
   subject?: string;
@@ -834,7 +839,7 @@ export async function writeBotMcpServers(id: string, mcpServers: BotMcpServer[],
 }
 
 export async function createTask(
-  input: Pick<ProductTask, "botId" | "prompt"> & Partial<Pick<ProductTask, "reviewerBotId" | "channelOrigin">>,
+  input: Pick<ProductTask, "botId" | "prompt"> & Partial<Pick<ProductTask, "reviewerBotId" | "channelOrigin" | "initiator" | "routineId" | "proactive">>,
   root = productDataDir(),
 ): Promise<ProductTask> {
   const now = new Date().toISOString();
@@ -930,7 +935,7 @@ export async function listProductRoutines(root = productDataDir()): Promise<Prod
 }
 
 export async function createProductRoutine(
-  input: { botId: string; prompt: string; everyMs?: number; event?: string; cron?: string; timezone?: string; webhook?: boolean },
+  input: { botId: string; prompt: string; everyMs?: number; event?: string; cron?: string; timezone?: string; webhook?: boolean; proactive?: boolean },
   root = productDataDir(),
 ): Promise<ProductRoutine & { webhookSecret?: string }> {
   const prompt = input.prompt.trim();
@@ -966,6 +971,7 @@ export async function createProductRoutine(
     timezone: hasCron ? timezone : undefined,
     webhook: webhookSecret ? true : undefined,
     nextRunAt,
+    proactive: input.proactive === true ? true : undefined,
     createdAt: new Date().toISOString(),
   };
   await mutateState(root, (state) => {
@@ -987,7 +993,7 @@ export async function createProductRoutine(
 
 export async function updateProductRoutine(
   id: string,
-  update: Partial<Pick<ProductRoutine, "status" | "nextRunAt" | "lastRunAt">>,
+  update: Partial<Pick<ProductRoutine, "status" | "nextRunAt" | "lastRunAt" | "failureCount">>,
   root = productDataDir(),
 ): Promise<ProductRoutine> {
   let updated: ProductRoutine | undefined;
@@ -998,6 +1004,84 @@ export async function updateProductRoutine(
     updated = routine;
   });
   return updated as ProductRoutine;
+}
+
+export const ROUTINE_FAILURE_PAUSE = 10;
+
+/** A routine that fails this many times in a row pauses. A success clears the count and leaves a paused routine paused. */
+export async function noteRoutineOutcome(
+  task: Pick<ProductTask, "routineId">,
+  outcome: "succeeded" | "failed",
+  root = productDataDir(),
+): Promise<ProductRoutine | undefined> {
+  if (!task.routineId) return undefined;
+  const routine = (await listProductRoutines(root)).find((item) => item.id === task.routineId);
+  if (!routine) return undefined;
+  if (outcome === "succeeded") {
+    if ((routine.failureCount ?? 0) === 0) return routine;
+    return updateProductRoutine(routine.id, { failureCount: 0 }, root);
+  }
+  if (routine.status === "paused") return routine;
+  const failureCount = (routine.failureCount ?? 0) + 1;
+  return updateProductRoutine(routine.id, {
+    failureCount,
+    ...(failureCount >= ROUTINE_FAILURE_PAUSE ? { status: "paused" as const } : {}),
+  }, root);
+}
+
+const FINISHED_TASK = new Set<TaskStatus>(["succeeded", "failed", "needs-attention", "cancelled"]);
+
+/** Queue the finished task's result for another bot. The new task does not inherit a channel, so it cannot send the previous reply. */
+export async function handOffTask(taskId: string, botId: string, root = productDataDir()): Promise<ProductTask> {
+  const task = await findTask(taskId, root);
+  if (!task) throw new Error("Unknown task.");
+  if (!FINISHED_TASK.has(task.status)) throw new Error("Hand off a finished task.");
+  const bot = await findBot(botId, root);
+  if (!bot) throw new Error("Unknown bot.");
+  if (bot.id === task.botId) throw new Error("Choose a different bot.");
+  const prompt = [
+    `Handed off from task ${task.id}.`,
+    task.result ? `Previous result:\n${task.result.slice(0, 4_000)}` : "",
+    task.error ? `Previous error:\n${task.error.slice(0, 1_000)}` : "",
+    `Original request:\n${task.prompt.slice(0, 8_000)}`,
+  ].filter(Boolean).join("\n\n");
+  const created = await createTask({ botId: bot.id, prompt, initiator: "person" }, root);
+  await appendProductHandoff({ botId: bot.id, action: "hand-off", summary: `From ${task.id} to ${bot.name}`.slice(0, 500) }, root);
+  return created;
+}
+
+/** Save a finished task's request as a routine for the same bot. */
+export async function saveTaskAsRoutine(
+  taskId: string,
+  input: { everyMs?: number; cron?: string; timezone?: string },
+  root = productDataDir(),
+): Promise<ProductRoutine> {
+  const task = await findTask(taskId, root);
+  if (!task) throw new Error("Unknown task.");
+  if (!FINISHED_TASK.has(task.status)) throw new Error("Save a finished task as a routine.");
+  const prompt = task.prompt.replace(/^\[routine [^\]]+\]\s*/, "").trim();
+  return createProductRoutine({ botId: task.botId, prompt, everyMs: input.everyMs, cron: input.cron, timezone: input.timezone }, root);
+}
+
+/** Person-in-chat approvals wait. A routine approval expires so the action does not run. */
+export function unattendedApprovalTtlMs(initiator: ProductTask["initiator"], env: NodeJS.ProcessEnv = process.env): number | undefined {
+  if (initiator !== "routine") return undefined;
+  const raw = env.OCP_APPROVAL_TTL_MS;
+  if (raw === undefined || raw === "") return 600_000;
+  const ttl = Number(raw);
+  if (!Number.isFinite(ttl) || ttl < 0) return 600_000;
+  return ttl;
+}
+
+export function unattendedApprovalExpired(
+  task: Pick<ProductTask, "initiator" | "pendingApproval">,
+  now = Date.now(),
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  if (task.initiator !== "routine" || !task.pendingApproval) return false;
+  const ttl = unattendedApprovalTtlMs("routine", env) ?? 600_000;
+  const requested = Date.parse(task.pendingApproval.requestedAt);
+  return Number.isFinite(requested) && now - requested >= ttl;
 }
 
 const CHANNEL_LOG_LIMIT = 100;

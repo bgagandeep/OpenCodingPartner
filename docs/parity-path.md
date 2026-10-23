@@ -35,6 +35,14 @@ Each item has a test. None of them starts Xvnc, dials a model, or sends a channe
 13. **Pages.** A person can save a page. A secret-shaped token is redacted before it is stored.
 14. **Coder confinement on request.** `OCP_CODER_CONFINEMENT=workspace` builds a bubblewrap launch that bind-mounts the workspace and drops the network. If bubblewrap is missing, the launch refuses. The default launch still uses the operator's OS permissions.
 15. **A start guide and a loopback Docker publish.** With no bot yet, the page shows the guide. Saving a model id and opening the desk creates the starter teammates and one standing responsibility. `OCP_DOCKER_BIND=bridge` is the only way to listen beyond loopback, and a foreign `Host` is still refused. The compose file publishes `127.0.0.1:4317` only.
+16. **A command rule knows who asked.** A deny rule can name a command prefix and whether it applies to a person, a routine, or anyone. A routine-only `git status` rule refuses that shell call before git runs. The same rule does not refuse a person. A path prefix does not match a shell call, so a command rule omits the path. A broken rule still refuses every call.
+17. **A routine pauses after repeated failures.** Ten failures in a row set the routine to paused. A later failure does not keep counting. A success clears the count and does not resume a paused routine by itself.
+18. **An unattended routine approval expires.** A person in the chat can still answer an old approval. A routine approval older than the limit (10 minutes, or `OCP_APPROVAL_TTL_MS` in a test) is refused, the task needs attention, and the action does not run. The audit row uses rule id `expired`.
+19. **A finished task can move.** Hand off queues that result for a different bot and does not copy a channel origin. Save as routine stores the request for the same bot and drops a leading routine tag.
+20. **An activity list.** `GET /api/activity` returns waiting approvals, unsent drafts, open responsibilities, and routines. Draft text, destinations, and webhook secrets are not in that payload.
+21. **A proactive pass is read-only.** A task marked proactive may read, search, and list bots. Shell, write, send, and computer control are refused before they run. The audit row uses rule id `proactive`.
+22. **Teams drafts.** Reach into Teams writes a draft. Allowing the draft appends a local outbox and still sends nothing.
+23. **A responsibility check.** Scheduling a check waits at least 15 minutes, records the next check time, and creates a proactive routine. A shorter interval is refused.
 
 ## Where we already match
 
@@ -44,10 +52,12 @@ Each item has a test. None of them starts Xvnc, dials a model, or sends a channe
 | Fully local | **Use local GPU (Ollama)** sets the base URL to `http://127.0.0.1:11434/v1`. A local base URL can use the placeholder key `ollama`. No hosted account is required. |
 | Bring your own model | OpenRouter, or any OpenAI-compatible base URL and model id. The key is not written into `state.json` or the task log. |
 | A computer per bot, and take the wheel | Each bot has its own display number and Chrome profile. **Take Control** refuses bot mouse, keyboard, and browser until you return control. A workspace tool that does not name a bot still uses the shared workspace computer. |
-| Decide, then act | Allow once, Always, Deny, Redirect, plus a named deny rule. Unattended runs fail closed. The audit page is the record. |
+| Decide, then act | Allow once, Always, Deny, Redirect, plus a named deny rule. A command prefix can apply to a person or a routine. A routine approval expires instead of running. The audit page is the record. |
 | Secrets stay out of the transcript | Vault fills by item name. A sign-in, 2FA, or captcha page is not typed by the bot. Audit rows redact `sk-` keys. |
-| Skills and routines | Skills are instructions with a "When to use" line. Routines take five-field cron plus an IANA timezone, or an interval, or an event. A routine can name a responsibility id. |
-| Reach, as a draft | Slack and Telegram drafts stay in the channel log until a person sends them. Mail waits on a draft card. |
+| Skills and routines | Skills are instructions with a "When to use" line. Routines take five-field cron plus an IANA timezone, or an interval, or an event. Ten failures in a row pause a routine. A finished task can be saved as a routine or handed to another bot. |
+| Reach, as a draft | Slack and Telegram drafts stay in the channel log until a person sends them. Mail waits on a draft card. WhatsApp and Teams drafts stay unsent after Allow. |
+| Activity | One list of waiting approvals, unsent drafts, open responsibilities, and routines. It does not include draft text or webhook secrets. |
+| Read-only watch | A proactive task, including a scheduled responsibility check, can read. It cannot shell, write, send, or drive the computer. A check waits at least 15 minutes. |
 | Loopback | The process refuses `0.0.0.0` unless `OCP_DOCKER_BIND=bridge`. A foreign `Origin` or `Host` is refused. Docker compose publishes `127.0.0.1:4317` only. |
 
 ## Not now
@@ -56,13 +66,19 @@ Voice and meetings are not now. They are off the roadmap for this stretch. There
 
 ## What is still false
 
-These hosted-operations surfaces are not yet in this tree.
+These surfaces are not in this tree. The local product does not become those hosted products by listing them.
 
-- A container runtime harder than bubblewrap, such as gVisor.
-- A Helm chart.
-- A database inside the app image.
-- Their hosted model, their hosted accounts, and a public signup. The compose file publishes `127.0.0.1:4317` only.
+- Voice and meetings.
+- A computer that keeps working with the laptop closed, and a hosted signup.
+- Their models in the box, including a frontier model chosen for you.
+- A plugin catalog of thousands of connectors.
+- A real company directory. Company sign-in is still a signed assertion on this machine.
+- A container per bot. Each bot has its own display and browser profile. That is not a container, and it is not gVisor.
+- A Helm chart, and a database inside the app image.
+- WhatsApp send, and Teams send. Allowing either draft still sends nothing.
 - Standalone OCP Coder without `OCP_CODER_CONFINEMENT=workspace`. That default still uses the operator's OS permissions.
+
+The sequenced notes for what was copied in spirit, and what stays local, are in [Catch-up](catch-up.md).
 
 ## What we will not say
 

@@ -27,7 +27,7 @@ One-off text/file CLI helpers (`ocp lower`, `ocp squeeze`, …) still exist for 
 
 ## Next
 
-[The teammate path](docs/parity-path.md) is the record of the announcement-window proofs. Items 1 through 8 are in this tree, with tests. The README states that teammate shape and does not name this project as another product. In short:
+[The teammate path](docs/parity-path.md) is the record of the announcement-window proofs. Items 1 through 23 are in this tree, with tests. [Catch-up](docs/catch-up.md) is the sequence against the hosted teammate products, including the limits that are still false. The README states the local coding-partner shape and does not name this project as another product. In short:
 
 1. A computer per bot, not one shared screen per workspace.
 2. An audit page of permitted, refused, and failed actions.
@@ -38,7 +38,7 @@ One-off text/file CLI helpers (`ocp lower`, `ocp squeeze`, …) still exist for 
 7. A named deny rule the audit row can quote.
 8. `ocp doctor` printing local, hosted, or not configured, without the key and without a network call.
 
-A loopback agent endpoint, component replies, a local directory, WhatsApp drafts, and pages are in this tree. Company sign-in checks a signed assertion on this machine and does not contact a company directory. Allowing a WhatsApp draft still sends nothing. Voice and meetings are not now. gVisor, a Helm chart, and a database inside the app image are not yet in this tree. Standalone **OCP Coder** uses workspace confinement when `OCP_CODER_CONFINEMENT=workspace` and otherwise uses the operator's OS permissions.
+A loopback agent endpoint, component replies, a local directory, WhatsApp drafts, and pages are in this tree. A command rule can name who asked. A routine pauses after ten failures. A routine approval expires instead of running. A finished task can be handed to another bot or saved as a routine. Activity lists waiting approvals, unsent drafts, open responsibilities, and routines. A proactive pass, including a responsibility check of at least 15 minutes, can read and cannot shell, write, send, or drive the computer. Teams reach stays a draft. Company sign-in checks a signed assertion on this machine and does not contact a company directory. Allowing a WhatsApp draft still sends nothing. Allowing a Teams draft still sends nothing. Voice and meetings are not now. gVisor, a Helm chart, a database inside the app image, a container per bot, and a computer that stays up with the laptop closed are not in this tree. Standalone **OCP Coder** uses workspace confinement when `OCP_CODER_CONFINEMENT=workspace` and otherwise uses the operator's OS permissions.
 
 ## Later
 

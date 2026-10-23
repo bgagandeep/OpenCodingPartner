@@ -4,8 +4,8 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import path from "node:path";
 import { readFile, stat } from "node:fs/promises";
 import { readWorkspaceFile } from "./workspace-mcp.js";
-import { correctMemory, createResponsibility, createThread, forgetMemory, listAudit, listDenyRules, listMemory, listResponsibilities, listThreads, reachThread, recordAudit, saveDenyRule, updateResponsibility } from "./teammate.js";
-import { appendWhatsappOutbox, createDirectoryUser, executeAguiRun, listAgents, listDirectory, listPages, loginCompanyAssertion, loginDirectory, registerAgent, savePage, setCompanyAssertionSecret } from "./category.js";
+import { buildActivity, correctMemory, createResponsibility, createThread, forgetMemory, listAudit, listDenyRules, listMemory, listResponsibilities, listThreads, reachThread, recordAudit, saveDenyRule, scheduleResponsibilityCheck, updateResponsibility } from "./teammate.js";
+import { appendTeamsOutbox, appendWhatsappOutbox, createDirectoryUser, executeAguiRun, listAgents, listDirectory, listPages, loginCompanyAssertion, loginDirectory, registerAgent, savePage, setCompanyAssertionSecret } from "./category.js";
 import {
   postSlackReply,
   postTelegramReply,
@@ -72,6 +72,11 @@ import {
   nextQueuedTaskForWorkspace,
   routinesForEvent,
   updateProductRoutine,
+  noteRoutineOutcome,
+  handOffTask,
+  saveTaskAsRoutine,
+  unattendedApprovalExpired,
+  unattendedApprovalTtlMs,
   type BotMcpServer,
   type KeyboardActionInput,
   type MouseActionInput,
@@ -226,6 +231,11 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
     if (entry.channel === "whatsapp") {
       await appendWhatsappOutbox(root, entry.text, entry.destination);
       await updateChannelLog(id, { error: "Nothing was sent. The WhatsApp message stayed in the local outbox." }, root);
+      return { ok: true, status: "draft" };
+    }
+    if (entry.channel === "teams") {
+      await appendTeamsOutbox(root, entry.text, entry.destination);
+      await updateChannelLog(id, { error: "Nothing was sent. The Teams message stayed in the local outbox." }, root);
       return { ok: true, status: "draft" };
     }
     if (entry.channel === "gmail" || entry.channel === "outlook") {
@@ -539,6 +549,10 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
     }
     if (request.method === "GET" && url.pathname === "/api/audit") {
       sendJson(response, 200, { audit: await listAudit(root) });
+      return;
+    }
+    if (request.method === "GET" && url.pathname === "/api/activity") {
+      sendJson(response, 200, await buildActivity(root));
       return;
     }
     if (request.method === "GET" && url.pathname === "/api/responsibilities") {
@@ -1262,6 +1276,24 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
         sendJson(response, 409, { error: "That approval request is no longer pending." });
         return;
       }
+      if (unattendedApprovalExpired(task, Date.now(), env)) {
+        approvalWaiters.delete(requestId);
+        waiter?.resolve(undefined);
+        await updateTask(taskId, {
+          status: "needs-attention",
+          pendingApproval: undefined,
+          error: "Unattended approval expired. The action did not run.",
+        }, root);
+        await recordAudit(root, {
+          outcome: "refused",
+          action: task.pendingApproval.title,
+          ruleId: "expired",
+          detail: "Unattended approval expired before a person answered.",
+        });
+        notifySse();
+        sendJson(response, 409, { error: "Unattended approval expired. The action did not run." });
+        return;
+      }
       if (permissionSubjectKind(task.pendingApproval.subject) === "usage-hard-cap" && decision !== "cancelled") {
         sendJson(response, 400, { error: "A hard cap pauses the task. Leave it paused." });
         return;
@@ -1345,12 +1377,73 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
       sendJson(response, 202, { ok: true });
       return;
     }
+    const handMatch = /^\/api\/tasks\/([^/]+)\/hand$/.exec(url.pathname);
+    if (request.method === "POST" && handMatch) {
+      try {
+        const task = await handOffTask(handMatch[1] ?? "", typeof body.botId === "string" ? body.botId : "", root);
+        const bot = await findBot(task.botId, root);
+        const busy = !bot || await workspaceHasBusyTask(bot.workspace, root);
+        if (bot && !busy && !closing) {
+          await updateTask(task.id, { status: "running", processId: process.pid }, root);
+          launchTask(task.id, bot, undefined, task.prompt, await captureWorkspaceBaseline(bot.workspace));
+        }
+        notifySse();
+        sendJson(response, 202, { taskId: task.id, queued: busy || closing });
+      } catch (error) {
+        sendJson(response, 400, { error: error instanceof Error ? error.message : "Could not hand off the task." });
+      }
+      return;
+    }
+    const routineFromTaskMatch = /^\/api\/tasks\/([^/]+)\/routine$/.exec(url.pathname);
+    if (request.method === "POST" && routineFromTaskMatch) {
+      try {
+        const everyMs = typeof body.everyMs === "number" ? body.everyMs : undefined;
+        const routine = await saveTaskAsRoutine(routineFromTaskMatch[1] ?? "", {
+          everyMs,
+          cron: typeof body.cron === "string" ? body.cron : undefined,
+          timezone: typeof body.timezone === "string" ? body.timezone : undefined,
+        }, root);
+        sendJson(response, 201, { routine });
+      } catch (error) {
+        sendJson(response, 400, { error: error instanceof Error ? error.message : "Could not save the routine." });
+      }
+      return;
+    }
+    if (request.method === "POST" && url.pathname === "/api/proactive") {
+      const botId = typeof body.botId === "string" ? body.botId : "";
+      const prompt = typeof body.prompt === "string" ? body.prompt.trim() : "";
+      const bot = await findBot(botId, root);
+      if (!bot || !prompt || prompt.length > 20_000) {
+        sendJson(response, 400, { error: "Choose a bot and enter a read-only request of 1 to 20,000 characters." });
+        return;
+      }
+      const task = await createTask({ botId: bot.id, prompt, initiator: "person", proactive: true }, root);
+      const busy = await workspaceHasBusyTask(bot.workspace, root);
+      if (!busy && !closing) {
+        await updateTask(task.id, { status: "running", processId: process.pid }, root);
+        launchTask(task.id, bot, undefined, prompt, await captureWorkspaceBaseline(bot.workspace));
+      }
+      notifySse();
+      sendJson(response, 202, { taskId: task.id, proactive: true, queued: busy || closing });
+      return;
+    }
     if (request.method === "POST" && url.pathname === "/api/responsibilities") {
       try {
         const saved = await createResponsibility(root, typeof body.botId === "string" ? body.botId : "", typeof body.goal === "string" ? body.goal : "");
         sendJson(response, 201, { responsibility: saved });
       } catch (error) {
         sendJson(response, 400, { error: error instanceof Error ? error.message : "Could not save the responsibility." });
+      }
+      return;
+    }
+    const responsibilityCheckMatch = /^\/api\/responsibilities\/([^/]+)\/check$/.exec(url.pathname);
+    if (request.method === "POST" && responsibilityCheckMatch) {
+      try {
+        const everyMs = typeof body.everyMs === "number" ? body.everyMs : Number(body.everyMs);
+        const saved = await scheduleResponsibilityCheck(root, responsibilityCheckMatch[1] ?? "", everyMs);
+        sendJson(response, 201, saved);
+      } catch (error) {
+        sendJson(response, 400, { error: error instanceof Error ? error.message : "Could not schedule the check." });
       }
       return;
     }
@@ -1380,9 +1473,9 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
     const reachMatch = /^\/api\/threads\/([^/]+)\/reach$/.exec(url.pathname);
     if (request.method === "POST" && reachMatch) {
       try {
-        const channel = body.channel === "slack" || body.channel === "telegram" || body.channel === "whatsapp" ? body.channel : "";
+        const channel = body.channel === "slack" || body.channel === "telegram" || body.channel === "whatsapp" || body.channel === "teams" ? body.channel : "";
         if (!channel) {
-          sendJson(response, 400, { error: "Reach needs slack, telegram, or whatsapp." });
+          sendJson(response, 400, { error: "Reach needs slack, telegram, whatsapp, or teams." });
           return;
         }
         const thread = await reachThread(root, reachMatch[1] ?? "", channel, typeof body.destination === "string" ? body.destination : "");
@@ -1467,7 +1560,15 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
     }
     if (request.method === "POST" && url.pathname === "/api/rules") {
       try {
-        const rule = await saveDenyRule(root, typeof body.tool === "string" ? body.tool : "", typeof body.pathPrefix === "string" ? body.pathPrefix : undefined);
+        const rule = await saveDenyRule(
+          root,
+          typeof body.tool === "string" ? body.tool : "",
+          typeof body.pathPrefix === "string" ? body.pathPrefix : undefined,
+          {
+            argvPrefix: typeof body.argvPrefix === "string" ? body.argvPrefix.split(/\s+/).filter(Boolean) : undefined,
+            initiator: body.initiator === "person" || body.initiator === "routine" || body.initiator === "any" ? body.initiator : undefined,
+          },
+        );
         await recordAudit(root, { outcome: "permitted", action: "save deny rule", ruleId: rule.id, detail: rule.tool });
         sendJson(response, 201, { rule });
       } catch (error) {
@@ -1581,6 +1682,10 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
           processId: undefined,
           pendingApproval: undefined,
         }, root);
+        if (!permissionDenied) {
+          const finished = await findTask(taskId, root);
+          if (finished?.routineId) await noteRoutineOutcome(finished, "succeeded", root);
+        }
         await recordChannelOutcome(taskId, permissionDenied ? "failed" : "draft", result, permissionDenied ? "Reply stayed in the app because the task needs attention." : undefined);
       } catch (error) {
         await flushProgress().catch(() => undefined);
@@ -1593,7 +1698,11 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
           pendingApproval: undefined,
           workspaceChanges,
         }, root).catch(() => undefined);
-        if (!cancelled) await recordChannelOutcome(taskId, "failed", "", error instanceof Error ? error.message : "Agent run failed.").catch(() => undefined);
+        if (!cancelled) {
+          const failedTask = await findTask(taskId, root);
+          if (failedTask?.routineId) await noteRoutineOutcome(failedTask, "failed", root).catch(() => undefined);
+          await recordChannelOutcome(taskId, "failed", "", error instanceof Error ? error.message : "Agent run failed.").catch(() => undefined);
+        }
       } finally {
         if (progressTimer) clearTimeout(progressTimer);
         activeRuns.delete(taskId);
@@ -1612,7 +1721,13 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
     if (closing) return;
     const bot = await findBot(routine.botId, root);
     if (!bot) return;
-    const task = await createTask({ botId: bot.id, prompt: `[routine ${routine.id}] ${routine.prompt}` }, root);
+    const task = await createTask({
+      botId: bot.id,
+      prompt: `[routine ${routine.id}] ${routine.prompt}`,
+      initiator: "routine",
+      routineId: routine.id,
+      ...(routine.proactive ? { proactive: true } : {}),
+    }, root);
     let nextRunAt = routine.nextRunAt;
     let status: "active" | "paused" | undefined;
     if (source === "schedule") {
@@ -1660,18 +1775,37 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
     await updateTask(taskId, { status: "awaiting-approval", pendingApproval: pending }, root);
     notifySse();
     return new Promise((resolve) => {
-      const waiter = { taskId, optionId: allow?.optionId ?? "", resolve };
-      approvalWaiters.set(id, waiter);
-      const signal = activeRuns.get(taskId)?.controller.signal;
-      if (signal?.aborted) {
+      let settled = false;
+      let expiry: NodeJS.Timeout | undefined;
+      const finish = (optionId: string | undefined) => {
+        if (settled) return;
+        settled = true;
+        if (expiry) clearTimeout(expiry);
         approvalWaiters.delete(id);
-        resolve(undefined);
-      } else {
-        signal?.addEventListener("abort", () => {
-          approvalWaiters.delete(id);
-          resolve(undefined);
-        }, { once: true });
+        resolve(optionId);
+      };
+      approvalWaiters.set(id, { taskId, optionId: allow?.optionId ?? "", resolve: finish });
+      const ttl = unattendedApprovalTtlMs(current?.initiator, env);
+      if (ttl !== undefined) {
+        expiry = setTimeout(() => {
+          if (settled) return;
+          finish(undefined);
+          void updateTask(taskId, {
+            status: "needs-attention",
+            pendingApproval: undefined,
+            error: "Unattended approval expired. The action did not run.",
+          }, root).then(() => recordAudit(root, {
+            outcome: "refused",
+            action: pending.title,
+            ruleId: "expired",
+            detail: "Unattended approval expired before a person answered.",
+          })).then(() => notifySse()).catch(() => undefined);
+        }, ttl);
+        expiry.unref?.();
       }
+      const signal = activeRuns.get(taskId)?.controller.signal;
+      if (signal?.aborted) finish(undefined);
+      else signal?.addEventListener("abort", () => finish(undefined), { once: true });
     });
   }
 
@@ -2451,12 +2585,35 @@ li{margin:4px 0}
         </form>
         <form id="reachForm" class="mt-sm">
           <label>Thread id<input name="threadId" id="reachThread" required></label>
-          <label>Channel<select name="channel"><option value="slack">Slack</option><option value="telegram">Telegram</option><option value="whatsapp">WhatsApp</option></select></label>
+          <label>Channel<select name="channel"><option value="slack">Slack</option><option value="telegram">Telegram</option><option value="whatsapp">WhatsApp</option><option value="teams">Teams</option></select></label>
           <label>Destination<input name="destination" required placeholder="#project or a chat id"></label>
           <button type="submit" class="secondary">Draft reach</button>
         </form>
-        <p class="meta">Draft reach does not send. Nothing is sent automatically.</p>
+        <p class="meta">Draft reach does not send. Nothing is sent automatically. Allowing a Teams draft still sends nothing.</p>
         <div id="threadList" class="nav-list mt-sm"></div>
+        <h3>Open work</h3>
+        <p class="sub">Approvals waiting, unsent drafts, open responsibilities, and routines. This list does not send anything.</p>
+        <div id="activityList" class="nav-list mt-sm"></div>
+        <h3>Hand off</h3>
+        <p class="sub">Give a finished task to another bot. The new task is queued for that bot.</p>
+        <form id="handForm">
+          <label>Finished task<input name="taskId" required></label>
+          <label>Bot<select name="botId" id="handBot"></select></label>
+          <button type="submit" class="secondary">Hand off</button>
+        </form>
+        <h3>Save as routine</h3>
+        <form id="routineFromTaskForm" class="mt-sm">
+          <label>Finished task<input name="taskId" required></label>
+          <label>Every milliseconds<input name="everyMs" required placeholder="900000"></label>
+          <button type="submit" class="secondary">Save routine</button>
+        </form>
+        <h3>Responsibility check</h3>
+        <p class="sub">A standing check waits at least 15 minutes and stays read-only.</p>
+        <form id="checkForm">
+          <label>Responsibility id<input name="id" required></label>
+          <label>Every milliseconds<input name="everyMs" required placeholder="900000"></label>
+          <button type="submit" class="secondary">Schedule check</button>
+        </form>
         <h3>Memory</h3>
         <p class="sub">Facts this workspace remembers. Correct or forget them here. The model is not the only writer.</p>
         <form id="memoryForm">
@@ -2489,8 +2646,10 @@ li{margin:4px 0}
         <h2>Audit</h2>
         <p class="sub">Permitted, refused, and failed actions. A refused row names the rule. Secrets are not stored here.</p>
         <form id="ruleForm">
-          <label>Tool<input name="tool" required placeholder="workspace_delete"></label>
+          <label>Tool<input name="tool" required placeholder="workspace_shell"></label>
           <label>Path prefix<input name="pathPrefix" placeholder="src/"></label>
+          <label>Command prefix<input name="argvPrefix" placeholder="git push"></label>
+          <label>Who<select name="initiator"><option value="">Anyone</option><option value="person">A person</option><option value="routine">A routine</option></select></label>
           <button type="submit">Save deny rule</button>
         </form>
         <div id="auditList" class="nav-list mt-sm"></div>
@@ -2498,7 +2657,7 @@ li{margin:4px 0}
 
       <div id="tab-category" class="tab-pane hidden">
         <h2>Category</h2>
-        <p class="sub">A foreign agent on this machine, component replies, a local directory, and pages. WhatsApp reach stays a draft. Allowing that draft still sends nothing. Company sign-in checks a signed assertion on this machine and does not contact a company directory.</p>
+        <p class="sub">A foreign agent on this machine, component replies, a local directory, and pages. WhatsApp reach stays a draft. Allowing that draft still sends nothing. Teams reach stays a draft too. Company sign-in checks a signed assertion on this machine and does not contact a company directory.</p>
         <form id="agentForm">
           <label>Agent name<input name="name" required></label>
           <label>Loopback URL<input name="url" required placeholder="http://127.0.0.1:9/agent"></label>
@@ -3899,9 +4058,12 @@ document.querySelectorAll('[data-theme-choice]').forEach(btn=>btn.addEventListen
 async function refreshTeammate(){
   const bots=projectBots();
   const opts=bots.map(b=>'<option value="'+esc(b.id)+'">'+esc(b.name)+'</option>').join('');
-  ['responsibilityBot','threadBotA','threadBotB'].forEach(id=>{const el=document.querySelector('#'+id);if(el)el.innerHTML=opts});
+  ['responsibilityBot','threadBotA','threadBotB','handBot'].forEach(id=>{const el=document.querySelector('#'+id);if(el)el.innerHTML=opts});
   const mem=document.querySelector('#memoryWorkspace');
   if(mem)mem.value=activeWorkspace||'';
+  const activity=await api('/api/activity');
+  const act=document.querySelector('#activityList');
+  if(act)act.innerHTML=(activity.items||[]).slice(0,12).map(item=>'<div class="meta">'+esc(item.kind)+' '+esc(item.status)+' '+esc(item.title)+'</div>').join('')||'<div class="meta">No activity yet.</div>';
   const audit=await api('/api/audit');
   const box=document.querySelector('#auditList');
   if(box)box.innerHTML=(audit.audit||[]).slice(-12).map(row=>'<div class="meta">'+esc(row.outcome)+' '+esc(row.action)+(row.ruleId?' '+esc(row.ruleId):'')+'</div>').join('')||'<div class="meta">No audit rows yet.</div>';
@@ -3957,10 +4119,31 @@ document.querySelector('#memoryForm')?.addEventListener('submit',async e=>{
   await api('/api/memory',{workspace:f.elements.workspace.value,query:f.elements.query.value,replacement,action:replacement?'correct':'forget'},'POST');
   await refreshTeammate();
 });
+document.querySelector('#handForm')?.addEventListener('submit',async e=>{
+  e.preventDefault();
+  const f=e.target;
+  await api('/api/tasks/'+encodeURIComponent(f.elements.taskId.value)+'/hand',{botId:f.elements.botId.value},'POST');
+  f.elements.taskId.value='';
+  await refreshTeammate();
+});
+document.querySelector('#routineFromTaskForm')?.addEventListener('submit',async e=>{
+  e.preventDefault();
+  const f=e.target;
+  await api('/api/tasks/'+encodeURIComponent(f.elements.taskId.value)+'/routine',{everyMs:Number(f.elements.everyMs.value)},'POST');
+  f.reset();
+  await refreshTeammate();
+});
+document.querySelector('#checkForm')?.addEventListener('submit',async e=>{
+  e.preventDefault();
+  const f=e.target;
+  await api('/api/responsibilities/'+encodeURIComponent(f.elements.id.value)+'/check',{everyMs:Number(f.elements.everyMs.value)},'POST');
+  f.reset();
+  await refreshTeammate();
+});
 document.querySelector('#ruleForm')?.addEventListener('submit',async e=>{
   e.preventDefault();
   const f=e.target;
-  await api('/api/rules',{tool:f.elements.tool.value,pathPrefix:f.elements.pathPrefix.value},'POST');
+  await api('/api/rules',{tool:f.elements.tool.value,pathPrefix:f.elements.pathPrefix.value,argvPrefix:f.elements.argvPrefix.value,initiator:f.elements.initiator.value},'POST');
   f.reset();
   await refreshTeammate();
 });

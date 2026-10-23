@@ -3,329 +3,133 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Open Coding Partner — open-source AI teammates with memory, plan-before-code approvals, QA handoffs, and a virtual computer on your machine.">
+  <meta name="description" content="Open Coding Partner — local open-source AI teammates, plugins, virtual computer, and plan-before-code approvals.">
   <meta name="theme-color" content="#06040f">
-  <meta property="og:title" content="Open Coding Partner — Teammates that finish the work">
-  <meta property="og:description" content="Persistent coding teammates on loopback. Apache-2.0. Your models. Your machine.">
+  <meta property="og:title" content="Open Coding Partner">
+  <meta property="og:description" content="Persistent coding teammates on your machine. Apache-2.0.">
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://opencodingpartner.com/">
   <link rel="canonical" href="https://opencodingpartner.com/">
-  <title>Open Coding Partner — Teammates that finish the work</title>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='14' fill='%2306040f'/%3E%3Ccircle cx='16' cy='16' r='6' fill='%2300d2ff'/%3E%3C/svg%3E">
+  <title>Open Coding Partner</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='14' fill='%2306040f'/%3E%3Ccircle cx='16' cy='16' r='5' fill='%2300d2ff'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="/css/main.css">
 </head>
 <body>
   <a class="skip" href="#main">Skip to content</a>
-  <div class="grain" aria-hidden="true"></div>
 
-  <header class="site-header" data-reveal>
-    <div class="wrap header-inner">
-      <a class="brand" href="/">
-        <span class="brand-mark" aria-hidden="true"></span>
-        <span class="brand-text">Open Coding Partner</span>
-      </a>
-      <nav class="nav" aria-label="Primary">
-        <a href="#studio">Studio</a>
-        <a href="#floor">Team thread</a>
-        <a href="#roles">Roles</a>
-        <a href="#computer">Computer</a>
+  <header class="header">
+    <div class="wrap header-row">
+      <a class="logo" href="/">Open Coding Partner</a>
+      <nav class="header-nav">
+        <a href="#features">Features</a>
         <a href="#faq">FAQ</a>
+        <a href="#start">Install</a>
       </nav>
-      <div class="header-actions">
-        <button type="button" class="theme-toggle" id="themeToggle" data-mode="dark" aria-label="Theme: Dark">
-          <span class="theme-glyph" aria-hidden="true"></span>
-        </button>
-        <a class="btn btn-primary" href="#download">Get OCP</a>
-      </div>
+      <button type="button" class="theme-btn" id="themeToggle" aria-label="Theme: Dark"></button>
     </div>
   </header>
 
   <main id="main">
-    <section class="hero" aria-labelledby="hero-title">
-      <div class="hero-aurora" aria-hidden="true"></div>
-      <div class="wrap hero-stack">
-        <div class="hero-copy" data-reveal>
-          <p class="pill-badge">Apache-2.0 · Open source · Loopback studio</p>
-          <h1 id="hero-title">Message teammates.<br>Not another chat thread.</h1>
-          <p class="lead">Open Coding Partner ships a local studio where teammates keep identity and memory, draft a plan before they touch your repo, run behind explicit approvals, and hand work to QA — with a virtual computer you can watch or drive.</p>
-          <div class="hero-cta">
-            <a class="btn btn-primary btn-lg" href="#download">Download for your OS</a>
-            <a class="btn btn-ghost btn-lg" href="#studio">See the studio</a>
-          </div>
+    <section class="hero">
+      <div class="hero-glow" aria-hidden="true"></div>
+      <div class="wrap hero-inner">
+        <p class="kicker" data-reveal>Apache-2.0 · loopback · your models</p>
+        <h1 data-reveal>Teammates that<br>finish the work.</h1>
+        <p class="hero-sub" data-reveal>A local studio for persistent bots — plan before code, explicit approvals, QA handoffs, a virtual computer you can drive, and a plugin library you install on your machine.</p>
+        <div class="hero-actions" data-reveal>
+          <a class="btn primary" href="#start">Install</a>
+          <a class="btn ghost" href="https://github.com/bgagandeep/OpenCodingPartner">GitHub</a>
         </div>
 
-        <div class="hero-stage" data-reveal data-reveal-delay="1">
-          <div class="studio-frame" data-studio-preview>
-            <div class="studio-titlebar">
-              <span class="traffic"><i></i><i></i><i></i></span>
-              <span class="studio-title">OpenCodingPartner · Studio</span>
-              <span class="studio-pill">127.0.0.1:4317</span>
-            </div>
-            <div class="studio-tabs" role="tablist" aria-label="Studio views">
-              <button type="button" class="studio-tab is-active" data-preview-tab="chat" role="tab" aria-selected="true">Chat</button>
-              <button type="button" class="studio-tab" data-preview-tab="plan" role="tab" aria-selected="false">Plan</button>
-              <button type="button" class="studio-tab" data-preview-tab="computer" role="tab" aria-selected="false">Virtual Computer</button>
-            </div>
-            <div class="studio-body">
-              <aside class="mock-sidebar" aria-hidden="true">
-                <div class="mock-sidebar-head">Teammates</div>
-                <ul class="mock-bot-list">
-                  <li class="is-active"><span class="eyes working"></span>OCP Coder</li>
-                  <li><span class="eyes thinking"></span>QA Reviewer</li>
-                  <li><span class="eyes waiting"></span>Security</li>
-                </ul>
-              </aside>
-              <div class="mock-main">
-                <div class="preview-panel" data-preview-panel="chat">
-                  <div class="mock-msg you">Add validation tests and queue QA when the suite passes.</div>
-                  <div class="mock-msg bot">On it. I will draft a plan first — no edits until you approve.</div>
-                  <div class="mock-composer"><span>Tell your teammates what to build…</span></div>
-                </div>
-                <div class="preview-panel" data-preview-panel="plan" hidden>
-                  <div class="approve-card">
-                    <p class="approve-label">Approve plan</p>
-                    <ol class="approve-steps">
-                      <li>Extend <code>validate.ts</code> with edge cases</li>
-                      <li>Add tests in <code>validate.test.ts</code></li>
-                      <li>Run <code>node --test</code></li>
-                      <li>Hand off diff to QA Reviewer</li>
-                    </ol>
-                    <div class="approve-actions">
-                      <button type="button" class="btn btn-primary btn-sm" tabindex="-1">Allow once</button>
-                      <button type="button" class="btn btn-secondary btn-sm" tabindex="-1">Deny</button>
-                    </div>
-                  </div>
-                </div>
-                <div class="preview-panel" data-preview-panel="computer" hidden>
-                  <div class="mock-screen">
-                    <div class="mock-screen-bar">LIVE · 1280×800 · Bot driving</div>
-                    <div class="mock-screen-content">
-                      <div class="mock-browser">
-                        <span></span><span></span><span></span>
-                        <em>github.com · Pull requests</em>
-                      </div>
-                      <div class="mock-code"></div>
-                    </div>
-                  </div>
-                  <p class="mock-screen-note">Take control anytime — return responsibility when you are done.</p>
-                </div>
-              </div>
-            </div>
-          </div>
-          <p class="hero-caption">Illustrative studio chrome — the product runs locally on your machine.</p>
+        <div class="bot-parade" data-reveal data-bot-parade aria-label="Teammates with live status">
+          <!-- icons built by main.js -->
         </div>
+        <p class="hero-note" data-reveal id="botStatusLine">OCP Coder · working on your repo</p>
       </div>
     </section>
 
-    <div class="marquee-wrap" aria-hidden="true">
-      <div class="marquee">
-        <div class="marquee-track" data-marquee-track>
-          <span>OpenRouter</span><span>Ollama</span><span>LM Studio</span><span>vLLM</span><span>LiteLLM</span><span>Any OpenAI-compatible endpoint</span>
-        </div>
-      </div>
-    </div>
-
-    <section id="floor" class="section section-floor" aria-labelledby="floor-title">
-      <div class="wrap floor-grid">
-        <div data-reveal>
-          <h2 id="floor-title">One workspace.<br>Everyone on the thread.</h2>
-          <p class="section-lead">Coding, review, and security share one project room. You will see who is working, what changed, and when a gate needs you — from a roster and audit trail we keep on your machine, not in a hosted inbox.</p>
-          <ul class="hero-stats compact">
-            <li><strong>$0</strong> core forever</li>
-            <li><strong>Plan</strong> before code</li>
-            <li><strong>QA</strong> handoffs built in</li>
-          </ul>
-        </div>
-        <div class="floor-panels" data-reveal data-reveal-delay="1">
-          <div class="roster-card">
-            <header>Roster <span class="live-tag">Live</span></header>
-            <ul>
-              <li class="bot-row is-selected" data-hero-bot tabindex="0">
-                <span class="bot-avatar" data-state="working"></span>
-                <div><span class="bot-name">OCP Coder</span><span class="bot-status">Implementing · 3 files</span></div>
-              </li>
-              <li class="bot-row" data-hero-bot tabindex="0">
-                <span class="bot-avatar" data-state="thinking"></span>
-                <div><span class="bot-name">QA Reviewer</span><span class="bot-status">Reading diff</span></div>
-              </li>
-              <li class="bot-row" data-hero-bot tabindex="0">
-                <span class="bot-avatar" data-state="waiting"></span>
-                <div><span class="bot-name">Security</span><span class="bot-status">Awaiting approval</span></div>
-              </li>
-            </ul>
-            <footer data-hero-status><strong>OCP Coder</strong><span>Implementing · 3 files</span></footer>
-          </div>
-          <div class="thread-card">
-            <header>OpenCodingPartner / validate</header>
-            <div class="thread-scroll" data-live-thread aria-live="polite"></div>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <section class="commitments" aria-labelledby="commit-title">
+    <section id="features" class="features">
       <div class="wrap">
-        <h2 id="commit-title" class="visually-hidden">What we ship</h2>
-        <div class="commit-grid" data-reveal>
-          <article class="commit-card">
-            <h3>Decide, then act</h3>
-            <p>Plans and consequential tools wait on Allow once, Deny, or Redirect. Unattended runs fail closed — we record every outcome on the audit page.</p>
-          </article>
-          <article class="commit-card">
-            <h3>A computer per teammate</h3>
-            <p>Isolated displays and browser profiles per bot. Take control for sign-in, return responsibility when you are done — already in the studio you clone today.</p>
-          </article>
-          <article class="commit-card">
-            <h3>Your models, your meter</h3>
-            <p>No model in the box. OpenRouter or any OpenAI-compatible endpoint, including local Ollama. Keys never land in task logs or state files.</p>
-          </article>
+        <h2 data-reveal>Built in</h2>
+        <ul class="feature-list" data-reveal>
+          <li><span class="feature-dot"></span><div><strong>OCP Agent &amp; OCP Coder</strong><p>Coding, QA, security, research, and computer roles with optional external ACP binaries or the built-in runtime.</p></div></li>
+          <li><span class="feature-dot"></span><div><strong>Plan, approve, audit</strong><p>Plan-before-write, Allow once / Deny / Redirect, fail-closed when unattended, and a System audit of every action.</p></div></li>
+          <li><span class="feature-dot"></span><div><strong>Virtual computer</strong><p>Live 1280×800 stream, mouse and keyboard, isolated browser profiles — take control, then return it to the bot.</p></div></li>
+          <li><span class="feature-dot"></span><div><strong>Roster &amp; activity</strong><p>See who is working, blocked, or waiting; multi-bot threads and specialist review handoffs in one workspace.</p></div></li>
+          <li><span class="feature-dot"></span><div><strong>Memory &amp; guarded tools</strong><p>Workspace memory you can correct, task history recall, bounded file tools, and secret-pattern scanning.</p></div></li>
+          <li><span class="feature-dot"></span><div><strong>Plugin catalog</strong><p>Install skills and MCP connectors per bot — GitHub, Penpot, Storybook, Canva, image tools, and more from the shipped catalog.</p></div></li>
+          <li><span class="feature-dot"></span><div><strong>Library &amp; connect</strong><p>Skills, routines (cron, webhooks), Issue→PR, vault, BYO Google/Microsoft OAuth, Slack and Telegram drafts.</p></div></li>
+          <li><span class="feature-dot"></span><div><strong>Operator-owned</strong><p>No default model · OpenRouter or any OpenAI-compatible endpoint · usage meter · Dark, Light, System · first-run guide and Docker loopback.</p></div></li>
+        </ul>
+      </div>
+    </section>
+
+    <section class="thread-strip" aria-labelledby="thread-title">
+      <div class="wrap thread-wrap">
+        <h2 id="thread-title" class="visually-hidden">Example thread</h2>
+        <div class="thread-panel" data-reveal>
+          <div class="thread-lines" data-live-thread aria-live="polite"></div>
         </div>
       </div>
     </section>
 
-    <section id="studio" class="section" aria-labelledby="studio-title">
+    <section class="price-strip" data-reveal>
       <div class="wrap">
-        <div class="section-head center" data-reveal>
-          <h2 id="studio-title">Work with many teammates at once</h2>
-          <p class="section-lead narrow">We built the studio for a lead plus coding, QA, security, and computer roles in one workspace — with routines, skills, channel drafts, and an usage cap you control.</p>
-        </div>
-        <div class="bento" data-reveal data-reveal-delay="1">
-          <article class="bento-cell wide">
-            <h3>Roster-first studio</h3>
-            <p>Scan the sidebar like a team directory — not a graveyard of old chats.</p>
-          </article>
-          <article class="bento-cell">
-            <h3>Memory</h3>
-            <p>Per-workspace notes that survive the next task.</p>
-          </article>
-          <article class="bento-cell">
-            <h3>History recall</h3>
-            <p>Search prior transcripts in the same repo.</p>
-          </article>
-          <article class="bento-cell">
-            <h3>Guarded tools</h3>
-            <p>Bounded reads/writes with secret scanning.</p>
-          </article>
-          <article class="bento-cell wide tall">
-            <h3>Provider-neutral</h3>
-            <p>No default model. Route through OpenRouter or any OpenAI-compatible server — including local Ollama and LM Studio.</p>
-          </article>
-        </div>
+        <p class="price-label">Core</p>
+        <p class="price-value">$0</p>
+        <p class="price-note">Open source forever. You pay only the model providers you connect.</p>
       </div>
     </section>
 
-    <section id="roles" class="section section-alt" aria-labelledby="roles-title">
-      <div class="wrap role-layout" data-role-gallery>
-        <div data-reveal>
-          <h2 id="roles-title">Give each teammate a job</h2>
-          <p class="section-lead">Same studio, different responsibilities — pick a role to see how OCP frames the work.</p>
-          <div class="role-chips" role="tablist">
-            <button type="button" class="role-chip is-active" data-role="coding">Coding</button>
-            <button type="button" class="role-chip" data-role="qa">QA</button>
-            <button type="button" class="role-chip" data-role="security">Security</button>
-            <button type="button" class="role-chip" data-role="research">Research</button>
-            <button type="button" class="role-chip" data-role="computer">Computer</button>
-          </div>
-        </div>
-        <article class="role-detail" data-reveal data-reveal-delay="1">
-          <h3 data-role-title>OCP Coder</h3>
-          <p data-role-body>Ships features end to end: reads the repo, writes a plan, waits for your approve, edits files, runs checks, and opens a PR-ready diff.</p>
-        </article>
-      </div>
-    </section>
-
-    <section id="computer" class="section" aria-labelledby="computer-title">
-      <div class="wrap split-computer">
-        <div data-reveal>
-          <h2 id="computer-title">A computer you can share</h2>
-          <p class="section-lead">Each teammate can drive an isolated display — browser, mouse, keyboard — while you watch a live stream, click to take control, then return responsibility.</p>
-          <ul class="check-list">
-            <li>1280×800 virtual desktop per workspace</li>
-            <li>Human takeover without stopping the studio</li>
-            <li>Isolated browser profiles between bots on Linux</li>
-          </ul>
-        </div>
-        <figure class="computer-figure" data-reveal data-reveal-delay="1">
-          <div class="computer-frame">
-            <div class="computer-stream">
-              <span class="stream-badge">MJPEG · LIVE</span>
-              <div class="stream-ui"></div>
-            </div>
-          </div>
-        </figure>
-      </div>
-    </section>
-
-    <section id="pricing" class="section section-pricing" aria-labelledby="pricing-title">
-      <div class="wrap pricing-panel" data-reveal>
-        <h2 id="pricing-title">What it costs</h2>
-        <p class="price"><span class="price-num">$0</span></p>
-        <p class="section-lead">The core is free and open source. You pay only the model providers you choose — same as bringing your own keys to any serious agent stack.</p>
-      </div>
-    </section>
-
-    <section id="faq" class="section section-alt" aria-labelledby="faq-title">
-      <div class="wrap faq-wrap">
-        <h2 id="faq-title" data-reveal>Questions</h2>
-        <div class="faq-list" data-reveal data-reveal-delay="1">
-          <article class="faq-item" data-faq-item>
-            <button type="button" class="faq-trigger" data-faq-trigger aria-expanded="false">Is Open Coding Partner hosted?</button>
-            <div class="faq-body"><p>No. The studio binds to loopback (<code>127.0.0.1</code>) by default. This marketing site is separate; the product runs on your machine.</p></div>
-          </article>
-          <article class="faq-item" data-faq-item>
-            <button type="button" class="faq-trigger" data-faq-trigger aria-expanded="false">Which models can I use?</button>
-            <div class="faq-body"><p>Any model you configure — OpenRouter, or an OpenAI-compatible endpoint (Ollama, LM Studio, vLLM, custom). There is no default model baked in.</p></div>
-          </article>
-          <article class="faq-item" data-faq-item>
-            <button type="button" class="faq-trigger" data-faq-trigger aria-expanded="false">Where does my data live?</button>
-            <div class="faq-body"><p>Local state under your OS data directory (<code>OCP_DATA_DIR</code> optional). API keys are not written to task logs or backups.</p></div>
-          </article>
-          <article class="faq-item" data-faq-item>
-            <button type="button" class="faq-trigger" data-faq-trigger aria-expanded="false">How are dangerous actions handled?</button>
-            <div class="faq-body"><p>Consequential tool use requires explicit approval (allow once or deny). Plans wait for your <code>approve</code> before edits when partner rules apply.</p></div>
-          </article>
-          <article class="faq-item" data-faq-item>
-            <button type="button" class="faq-trigger" data-faq-trigger aria-expanded="false">Is it open source?</button>
-            <div class="faq-body"><p>Yes — Apache-2.0. Source on GitHub. Upstream runtimes are credited in NOTICE; no proprietary vendor source is vendored.</p></div>
-          </article>
-        </div>
-      </div>
-    </section>
-
-    <section id="download" class="section section-download" aria-labelledby="download-title">
+    <section id="faq" class="faq">
       <div class="wrap">
-        <h2 id="download-title" data-reveal>Get Open Coding Partner</h2>
-        <p class="section-lead center narrow" data-reveal>Requires Node.js ≥ 22.14 and pnpm. Docker optional for container isolation.</p>
-        <div class="platform-grid" data-reveal data-reveal-delay="1">
-          <a class="platform-card" href="#install"><span class="platform-icon mac"></span><strong>macOS</strong><span>Native computer desktop</span></a>
-          <a class="platform-card" href="#install"><span class="platform-icon linux"></span><strong>Linux</strong><span>Virtual X11 display</span></a>
-          <a class="platform-card" href="#install"><span class="platform-icon win"></span><strong>Windows</strong><span>Studio + CLI</span></a>
+        <h2 data-reveal>FAQ</h2>
+        <div class="faq-items" data-reveal>
+          <details>
+            <summary>Is the studio hosted?</summary>
+            <p>No. The app binds to <code>127.0.0.1</code> by default. This site is marketing only; the product runs locally.</p>
+          </details>
+          <details>
+            <summary>Which models work?</summary>
+            <p>Any you configure — OpenRouter or an OpenAI-compatible base URL (Ollama, LM Studio, vLLM, custom).</p>
+          </details>
+          <details>
+            <summary>Where is my data?</summary>
+            <p>On your machine under the OCP data directory. Keys are not stored in task logs or <code>state.json</code>.</p>
+          </details>
+          <details>
+            <summary>What are plugins?</summary>
+            <p>Manifests you install onto one bot — bundled skills and HTTP MCP connectors, with secrets in the vault. Not a hosted store.</p>
+          </details>
         </div>
-        <div id="install" class="install-block" data-reveal>
-          <div class="install-head">
-            <span>Quick install</span>
-            <button type="button" class="btn btn-secondary btn-sm" id="copyInstall">Copy</button>
-          </div>
-          <pre class="code-block" id="installCmd">git clone https://github.com/bgagandeep/OpenCodingPartner.git
+      </div>
+    </section>
+
+    <section id="start" class="start">
+      <div class="wrap">
+        <h2 data-reveal>Install</h2>
+        <p class="start-sub" data-reveal>Node.js ≥ 22.14 · pnpm · optional Docker for isolation</p>
+        <div class="install" data-reveal>
+          <button type="button" class="copy-btn" id="copyInstall">Copy</button>
+          <pre id="installCmd">git clone https://github.com/bgagandeep/OpenCodingPartner.git
 cd OpenCodingPartner
 corepack enable && corepack pnpm install && corepack pnpm build
 export OPENROUTER_API_KEY="your-key"
 corepack pnpm app
 open http://127.0.0.1:4317</pre>
-          <p class="fine-print"><a href="https://github.com/bgagandeep/OpenCodingPartner/blob/main/docs/onboarding.md">Onboarding guide</a> · <a href="https://github.com/bgagandeep/OpenCodingPartner">GitHub</a></p>
         </div>
+        <p class="start-links" data-reveal>
+          <a href="https://github.com/bgagandeep/OpenCodingPartner/blob/main/docs/onboarding.md">Onboarding</a>
+          <a href="https://github.com/bgagandeep/OpenCodingPartner/blob/main/docs/plugins.md">Plugins</a>
+        </p>
       </div>
     </section>
   </main>
 
-  <footer class="site-footer">
-    <div class="wrap footer-inner">
-      <p>© Open Coding Partner contributors</p>
-      <nav aria-label="Footer">
-        <a href="https://github.com/bgagandeep/OpenCodingPartner">GitHub</a>
-        <a href="https://github.com/bgagandeep/OpenCodingPartner/blob/main/ARCHITECTURE.md">Architecture</a>
-        <a href="https://github.com/bgagandeep/OpenCodingPartner/blob/main/ROADMAP.md">Roadmap</a>
-      </nav>
+  <footer class="footer">
+    <div class="wrap footer-row">
+      <span>© Open Coding Partner</span>
+      <a href="https://github.com/bgagandeep/OpenCodingPartner">GitHub</a>
     </div>
   </footer>
 

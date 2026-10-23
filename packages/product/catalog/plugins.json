@@ -492,5 +492,139 @@
     ],
     "accounts": [],
     "checksum": "sha256:038e8a152a96be012d58da3896eb6f603bb432f8eb646eee35963a8ee3621254"
+  },
+  {
+    "id": "penpot",
+    "name": "Penpot",
+    "description": "Read designs on the operator's own self-hosted Penpot instance. OCP does not ship a Penpot server. The operator supplies the instance URL and token.",
+    "version": "1.0.0",
+    "minOcpVersion": "0.2.0",
+    "skills": [
+      {
+        "name": "Read a Penpot design",
+        "whenToUse": "A design on the operator's Penpot instance should be read before a local change.",
+        "body": "1. Use only the Penpot instance URL and token saved for this bot.\n2. OCP does not include a Penpot client.\n3. Read the design the token can see and compare it with the workspace.\n4. Do not change the design until a person approves."
+      }
+    ],
+    "secrets": [
+      {
+        "name": "penpot-token",
+        "kind": "token",
+        "label": "Token from the operator's own Penpot instance",
+        "storage": "vault"
+      }
+    ],
+    "setupFields": [
+      {
+        "name": "instanceUrl",
+        "label": "Penpot instance URL you run",
+        "kind": "url",
+        "required": true
+      }
+    ],
+    "permissions": [
+      "network",
+      "workspace.read"
+    ],
+    "accounts": [],
+    "checksum": "sha256:77a2ed044cb2efee1ba8f13bf7e74990e089f4fa5d6fb1949fb4b4f1fbd251a8"
+  },
+  {
+    "id": "storybook",
+    "name": "Storybook",
+    "description": "Read stories and components and compare them with the design. The operator supplies a local or hosted Storybook URL. OCP does not host Storybook.",
+    "version": "1.0.0",
+    "minOcpVersion": "0.2.0",
+    "skills": [
+      {
+        "name": "Read Storybook stories",
+        "whenToUse": "Stories and components should be compared with the design.",
+        "body": "1. Use only the Storybook URL saved for this bot. It may be on this machine or hosted by the operator.\n2. OCP does not include a Storybook client.\n3. Read the stories and components and compare them with the design.\n4. Do not publish a change until a person approves."
+      }
+    ],
+    "secrets": [],
+    "setupFields": [
+      {
+        "name": "storybookUrl",
+        "label": "Storybook URL on this machine or hosted by you",
+        "kind": "url",
+        "required": true
+      }
+    ],
+    "permissions": [
+      "network",
+      "workspace.read"
+    ],
+    "accounts": [],
+    "checksum": "sha256:138741f959613644ec5b910c098d4c028c59236063aa2aa8498eae55b0048261"
+  },
+  {
+    "id": "canva",
+    "name": "Canva",
+    "description": "Draft marketing visuals with the operator's own Canva developer app. OCP does not ship a Canva client and does not add a payment scope.",
+    "version": "1.0.0",
+    "minOcpVersion": "0.2.0",
+    "skills": [
+      {
+        "name": "Draft a Canva visual",
+        "whenToUse": "A marketing visual should be drafted with the operator's own Canva app.",
+        "body": "1. Use only the Canva developer app the operator registered. OCP does not ship a Canva client.\n2. The vault item is the operator's access token. Do not invent a client.\n3. This is not the Google or Microsoft account in Accounts.\n4. Draft a marketing visual. Do not request a payment scope."
+      }
+    ],
+    "secrets": [
+      {
+        "name": "canva-token",
+        "kind": "oauth",
+        "label": "Access token from the operator's own Canva developer app",
+        "storage": "vault"
+      }
+    ],
+    "setupFields": [],
+    "permissions": [
+      "network"
+    ],
+    "accounts": [],
+    "checksum": "sha256:8e35fae50547de1709d91f21ffd988529a28e33b12235b8aee5a0f44729eaa42"
+  },
+  {
+    "id": "image-generation",
+    "name": "Image generation",
+    "description": "Create an image on an OpenAI-compatible endpoint the operator runs. The operator supplies the model key and URL. There is no default provider. The call is recorded on the usage meter.",
+    "version": "1.0.0",
+    "minOcpVersion": "0.2.0",
+    "skills": [
+      {
+        "name": "Generate an image",
+        "whenToUse": "An image should be created on the operator's own endpoint and counted on the usage meter.",
+        "body": "1. Call image_generate with the prompt.\n2. That tool uses only the endpoint URL and model key saved for this bot.\n3. There is no default provider.\n4. The call is recorded on the usage meter. If the meter refuses, stop.\n5. Do not request a payment."
+      }
+    ],
+    "secrets": [
+      {
+        "name": "image-model-key",
+        "kind": "token",
+        "label": "Model key for the operator's own image endpoint",
+        "storage": "vault"
+      }
+    ],
+    "setupFields": [
+      {
+        "name": "imageUrl",
+        "label": "OpenAI-compatible image endpoint URL you run",
+        "kind": "url",
+        "required": true
+      },
+      {
+        "name": "modelId",
+        "label": "Model id on that endpoint",
+        "kind": "text",
+        "required": true
+      }
+    ],
+    "permissions": [
+      "network"
+    ],
+    "accounts": [],
+    "checksum": "sha256:077e9d4093043960ce56955a49871ed807bf71ce592c015550efa617a399b7bc"
   }
 ]

@@ -229,6 +229,11 @@ export function parseManifest(input: unknown): PluginManifest {
   };
 }
 
+export async function installedPlugin(root: string, pluginId: string, botId: string): Promise<BotPluginInstall | undefined> {
+  const installs = await readInstalls(root);
+  return installs.find((item) => item.pluginId === pluginId && item.botId === botId);
+}
+
 export async function loadShippedCatalog(): Promise<PluginManifest[]> {
   const raw = await readCatalogRaw();
   const seen = new Set<string>();

@@ -53,6 +53,7 @@ import { runWorkspaceCommand, runWorkspaceTests } from "./sandbox-run.js";
 import { pageStoredToolOutput, toolOutputDataDir } from "./tool-trim.js";
 import { fillVaultLogin, type VaultChallenge } from "./vault.js";
 import { ACCOUNT_TOOL_DEFS, isAccountTool, runAccountTool } from "./accounts.js";
+import { generateOperatorImage } from "./images.js";
 import { visibleSkillCatalog } from "./plugins.js";
 import { gateTool, recordAudit } from "./teammate.js";
 
@@ -116,6 +117,7 @@ const DIRECT_TOOLS = [
   { name: "workspace_test", description: "Run node --test in the assigned workspace and return stdout/stderr.", inputSchema: { type: "object", properties: {} } },
   { name: "tool_output_read", description: "Read a full tool output that was trimmed from the conversation. Pass the handle toolout:ID. Optional offset and limit page a long stored output.", inputSchema: { type: "object", properties: { handle: { type: "string" }, offset: { type: "number" }, limit: { type: "number" } }, required: ["handle"] } },
   { name: "plan_submit", description: "Submit an implementation plan for human approval before coding edits. Required for coding writes.", inputSchema: { type: "object", properties: { plan: { type: "string" } }, required: ["plan"] } },
+  { name: "image_generate", description: "Create one image on the OpenAI-compatible endpoint saved by the Image generation plugin. There is no default provider. The call is recorded on the usage meter. Refuses when that plugin is not installed.", inputSchema: { type: "object", properties: { prompt: { type: "string" } }, required: ["prompt"] } },
   { name: "memory_search", description: "Search persistent workspace memory for facts, conventions, and past decisions.", inputSchema: { type: "object", properties: { query: { type: "string", description: "Keyword or phrase to search for; empty returns recent memories." } } } },
   { name: "memory_remember", description: "Save a concise non-secret fact, convention, or architectural decision to persistent workspace memory.", inputSchema: { type: "object", properties: { fact: { type: "string" } }, required: ["fact"] } },
   { name: "memory_forget", description: "Remove entries matching a phrase from persistent workspace memory.", inputSchema: { type: "object", properties: { query: { type: "string" } }, required: ["query"] } },
@@ -653,6 +655,12 @@ async function executeToolCall(root: string, name: string, args: Record<string, 
   if (name === "workspace_test") {
     const ran = await runWorkspaceTests(root);
     return mcpToolResult({ ok: ran.ok, detail: JSON.stringify(ran, null, 2).slice(0, 16_000) });
+  }
+
+  if (name === "image_generate") {
+    const prompt = typeof args.prompt === "string" ? args.prompt : "";
+    const botId = process.env.OCP_ACTOR_BOT_ID?.trim() ?? "";
+    return mcpToolResult(await generateOperatorImage(resolveDataDir(), { botId, prompt }));
   }
 
   const pathArg = typeof args.path === "string" ? args.path : "";

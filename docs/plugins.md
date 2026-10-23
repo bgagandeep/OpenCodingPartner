@@ -198,7 +198,7 @@ Copy on the pane states the limits: a plugin installs on one bot, a checksum doe
 
 ## Starter plugins
 
-These fourteen ship in `packages/product/catalog/plugins.json`. They are catalog entries and skill text. They are not running servers. Each one needs something the operator already controls. OCP does not ship the token, the OAuth client, or the MCP process.
+These eighteen ship in `packages/product/catalog/plugins.json`. They are catalog entries and skill text. They are not running servers. Each one needs something the operator already controls. OCP does not ship the token, the OAuth client, or the MCP process.
 
 | Plugin | What the operator provides | What it is allowed to do |
 | --- | --- | --- |
@@ -216,6 +216,10 @@ These fourteen ship in `packages/product/catalog/plugins.json`. They are catalog
 | PagerDuty | An API token in the vault, and an MCP URL. | Read incidents. Acknowledging or paging waits for approval. |
 | Teams drafts | No Graph application is included. The card is labeled **Draft only**. | A skill that uses the existing Teams reach draft. Allowing it still writes the local outbox and sends nothing. |
 | WhatsApp drafts | No Cloud API client is included. The card is labeled **Draft only**. | A skill that uses the existing WhatsApp draft. Allowing it still sends nothing. |
+| Penpot | The operator's own instance URL and a token in the vault. OCP does not ship a Penpot server or a Penpot client. | Read designs on that instance. Changing a design waits for approval. |
+| Storybook | A local or hosted Storybook URL. OCP does not host Storybook and does not include a Storybook client. | Read stories and components and compare them with the design. |
+| Canva | An access token from a Canva developer app the operator registers. OCP does not ship a Canva client. This is not the Google or Microsoft account in Accounts. | Draft marketing visuals. No payment scope is requested. |
+| Image generation | The operator's own OpenAI-compatible image endpoint URL, model id, and model key. There is no default provider and no baked host. | `image_generate` posts only to that endpoint and records the call on the usage meter. A meter cap stops the call before any request. |
 
 Voice and meeting plugins are not in this list. They are not now.
 
@@ -228,7 +232,7 @@ Sizes are the code each phase has to touch. They are not a release schedule.
 Shipped in this tree.
 
 - `packages/product/src/plugins.ts` parses a manifest, loads the shipped catalog, installs and uninstalls on one bot, and filters plugin skills by bot.
-- `packages/product/catalog/plugins.json` holds the fourteen starters. `minOcpVersion` is 0.2.0. `@opencodingpartner/product` is 0.2.0.
+- `packages/product/catalog/plugins.json` holds the eighteen starters, including Penpot, Storybook, Canva, and Image generation. `minOcpVersion` is 0.2.0. `@opencodingpartner/product` is 0.2.0.
 - `GET /api/plugins` returns the catalog without secrets. `POST /api/plugins/:id/install` and `POST /api/plugins/:id/uninstall` require the local app token.
 - The Plugins pane is in the Connect group.
 - `tool_search` and `tool_describe` use the per-bot skill filter.
@@ -263,6 +267,8 @@ Phase 1 tests live in `packages/product/src/plugins.test.ts`. They are local. Th
 - Uninstall removes the connector and secret. An edited skill file is kept when it is the last copy. Vault items stay unless **also delete saved secrets** is set.
 - A deny rule on `mcp:github/create_issue` still refuses that call. The audit row quotes the rule id.
 - Teams and WhatsApp manifests are `draftOnly` and do not request `message.send`.
+- Penpot, Storybook, Canva, and Image generation parse, match their checksums, and do not request `message.send` or `payment`. Penpot stores an instance URL and a vault token. Storybook stores a URL and no secret. Canva stores an oauth vault token and does not use the Google or Microsoft account. Image generation stores an endpoint URL, a model id, and a vault key.
+- Image generation calls only the saved endpoint. A missing install, a missing key, and a reached usage cap do not call a host. A completed call is recorded on the usage meter. `image_generate` is not part of a proactive pass.
 - The page HTML contains `data-tab="plugins"`, `id="pluginSearch"`, `id="pluginList"`, the checksum sentence, **Draft only**, and **also delete saved secrets**. The inline script parses. Search is an input listener over `state.plugins`.
 - `operatorCatalogDecision` refuses a shipped id and allows a new id.
 - Strict branding guard and lint stay clean. The pane does not mention voice as an available feature.
@@ -282,7 +288,9 @@ These were open in the first draft of this page. They are settled.
 
 ## Limits
 
-- The operator supplies every token, OAuth client, and MCP URL. Nothing in the catalog is a hosted integration.
+- The operator supplies every token, OAuth client, MCP URL, Penpot instance, Storybook URL, Canva app, and image endpoint. Nothing in the catalog is a hosted integration.
+- Penpot, Storybook, and Canva do not include those products' clients. They save what the operator types onto one bot.
+- Image generation has no default provider. `image_generate` uses the endpoint and key saved for that bot and records the call on the usage meter. Cost uses a price the operator enters. A loopback endpoint is counted as local.
 - A checksum does not constrain the remote server after install.
 - No operator catalog URL is fetched yet. No update route is built. No signature is pinned.
 - WhatsApp and Teams drafts still send nothing after Allow.

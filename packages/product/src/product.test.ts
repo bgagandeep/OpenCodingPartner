@@ -471,6 +471,7 @@ test("workspace MCP server exposes guarded workspace tools and blocks secrets/es
     assert.equal(names.includes("workspace_shell"), true);
     assert.equal(names.includes("workspace_test"), true);
     assert.equal(names.includes("plan_submit"), true);
+    assert.equal(names.includes("image_generate"), true);
 
     const writeOk = (
       await rpc("tools/call", {

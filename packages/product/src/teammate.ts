@@ -2,7 +2,7 @@ import { randomUUID, createHash } from "node:crypto";
 import { chmod, mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { securityGate } from "@opencodingpartner/workers";
-import { appendChannelLog, findBot, productDataDir } from "./index.js";
+import { appendChannelLog, createProductRoutine, findBot, listChannelLog, listProductRoutines, listTasks, productDataDir } from "./index.js";
 
 export const RESPONSIBILITY_CAP = 20;
 
@@ -22,6 +22,7 @@ export interface Responsibility {
   status: "open" | "done";
   progress: string;
   createdAt: string;
+  nextCheckAt?: string;
 }
 
 export interface UiComponent {
@@ -51,6 +52,13 @@ export interface DenyRule {
   id: string;
   tool: string;
   pathPrefix?: string;
+  argvPrefix?: string[];
+  initiator?: "person" | "routine" | "any";
+}
+
+export interface GateContext {
+  argv?: string[];
+  initiator?: "person" | "routine";
 }
 
 const TOOL_NAME = /^[A-Za-z0-9_.:-]{1,80}$/;
@@ -126,14 +134,33 @@ export async function createResponsibility(root: string, botId: string, goal: st
   return saved;
 }
 
-export async function updateResponsibility(root: string, id: string, patch: { status?: "open" | "done"; progress?: string }): Promise<Responsibility> {
+export async function updateResponsibility(root: string, id: string, patch: { status?: "open" | "done"; progress?: string; nextCheckAt?: string }): Promise<Responsibility> {
   const rows = await listResponsibilities(root);
   const row = rows.find((item) => item.id === id);
   if (!row) throw new Error("Unknown responsibility.");
   if (patch.status) row.status = patch.status;
   if (typeof patch.progress === "string") row.progress = patch.progress.trim().slice(0, 500);
+  if (typeof patch.nextCheckAt === "string") row.nextCheckAt = patch.nextCheckAt;
   await writeJson(file(root, "responsibilities.json"), rows);
   return row;
+}
+
+export const RESPONSIBILITY_CHECK_FLOOR_MS = 15 * 60 * 1000;
+
+/** Schedule a read-only check. The interval cannot be tighter than 15 minutes, and the routine is marked proactive. */
+export async function scheduleResponsibilityCheck(root: string, id: string, everyMs: number): Promise<{ responsibility: Responsibility; routineId: string }> {
+  const row = (await listResponsibilities(root)).find((item) => item.id === id);
+  if (!row || row.status !== "open") throw new Error("Only an open responsibility can schedule a check.");
+  if (!Number.isInteger(everyMs) || everyMs < RESPONSIBILITY_CHECK_FLOOR_MS) throw new Error("A responsibility check waits at least 15 minutes.");
+  const nextCheckAt = new Date(Date.now() + everyMs).toISOString();
+  const responsibility = await updateResponsibility(root, id, { nextCheckAt });
+  const routine = await createProductRoutine({
+    botId: row.botId,
+    prompt: `Check responsibility ${row.id}. Read only. Do not send, write, or drive the computer. ${row.goal}`,
+    everyMs,
+    proactive: true,
+  }, root);
+  return { responsibility, routineId: routine.id };
 }
 
 export async function listThreads(root: string): Promise<TeamThread[]> {
@@ -169,7 +196,7 @@ export async function createThread(root: string, botIds: string[], text: string)
   return thread;
 }
 
-export async function reachThread(root: string, threadId: string, channel: "slack" | "telegram" | "whatsapp", destination: string): Promise<TeamThread> {
+export async function reachThread(root: string, threadId: string, channel: "slack" | "telegram" | "whatsapp" | "teams", destination: string): Promise<TeamThread> {
   const rows = await listThreads(root);
   const thread = rows.find((item) => item.id === threadId);
   if (!thread) throw new Error("Unknown thread.");
@@ -244,14 +271,34 @@ export async function forgetMemory(workspace: string, query: string, root = prod
   return removed;
 }
 
+const RULE_KEYS = new Set(["id", "tool", "pathPrefix", "argvPrefix", "initiator"]);
+const ARGV_TOKEN = /^[A-Za-z0-9_./:@+=-]{1,40}$/;
+
 function validRule(value: unknown): value is DenyRule {
   if (!value || typeof value !== "object") return false;
   const row = value as DenyRule;
+  if (Object.keys(row).some((key) => !RULE_KEYS.has(key))) return false;
   if (typeof row.id !== "string" || !row.id) return false;
   if (typeof row.tool !== "string" || !TOOL_NAME.test(row.tool)) return false;
   if (row.pathPrefix !== undefined) {
     if (typeof row.pathPrefix !== "string" || !row.pathPrefix || row.pathPrefix.includes("..") || row.pathPrefix.startsWith("/")) return false;
   }
+  if (row.argvPrefix !== undefined) {
+    if (!Array.isArray(row.argvPrefix) || row.argvPrefix.length < 1 || row.argvPrefix.length > 8) return false;
+    if (row.argvPrefix.some((part) => typeof part !== "string" || !ARGV_TOKEN.test(part))) return false;
+  }
+  if (row.initiator !== undefined && row.initiator !== "person" && row.initiator !== "routine" && row.initiator !== "any") return false;
+  return true;
+}
+
+function ruleMatches(rule: DenyRule, tool: string, relativePath: string, context: GateContext): boolean {
+  if (rule.tool !== tool) return false;
+  if (rule.pathPrefix && !relativePath.replaceAll("\\", "/").startsWith(rule.pathPrefix)) return false;
+  if (rule.argvPrefix && rule.argvPrefix.length > 0) {
+    const argv = context.argv ?? [];
+    if (rule.argvPrefix.some((part, index) => argv[index] !== part)) return false;
+  }
+  if (rule.initiator && rule.initiator !== "any" && (context.initiator ?? "person") !== rule.initiator) return false;
   return true;
 }
 
@@ -262,16 +309,33 @@ export async function listDenyRules(root: string): Promise<{ rules: DenyRule[]; 
   return { rules: raw, broken: false };
 }
 
-export async function saveDenyRule(root: string, tool: string, pathPrefix?: string): Promise<DenyRule> {
+export async function saveDenyRule(
+  root: string,
+  tool: string,
+  pathPrefix?: string,
+  extra: { argvPrefix?: string[]; initiator?: DenyRule["initiator"] } = {},
+): Promise<DenyRule> {
   const current = await listDenyRules(root);
   if (current.broken) throw new Error("Deny rules are broken. Refusing to add one.");
-  const rule: DenyRule = { id: randomUUID(), tool: tool.trim(), ...(pathPrefix?.trim() ? { pathPrefix: pathPrefix.trim() } : {}) };
-  if (!validRule(rule)) throw new Error("A deny rule needs a tool name and an optional relative path prefix.");
+  const argvPrefix = extra.argvPrefix?.map((part) => part.trim()).filter(Boolean);
+  const rule: DenyRule = {
+    id: randomUUID(),
+    tool: tool.trim(),
+    ...(pathPrefix?.trim() ? { pathPrefix: pathPrefix.trim() } : {}),
+    ...(argvPrefix && argvPrefix.length > 0 ? { argvPrefix } : {}),
+    ...(extra.initiator ? { initiator: extra.initiator } : {}),
+  };
+  if (!validRule(rule)) throw new Error("A deny rule needs a tool name, and may name a relative path, a command prefix, and who it applies to.");
   await writeJson(file(root, "deny-rules.json"), [...current.rules, rule]);
   return rule;
 }
 
-export async function gateTool(root: string, tool: string, relativePath: string): Promise<{ ok: true } | { ok: false; ruleId: string; detail: string }> {
+export async function gateTool(
+  root: string,
+  tool: string,
+  relativePath: string,
+  context: GateContext = {},
+): Promise<{ ok: true } | { ok: false; ruleId: string; detail: string }> {
   let raw: unknown;
   try {
     raw = JSON.parse(await readFile(file(root, "deny-rules.json"), "utf8"));
@@ -282,7 +346,67 @@ export async function gateTool(root: string, tool: string, relativePath: string)
   }
   if (!Array.isArray(raw) || raw.some((item) => !validRule(item))) return { ok: false, ruleId: "broken", detail: "Refused by rule broken." };
   const rules = raw as DenyRule[];
-  const match = rules.find((rule) => rule.tool === tool && (!rule.pathPrefix || relativePath.replaceAll("\\", "/").startsWith(rule.pathPrefix)));
+  const match = rules.find((rule) => ruleMatches(rule, tool, relativePath, context));
   if (!match) return { ok: true };
   return { ok: false, ruleId: match.id, detail: `Refused by rule ${match.id}.` };
+}
+
+export interface ActivityItem {
+  id: string;
+  kind: "approval" | "draft" | "responsibility" | "routine";
+  title: string;
+  at: string;
+  status: string;
+}
+
+/** Approvals, unsent drafts, open responsibilities, and routines. Draft text, destinations, and secrets are left out. */
+export async function buildActivity(root: string): Promise<{ items: ActivityItem[] }> {
+  const [tasks, log, responsibilities, routines] = await Promise.all([
+    listTasks(root),
+    listChannelLog(root),
+    listResponsibilities(root),
+    listProductRoutines(root),
+  ]);
+  const items: ActivityItem[] = [];
+  for (const task of tasks) {
+    if (!task.pendingApproval) continue;
+    items.push({
+      id: task.pendingApproval.id,
+      kind: "approval",
+      title: redactAuditText(task.pendingApproval.title),
+      at: task.pendingApproval.requestedAt,
+      status: "waiting",
+    });
+  }
+  for (const entry of log) {
+    if (entry.direction !== "out" || entry.status !== "draft") continue;
+    items.push({
+      id: entry.id,
+      kind: "draft",
+      title: `${entry.channel} draft`,
+      at: entry.createdAt,
+      status: "draft",
+    });
+  }
+  for (const row of responsibilities) {
+    if (row.status !== "open") continue;
+    items.push({
+      id: row.id,
+      kind: "responsibility",
+      title: redactAuditText(row.goal),
+      at: row.nextCheckAt ?? row.createdAt,
+      status: row.nextCheckAt ? "scheduled" : "open",
+    });
+  }
+  for (const routine of routines) {
+    items.push({
+      id: routine.id,
+      kind: "routine",
+      title: redactAuditText(routine.prompt),
+      at: routine.lastRunAt ?? routine.createdAt,
+      status: routine.status,
+    });
+  }
+  items.sort((a, b) => b.at.localeCompare(a.at));
+  return { items: items.slice(0, 100) };
 }

@@ -45,6 +45,10 @@ const STARTER_IDS = [
   "pagerduty",
   "teams-drafts",
   "whatsapp-drafts",
+  "penpot",
+  "storybook",
+  "canva",
+  "image-generation",
 ];
 
 function fileEnv(root: string): NodeJS.ProcessEnv {
@@ -175,6 +179,34 @@ test("shipped plugins parse at product version 0.2.0 and a colliding operator id
   assert.equal(toolClaimsSend("message_send", "ok"), true);
   assert.equal(toolClaimsSend("ping", "This sends a message"), true);
   assert.equal(toolClaimsSend("ping", "Allowing it still sends nothing"), false);
+  const design = ["penpot", "storybook", "canva", "image-generation"];
+  for (const id of design) {
+    const plugin = catalog.find((item) => item.id === id);
+    assert.ok(plugin, id);
+    assert.equal(plugin.accounts.length, 0, id);
+    assert.equal(plugin.draftOnly, false, id);
+    assert.equal(JSON.stringify(plugin).includes("sk-"), false, id);
+  }
+  const penpot = catalog.find((item) => item.id === "penpot");
+  assert.equal(penpot?.setupFields.some((field) => field.name === "instanceUrl" && field.kind === "url" && field.required), true);
+  assert.equal(penpot?.secrets.some((secret) => secret.name === "penpot-token" && secret.storage === "vault"), true);
+  const storybook = catalog.find((item) => item.id === "storybook");
+  assert.equal(storybook?.setupFields.some((field) => field.name === "storybookUrl" && field.kind === "url" && field.required), true);
+  assert.equal(storybook?.secrets.length, 0);
+  const canva = catalog.find((item) => item.id === "canva");
+  assert.equal(canva?.secrets.some((secret) => secret.name === "canva-token" && secret.kind === "oauth" && secret.storage === "vault"), true);
+  assert.equal(canva?.setupFields.length, 0);
+  const image = catalog.find((item) => item.id === "image-generation");
+  assert.match(image?.description ?? "", /no default provider/i);
+  assert.match(image?.description ?? "", /usage meter/i);
+  assert.equal(image?.setupFields.some((field) => field.name === "imageUrl" && field.kind === "url" && field.required), true);
+  assert.equal(image?.setupFields.some((field) => field.name === "modelId" && field.kind === "text" && field.required), true);
+  assert.equal(image?.secrets.some((secret) => secret.name === "image-model-key" && secret.storage === "vault"), true);
+  assert.match(image?.skills[0]?.body ?? "", /image_generate/);
+  for (const plugin of [penpot, storybook, canva, image]) {
+    const hay = `${plugin?.name ?? ""} ${plugin?.description ?? ""}`.toLowerCase();
+    assert.equal(hay.includes(plugin?.name.toLowerCase() ?? "missing"), true);
+  }
 });
 
 test("invalid plugin manifests are refused before anything is written", async () => {
@@ -367,7 +399,10 @@ test("the plugins tab lists shipped cards and the install route does not echo a 
     assert.equal(open.status, 200);
     const catalog = await open.json() as { version: string; plugins: Array<{ id: string; draftOnly: boolean; checksumPrefix: string; secrets: Array<{ label: string }> }> };
     assert.equal(catalog.version, "0.2.0");
-    assert.equal(catalog.plugins.length, 14);
+    assert.equal(catalog.plugins.length, 18);
+    for (const id of ["penpot", "storybook", "canva", "image-generation"]) {
+      assert.equal(catalog.plugins.some((plugin) => plugin.id === id), true, id);
+    }
     assert.equal(catalog.plugins.find((plugin) => plugin.id === "whatsapp-drafts")?.draftOnly, true);
     assert.equal(JSON.stringify(catalog).includes(SECRET), false);
     const github = (await rawCatalog()).find((plugin) => plugin.id === "github");

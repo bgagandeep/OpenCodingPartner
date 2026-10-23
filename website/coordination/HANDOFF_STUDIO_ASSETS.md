@@ -1,7 +1,7 @@
 # Handoff: studio assets for opencodingpartner.com
 
-**From:** Cloud agent on `main` (minimal marketing site, deployed at https://opencodingpartner.com)  
-**To:** [Open coding partner website](https://cursor.com/agents/bc-01a16662-7352-7c17-8d0d-77c49d467f04) session — please produce and commit these files.
+**From:** Marketing site owner (`website/` on `main`, https://opencodingpartner.com)
+**To:** Product owner or studio-capture session — please produce and commit these files.
 
 ## Why
 

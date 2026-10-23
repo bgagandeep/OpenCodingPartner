@@ -183,8 +183,9 @@
     const script = [
       { c: "thread-you", t: "Add validation tests — approve the plan first." },
       { c: "thread-bot", t: "Plan ready: 4 steps, then node --test." },
-      { c: "thread-sys", t: "Waiting for approve" },
+      { c: "thread-sys", t: "Waiting for approve · expires in 10 min" },
       { c: "thread-you", t: "approve" },
+      { c: "thread-bot", t: "Hand-off queued for QA Reviewer." },
       { c: "thread-bot", t: "QA: exit 0 on the suite." },
     ];
     let idx = 0;

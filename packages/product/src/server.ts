@@ -2251,6 +2251,13 @@ button.chip:hover{background:var(--chip-hover);box-shadow:none}
 .nav-item.selected button.ghost:hover{background:var(--hover)}
 .nav-item.selected .orb{box-shadow:var(--selection-orb)}
 .nav-item .nav-main{display:flex;align-items:center;gap:8px;min-width:0;flex:1}
+.plugin-card{flex-direction:column;align-items:stretch;cursor:default;gap:6px;min-width:0}
+.plugin-card>*{min-width:0;max-width:100%}
+.plugin-card .nav-main{flex-wrap:wrap}
+.plugin-card strong,.plugin-card p,.plugin-card .meta{white-space:normal;overflow-wrap:anywhere}
+.plugin-card p{margin:0}
+.plugin-card form,.plugin-card details{display:grid;gap:6px}
+.plugin-card summary{cursor:pointer}
 .nav-item strong{font-size:14px;font-weight:590;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .nav-actions{display:none;gap:2px}
 .nav-item:hover .nav-actions,.nav-item:focus-within .nav-actions{display:flex}
@@ -3557,7 +3564,7 @@ function renderPlugins(){
     const secrets=(p.secrets||[]).map(secret=>'<label>'+esc(secret.label)+'<input type="password" name="secret:'+esc(secret.name)+'" autocomplete="off"></label>').join('');
     const accounts=(p.accounts||[]).length?'<p class="meta">Uses the '+esc(p.accounts.join(' and '))+' account already saved in Accounts. This plugin does not add another OAuth client.</p>':'';
     const skills=(p.skillNames||[]).length?'<div class="meta">Skill: '+esc(p.skillNames.join(', '))+'</div>':'';
-    return '<div class="nav-item" data-plugin="'+esc(p.id)+'"><div class="nav-main"><strong>'+esc(p.name)+'</strong>'+draft+installed+' <span class="pill">Shipped</span></div><div class="meta">'+esc(p.version)+' · '+esc(p.checksumPrefix)+'</div><p>'+esc(p.description)+'</p>'+skills+'<div class="meta">'+perms+'</div>'+accounts+'<form data-plugin-install="'+esc(p.id)+'"><label>Bot<select name="botId" required>'+options+'</select></label>'+fields+secrets+'<button type="submit">Install</button></form><form data-plugin-uninstall="'+esc(p.id)+'"><label>Bot<select name="botId" required>'+options+'</select></label><label><input type="checkbox" name="deleteSecrets"> also delete saved secrets</label><button type="submit" class="secondary">Uninstall</button></form></div>';
+    return '<div class="nav-item plugin-card" data-plugin="'+esc(p.id)+'"><div class="nav-main"><strong>'+esc(p.name)+'</strong>'+draft+installed+' <span class="pill">Shipped</span></div><div class="meta">'+esc(p.version)+' · '+esc(p.checksumPrefix)+'</div><p>'+esc(p.description)+'</p>'+skills+'<div class="meta">'+perms+'</div>'+accounts+'<details><summary>Install</summary><form data-plugin-install="'+esc(p.id)+'"><label>Bot<select name="botId" required>'+options+'</select></label>'+fields+secrets+'<button type="submit">Install</button></form></details><details><summary>Uninstall</summary><form data-plugin-uninstall="'+esc(p.id)+'"><label>Bot<select name="botId" required>'+options+'</select></label><label><input type="checkbox" name="deleteSecrets"> also delete saved secrets</label><button type="submit" class="secondary">Uninstall</button></form></details></div>';
   }).join('');
   box.querySelectorAll('[data-plugin-install]').forEach(form=>form.addEventListener('submit',async e=>{
     e.preventDefault();

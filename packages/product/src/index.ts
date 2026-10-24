@@ -16,6 +16,27 @@ import { deleteMcpSecretsForBot, readMcpSecret } from "./mcp-secrets.js";
 
 export { captureWorkspaceBaseline, collectWorkspaceChanges, type WorkspaceBaseline, type WorkspaceChangeEntry, type WorkspaceChangeReview } from "./workspace.js";
 export { runWorkspaceCommand, runWorkspaceTests, type SandboxCommandResult } from "./sandbox-run.js";
+export {
+  globalTracer,
+  persistTrace,
+  loadPersistedTrace,
+  listPersistedTraces,
+  type TelemetryTrace,
+  type TelemetrySpan,
+  type FlamegraphNode,
+  type ObservabilityMode,
+} from "./telemetry.js";
+export {
+  createTaskWorktree,
+  discardTaskWorktree,
+  reconcileTaskWorktree,
+  listTaskWorktrees,
+  isGitRepository,
+  worktreesDir,
+  type TaskWorktree,
+  type WorktreeResult,
+} from "./worktree.js";
+export { runWorkspaceMcp, readWorkspaceFile } from "./workspace-mcp.js";
 
 export type BotRole = "general" | "coding" | "qa" | "security" | "research" | "computer";
 export type BotRuntime = "ocp-agent" | "ocp-coder" | "hermes" | "grok-build";
@@ -71,6 +92,9 @@ export interface ProductTask {
   initiator?: "person" | "routine";
   routineId?: string;
   proactive?: boolean;
+  worktreePath?: string;
+  dagParentId?: string;
+  parallel?: boolean;
 }
 
 export interface TaskAgentSnapshot {
@@ -839,11 +863,11 @@ export async function writeBotMcpServers(id: string, mcpServers: BotMcpServer[],
 }
 
 export async function createTask(
-  input: Pick<ProductTask, "botId" | "prompt"> & Partial<Pick<ProductTask, "reviewerBotId" | "channelOrigin" | "initiator" | "routineId" | "proactive">>,
+  input: Pick<ProductTask, "botId" | "prompt"> & Partial<Pick<ProductTask, "id" | "reviewerBotId" | "channelOrigin" | "initiator" | "routineId" | "proactive" | "worktreePath" | "dagParentId" | "parallel">>,
   root = productDataDir(),
 ): Promise<ProductTask> {
   const now = new Date().toISOString();
-  const task: ProductTask = { ...input, id: randomUUID(), status: "queued", processId: process.pid, processIdentity: processIdentity(process.pid), createdAt: now, updatedAt: now };
+  const task: ProductTask = { ...input, id: input.id ?? randomUUID(), status: "queued", processId: process.pid, processIdentity: processIdentity(process.pid), createdAt: now, updatedAt: now };
   await mutateState(root, async (state) => {
     recoverAbandonedTaskRecords(state);
     const bot = state.bots.find((item) => item.id === task.botId);
@@ -882,6 +906,7 @@ export async function workspaceHasBusyTask(workspace: string, root = productData
   const state = await readState(root);
   for (const task of state.tasks) {
     if (!["running", "awaiting-approval"].includes(task.status)) continue;
+    if (task.worktreePath) continue; // Isolated in its own Git worktree sandbox
     const owner = state.bots.find((bot) => bot.id === task.botId);
     if (owner && (await workspacesOverlap(workspace, owner.workspace))) return true;
   }

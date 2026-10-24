@@ -4,6 +4,8 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import path from "node:path";
 import { readFile, stat } from "node:fs/promises";
 import { readWorkspaceFile } from "./workspace-mcp.js";
+import { globalTracer, listPersistedTraces, loadPersistedTrace } from "./telemetry.js";
+import { discardTaskWorktree, listTaskWorktrees, reconcileTaskWorktree } from "./worktree.js";
 import { buildActivity, correctMemory, createResponsibility, createThread, forgetMemory, listAudit, listDenyRules, listMemory, listResponsibilities, listThreads, reachThread, recordAudit, saveDenyRule, scheduleResponsibilityCheck, updateResponsibility } from "./teammate.js";
 import { appendTeamsOutbox, appendWhatsappOutbox, createDirectoryUser, executeAguiRun, listAgents, listDirectory, listPages, loginCompanyAssertion, loginDirectory, registerAgent, savePage, setCompanyAssertionSecret } from "./category.js";
 import {
@@ -684,6 +686,72 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
           effectiveEnv.OPENAI_API_KEY,
         ),
       });
+      return;
+    }
+    if (request.method === "GET" && url.pathname === "/api/telemetry/traces") {
+      const recent = globalTracer.getRecentTraces();
+      const persisted = await listPersistedTraces(root).catch(() => []);
+      sendJson(response, 200, {
+        mode: globalTracer.getMode(),
+        traces: recent.length > 0 ? recent : persisted,
+      });
+      return;
+    }
+    if (request.method === "GET" && url.pathname === "/api/telemetry/traces/detail") {
+      const traceId = url.searchParams.get("traceId") ?? "";
+      const trace = globalTracer.getTrace(traceId) ?? (await loadPersistedTrace(root, traceId));
+      if (!trace) {
+        sendJson(response, 404, { error: "Trace not found" });
+        return;
+      }
+      const flamegraph = globalTracer.toFlamegraph(traceId);
+      sendJson(response, 200, { trace, flamegraph });
+      return;
+    }
+    if (request.method === "GET" && url.pathname === "/api/telemetry/mode") {
+      sendJson(response, 200, { mode: globalTracer.getMode() });
+      return;
+    }
+    if (request.method === "POST" && url.pathname === "/api/telemetry/mode") {
+      const body = await readJson(request);
+      const mode = (body as Record<string, unknown> | null)?.mode;
+      if (mode === "off" || mode === "standard" || mode === "deep") {
+        globalTracer.setMode(mode);
+        sendJson(response, 200, { ok: true, mode });
+      } else {
+        sendJson(response, 400, { error: "Invalid mode. Must be off, standard, or deep." });
+      }
+      return;
+    }
+    if (request.method === "GET" && url.pathname === "/api/worktrees") {
+      const ws = url.searchParams.get("workspace") ?? root;
+      const list = await listTaskWorktrees(ws);
+      sendJson(response, 200, { worktrees: list });
+      return;
+    }
+    if (request.method === "POST" && url.pathname === "/api/worktrees/discard") {
+      const body = await readJson(request);
+      const ws = (body as Record<string, unknown> | null)?.workspace as string ?? root;
+      const taskId = (body as Record<string, unknown> | null)?.taskId as string;
+      if (!taskId) {
+        sendJson(response, 400, { error: "taskId is required" });
+        return;
+      }
+      const result = await discardTaskWorktree(ws, taskId);
+      sendJson(response, result.ok ? 200 : 500, result);
+      return;
+    }
+    if (request.method === "POST" && url.pathname === "/api/worktrees/reconcile") {
+      const body = await readJson(request);
+      const ws = (body as Record<string, unknown> | null)?.workspace as string ?? root;
+      const taskId = (body as Record<string, unknown> | null)?.taskId as string;
+      const message = (body as Record<string, unknown> | null)?.message as string | undefined;
+      if (!taskId) {
+        sendJson(response, 400, { error: "taskId is required" });
+        return;
+      }
+      const result = await reconcileTaskWorktree(ws, taskId, { message });
+      sendJson(response, result.ok ? 200 : 500, result);
       return;
     }
     if (request.method === "POST" && (url.pathname === "/api/channels/slack" || url.pathname === "/api/channels/telegram")) {
@@ -1784,9 +1852,15 @@ export async function startProductApp(options: AppOptions = {}): Promise<{ serve
     const nextBot = await findBot(next.botId, root);
     if (!nextBot) return;
     const reviewer = next.reviewerBotId ? await findBot(next.reviewerBotId, root) : undefined;
-    const baseline = await captureWorkspaceBaseline(nextBot.workspace);
+    const targetWorkspace = next.worktreePath ?? nextBot.workspace;
+    const effectiveBot = next.worktreePath ? { ...nextBot, workspace: targetWorkspace } : nextBot;
+    const effectiveReviewer = reviewer && next.worktreePath ? { ...reviewer, workspace: targetWorkspace } : reviewer;
+    const baseline = await captureWorkspaceBaseline(targetWorkspace);
     await updateTask(next.id, { status: "running", processId: process.pid }, root);
-    launchTask(next.id, nextBot, reviewer, next.prompt, baseline);
+    launchTask(next.id, effectiveBot, effectiveReviewer, next.prompt, baseline);
+    if (next.worktreePath) {
+      void drainWorkspaceQueue(workspace);
+    }
   }
 
   async function waitForApproval(taskId: string, request: RuntimePermissionRequest): Promise<string | undefined> {
@@ -2361,6 +2435,21 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;font:12.5px/1.45 ui-monospace,SF
 .proj-meta-card{background:var(--card);border:1px solid var(--card-line);border-radius:14px;padding:12px 14px;box-shadow:var(--card-shadow)}
 .proj-meta-card strong{display:block;font-size:15px;font-weight:650;letter-spacing:-.02em}
 .sidebar-foot{margin-top:auto;padding-top:12px;border-top:1px solid var(--line);font-size:12px;color:var(--muted);display:flex;flex-wrap:wrap;gap:6px}
+.center-col.split-active{display:grid;grid-template-columns:1fr 1fr;height:100%;overflow:hidden}
+.center-col.split-active #chatStageView{border-right:1px solid var(--line);min-width:0}
+.center-col.split-active #reviewStageView{display:flex!important;min-width:0}
+.review-stage{display:flex;flex-direction:column;height:100%;min-height:0;background:var(--surface);overflow-y:auto}
+.review-stage-header{padding:12px 16px;border-bottom:1px solid var(--line);background:var(--header-bg);flex-shrink:0}
+.review-canvas-content{padding:16px;flex:1;min-height:0;overflow-y:auto}
+.diff-file-card{background:var(--surface-2);border:1px solid var(--line);border-radius:10px;margin-bottom:14px;overflow:hidden}
+.diff-file-head{padding:8px 12px;background:rgba(255,255,255,.03);border-bottom:1px solid var(--line);font-family:ui-monospace,monospace;font-size:13px;font-weight:600;display:flex;justify-content:space-between;align-items:center}
+.diff-pre{margin:0;padding:10px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;line-height:1.5;overflow-x:auto;max-height:480px;white-space:pre-wrap}
+.diff-add{color:#4ade80;background:rgba(74,222,128,.1);display:block}
+.diff-del{color:#f87171;background:rgba(248,113,113,.1);display:block}
+.diff-info{color:#60a5fa;background:rgba(96,165,250,.08);display:block}
+.trace-card{background:var(--surface-2);border:1px solid var(--line);border-radius:10px;padding:10px 14px;margin-bottom:8px;cursor:pointer}
+.trace-card:hover{border-color:var(--accent)}
+.flame-node{margin:4px 0;padding:6px 10px;border-radius:6px;background:rgba(0,210,255,.06);border-left:3px solid var(--accent);font-family:ui-monospace,monospace;font-size:12px}
 .hidden{display:none!important}
 .palette{position:fixed;inset:14vh 0 auto;margin:auto;width:min(560px,92vw);z-index:40;border-radius:16px;padding:8px;background:var(--palette-bg);border:1px solid var(--palette-line);box-shadow:var(--palette-shadow)}
 .palette input{margin-bottom:6px;border:0;background:var(--palette-field);border-radius:10px}
@@ -2438,6 +2527,7 @@ li{margin:4px 0}
   </div>
   <div class="stage-switch" role="tablist" aria-label="Workspace View">
     <button type="button" class="stage-btn active" id="viewChatBtn" aria-selected="true">Team Chat</button>
+    <button type="button" class="stage-btn" id="viewSplitBtn" aria-selected="false">Zen Split / Review</button>
     <button type="button" class="stage-btn" id="viewComputerBtn" aria-selected="false">Virtual Computer</button>
   </div>
   ${themeSwitch(theme, "Theme")}
@@ -2517,6 +2607,26 @@ li{margin:4px 0}
     <div id="computerStageView" class="comp-stage hidden">
       <div id="computerStagePanel" class="col-flex"></div>
     </div>
+
+    <div id="reviewStageView" class="review-stage hidden">
+      <div class="review-stage-header">
+        <div class="row spread">
+          <div class="row">
+            <strong style="font-size: 15px;">Live Diff &amp; Review Canvas</strong>
+            <span id="reviewWorktreeBadge" class="pill" style="font-size: 11px;">Git Worktree Sandbox</span>
+          </div>
+          <div class="row">
+            <button type="button" class="secondary" id="refreshReviewBtn">Refresh Diff</button>
+            <button type="button" class="danger" id="discardWorktreeBtn" title="Instant Time Machine rollback">Rollback Worktree</button>
+            <button type="button" id="reconcileWorktreeBtn" title="Merge changes into main workspace">Approve &amp; Merge</button>
+          </div>
+        </div>
+        <div class="meta" id="reviewStatsText" style="margin-top: 6px;">Tracking clean isolated changes before merging into your working tree.</div>
+      </div>
+      <div id="reviewCanvasContent" class="review-canvas-content">
+        <div class="empty-state" style="padding: 32px; text-align: center; color: var(--muted);">No active worktree or pending diff. Run a coding task to inspect live changes here.</div>
+      </div>
+    </div>
   </section>
 
   <aside class="inspector" id="inspectorDrawer">
@@ -2526,6 +2636,7 @@ li{margin:4px 0}
         <div class="tab-group-label">Work</div>
         <button type="button" class="tab active" data-tab="detail">Activity</button>
         <button type="button" class="tab" data-tab="drafts">Drafts</button>
+        <button type="button" class="tab" data-tab="traces">Traces</button>
       </div>
       <div class="tab-group">
         <div class="tab-group-label">Team</div>
@@ -2828,6 +2939,25 @@ li{margin:4px 0}
         <h2>Drafts</h2>
         <p class="sub">Every outbound email or message stays here until you send it. Nothing is sent automatically.</p>
         <div id="draftsPanel"></div>
+      </div>
+
+      <div id="tab-traces" class="tab-pane hidden">
+        <h2>Observability &amp; Traces</h2>
+        <p class="sub">End-to-end OpenTelemetry GenAI spans, latency flamegraphs, and token metering.</p>
+        <div class="row mb-sm" style="margin-bottom: 12px;">
+          <span style="font-size: 13px; font-weight: 500;">Observability:</span>
+          <div class="stage-switch" style="display: inline-flex;">
+            <button type="button" class="stage-btn" id="telemetryModeOff">Off</button>
+            <button type="button" class="stage-btn" id="telemetryModeStandard">Standard</button>
+            <button type="button" class="stage-btn" id="telemetryModeDeep">Deep Trace</button>
+          </div>
+        </div>
+        <div class="row spread mb-sm">
+          <strong style="font-size: 13px;">Recent Session Traces</strong>
+          <button type="button" class="secondary" id="refreshTracesBtn">Refresh</button>
+        </div>
+        <div id="tracesList" class="nav-list mt-sm"></div>
+        <div id="traceDetail" class="mt-sm"></div>
       </div>
 
       <div id="tab-skills" class="tab-pane hidden">
@@ -3259,12 +3389,18 @@ function renderMd(raw){
 function setCenterView(mode){
   centerView=mode;
   document.querySelector('#viewChatBtn').classList.toggle('active',mode==='chat');
+  document.querySelector('#viewSplitBtn')?.classList.toggle('active',mode==='split');
   document.querySelector('#viewComputerBtn').classList.toggle('active',mode==='computer');
   document.querySelector('#viewChatBtn').setAttribute('aria-selected',String(mode==='chat'));
+  document.querySelector('#viewSplitBtn')?.setAttribute('aria-selected',String(mode==='split'));
   document.querySelector('#viewComputerBtn').setAttribute('aria-selected',String(mode==='computer'));
-  document.querySelector('#chatStageView').classList.toggle('hidden',mode!=='chat');
-  document.querySelector('#computerStageView').classList.toggle('hidden',mode!=='computer');
+
+  document.querySelector('.center-col')?.classList.toggle('split-active', mode==='split');
+  document.querySelector('#chatStageView').classList.toggle('hidden', mode==='computer');
+  document.querySelector('#reviewStageView')?.classList.toggle('hidden', mode!=='split');
+  document.querySelector('#computerStageView').classList.toggle('hidden', mode!=='computer');
   if(mode==='computer')refreshComputer(true);
+  if(mode==='split')renderReviewCanvas();
 }
 
 function setTab(tabName){
@@ -3273,16 +3409,139 @@ function setTab(tabName){
   document.querySelector('#inspectorDrawer').classList.remove('hidden');
   document.querySelectorAll('.tab').forEach(btn=>btn.classList.toggle('active',btn.dataset.tab===tabName));
   document.querySelectorAll('.tab-pane').forEach(pane=>pane.classList.toggle('hidden',pane.id!=='tab-'+tabName));
+  if(tabName==='traces')renderTracesTab();
 }
 document.querySelectorAll('.tab').forEach(btn=>btn.addEventListener('click',()=>setTab(btn.dataset.tab)));
 document.querySelector('#pluginSearch').addEventListener('input',()=>renderPlugins());
 document.querySelector('#viewChatBtn').addEventListener('click',()=>setCenterView('chat'));
+document.querySelector('#viewSplitBtn')?.addEventListener('click',()=>setCenterView('split'));
 document.querySelector('#viewComputerBtn').addEventListener('click',()=>setCenterView('computer'));
 document.querySelector('#openComputerFromChatBtn').addEventListener('click',()=>setCenterView('computer'));
 document.querySelector('#toggleDrawerBtn').addEventListener('click',()=>{
   const closed=document.querySelector('#studioGrid').classList.toggle('drawer-closed');
   document.querySelector('#inspectorDrawer').classList.toggle('hidden',closed);
 });
+
+async function renderReviewCanvas(){
+  const container = document.querySelector('#reviewCanvasContent');
+  if(!container)return;
+  const t = projectTasks().find(x=>x.id===selected)||projectTasks()[0];
+  let worktrees = [];
+  try {
+    const wtRes = await api('/api/worktrees');
+    worktrees = wtRes.worktrees || [];
+  } catch {}
+
+  const activeWt = worktrees.find(w=>t && w.path.includes(t.id)) || worktrees[0];
+  const badge = document.querySelector('#reviewWorktreeBadge');
+  if(badge){
+    badge.textContent = activeWt ? 'Worktree: ' + activeWt.branch : (t?.worktreePath ? 'Worktree Active' : 'Base Workspace');
+  }
+
+  const diff = t?.workspaceChanges?.diff || '';
+  const files = t?.workspaceChanges?.files || [];
+
+  if(!activeWt && !diff && !files.length){
+    container.innerHTML = '<div class="empty-state" style="padding: 40px; text-align: center; color: var(--muted);"><strong style="display:block;margin-bottom:8px;font-size:16px;">Workspace is Clean</strong>No pending Git worktree or uncommitted modifications. Changes will stream here in real-time as bots work.</div>';
+    return;
+  }
+
+  let html = '';
+  if(activeWt){
+    html += '<div style="background:var(--card);border:1px solid var(--card-line);border-radius:10px;padding:10px 14px;margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;"><div><strong>Isolated Branch: <code>' + esc(activeWt.branch) + '</code></strong><div class="meta" style="font-size:11px;">Path: ' + esc(activeWt.path) + '</div></div><span class="pill" style="color:var(--accent);">Active Sandbox</span></div>';
+  }
+
+  if(files.length){
+    html += '<div style="margin-bottom:12px;display:flex;gap:6px;flex-wrap:wrap;">' + files.map(f=>'<span class="pill" style="font-size:12px;font-family:monospace;">' + esc(f.status) + ' ' + esc(f.path) + '</span>').join('') + '</div>';
+  }
+
+  if(diff){
+    const formattedLines = diff.split('\\n').map(line=>{
+      if(line.startsWith('+') && !line.startsWith('+++')) return '<span class="diff-add">' + esc(line) + '</span>';
+      if(line.startsWith('-') && !line.startsWith('---')) return '<span class="diff-del">' + esc(line) + '</span>';
+      if(line.startsWith('@@') || line.startsWith('diff --git')) return '<span class="diff-info">' + esc(line) + '</span>';
+      return esc(line);
+    }).join('\\n');
+
+    html += '<div class="diff-file-card"><div class="diff-file-head"><span>Unified Diff</span><span>' + files.length + ' file(s) modified</span></div><pre class="diff-pre">' + formattedLines + '</pre></div>';
+  } else {
+    html += '<div class="empty-state" style="padding:20px;text-align:center;color:var(--muted);">Files modified in isolated sandbox, awaiting commit diff.</div>';
+  }
+
+  container.innerHTML = html;
+}
+
+document.querySelector('#refreshReviewBtn')?.addEventListener('click', ()=>renderReviewCanvas());
+document.querySelector('#discardWorktreeBtn')?.addEventListener('click', async()=>{
+  const t = projectTasks().find(x=>x.id===selected)||projectTasks()[0];
+  if(!t){ alert('No active task selected'); return; }
+  if(!confirm('Discard this task worktree? All uncommitted edits will be rolled back.')) return;
+  try {
+    await api('/api/worktrees/discard', { taskId: t.id }, 'POST');
+    await load();
+    renderReviewCanvas();
+  } catch(e) { alert(e.message); }
+});
+document.querySelector('#reconcileWorktreeBtn')?.addEventListener('click', async()=>{
+  const t = projectTasks().find(x=>x.id===selected)||projectTasks()[0];
+  if(!t){ alert('No active task selected'); return; }
+  try {
+    await api('/api/worktrees/reconcile', { taskId: t.id, message: 'Approve & merge task ' + t.id }, 'POST');
+    await load();
+    renderReviewCanvas();
+  } catch(e) { alert(e.message); }
+});
+
+async function renderTracesTab(){
+  try {
+    const modeRes = await api('/api/telemetry/mode');
+    const mode = modeRes.mode || 'standard';
+    document.querySelector('#telemetryModeOff')?.classList.toggle('active', mode==='off');
+    document.querySelector('#telemetryModeStandard')?.classList.toggle('active', mode==='standard');
+    document.querySelector('#telemetryModeDeep')?.classList.toggle('active', mode==='deep');
+
+    const tracesRes = await api('/api/telemetry/traces');
+    const traces = tracesRes.traces || [];
+    const list = document.querySelector('#tracesList');
+    if(!list) return;
+    if(!traces.length){
+      list.innerHTML = '<div class="meta" style="padding:14px;text-align:center;">No persisted telemetry traces yet. Run an agent task to record spans.</div>';
+      return;
+    }
+
+    list.innerHTML = traces.map(tr=>'<div class="trace-card" data-trace-id="' + esc(tr.traceId) + '"><div class="row spread"><strong>Trace: ' + esc(tr.traceId.slice(0,12)) + '…</strong><span class="pill">' + (tr.durationMs ? Math.round(tr.durationMs) + 'ms' : 'active') + '</span></div><div class="meta" style="margin-top:4px;font-size:11px;">Spans: ' + (tr.spans?.length || 0) + ' · Tokens: ' + (tr.totalTokens || 0) + ' · Cost: $' + ((tr.totalCostUsd || 0).toFixed(4)) + '</div></div>').join('');
+
+    document.querySelectorAll('[data-trace-id]').forEach(card=>card.addEventListener('click', async()=>{
+      const id = card.dataset.traceId;
+      const detailEl = document.querySelector('#traceDetail');
+      if(!detailEl) return;
+      detailEl.innerHTML = '<div class="meta">Loading flamegraph…</div>';
+      try {
+        const detail = await api('/api/telemetry/traces/detail?traceId=' + encodeURIComponent(id));
+        const flame = detail.flamegraph;
+        function renderFlame(node, depth=0){
+          let out = '<div class="flame-node" style="margin-left:' + (depth*12) + 'px;"><div class="row spread"><strong>' + esc(node.name) + '</strong><span class="meta">' + Math.round(node.value) + 'ms</span></div>';
+          if(node.attributes && node.attributes['gen_ai.system']){
+            out += '<div class="meta" style="font-size:10px;">Model: ' + esc(String(node.attributes['gen_ai.request.model'] || '')) + ' · Tokens: ' + esc(String(node.attributes['gen_ai.usage.total_tokens'] || '')) + '</div>';
+          }
+          if(node.children && node.children.length){
+            out += node.children.map(c=>renderFlame(c, depth+1)).join('');
+          }
+          out += '</div>';
+          return out;
+        }
+        detailEl.innerHTML = '<h3>Latency Flamegraph</h3>' + (flame ? renderFlame(flame) : '<div class="meta">No hierarchy found.</div>');
+      } catch(err) {
+        detailEl.innerHTML = '<div class="meta" style="color:var(--danger);">' + esc(err.message) + '</div>';
+      }
+    }));
+  } catch(e){}
+}
+
+document.querySelector('#telemetryModeOff')?.addEventListener('click', async()=>{ await api('/api/telemetry/mode', { mode: 'off' }, 'POST'); renderTracesTab(); });
+document.querySelector('#telemetryModeStandard')?.addEventListener('click', async()=>{ await api('/api/telemetry/mode', { mode: 'standard' }, 'POST'); renderTracesTab(); });
+document.querySelector('#telemetryModeDeep')?.addEventListener('click', async()=>{ await api('/api/telemetry/mode', { mode: 'deep' }, 'POST'); renderTracesTab(); });
+document.querySelector('#refreshTracesBtn')?.addEventListener('click', ()=>renderTracesTab());
 
 async function api(url,body,method){
   const r=await fetch(url,{method:method||(body?'POST':'GET'),headers:body?{'content-type':'application/json','x-ocp-token':TOKEN}:{},body:body?JSON.stringify(body):undefined});

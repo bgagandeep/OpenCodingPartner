@@ -43,6 +43,14 @@ test("the app refuses a public bind, a foreign origin, and a tokenless write", a
     }, "POST", JSON.stringify({ theme: "light" })), 403);
     const html = await (await fetch(app.url)).text();
     assert.match(html, /<html lang="en" data-theme="dark">/);
+
+    const tracesRes = await fetch(`${app.url}/api/telemetry/traces`);
+    assert.equal(tracesRes.status, 200);
+    const tracesJson = await tracesRes.json() as { mode: string; traces: unknown[] };
+    assert.ok(tracesJson.mode);
+
+    const modeRes = await fetch(`${app.url}/api/telemetry/mode`);
+    assert.equal(modeRes.status, 200);
   } finally {
     await app.close();
     await rm(root, { recursive: true, force: true });

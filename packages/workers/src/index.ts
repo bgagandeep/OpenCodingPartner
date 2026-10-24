@@ -22,3 +22,14 @@ export { grokBuildArgv, runOnGrokBuild, type InjectedRunner } from "./grok.js";
 export { openAiCompatibleRunner, parseFileEdits, type FileEdit, type OpenAiCoderOptions } from "./openai.js";
 export { changedSandboxFiles, fileExpectations, qaCheckFile, reviewChangedFiles, reviewComputerClaim, reviewFileExpectations, snapshotSandbox, type FileExpectation, type QaResult } from "./qa.js";
 export { securityGate, type GateDecision, type GateInput } from "./security.js";
+export {
+  CodePropertyGraph,
+  globalCodeGraph,
+  extractTypeScriptSymbols,
+  type CodeSymbolNode,
+  type CodeSymbolEdge,
+  type BlastRadiusResult,
+  type SymbolKind,
+  type EdgeKind,
+  type RepoMapEntry,
+} from "./code-graph.js";

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createServer } from "node:http";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -3431,3 +3431,48 @@ test("the cli file is the ocp entry when spawned", () => {
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("ocp mcp serves JSON-RPC protocol over stdio", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "ocp-mcp-test-"));
+  try {
+    // Test invalid flag usage
+    assert.equal(await main(["mcp", "--extra-bad"]), 2);
+
+    const script = path.join(repoRoot, "packages/cli/dist/main.js");
+    const child = spawn(process.execPath, [script, "mcp", "--workspace", root], {
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+
+    const initMsg = JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: { protocolVersion: "2024-11-05" },
+    }) + "\n";
+
+    child.stdin.write(initMsg);
+
+    const stdoutData = await new Promise<string>((resolve, reject) => {
+      let data = "";
+      child.stdout.on("data", (chunk: Buffer) => {
+        data += chunk.toString("utf8");
+        if (data.includes("\n")) {
+          resolve(data);
+        }
+      });
+      child.on("error", reject);
+      const timer = setTimeout(() => reject(new Error("Timeout waiting for MCP response")), 5000);
+      timer.unref();
+    });
+
+    child.stdin.end();
+    child.kill();
+
+    const response = JSON.parse(stdoutData.trim().split("\n")[0] ?? "{}");
+    assert.equal(response.id, 1);
+    assert.equal(response.result.serverInfo.name, "opencodingpartner-workspace");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+

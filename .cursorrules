@@ -1,0 +1,18 @@
+# Cursor Rules for OpenCodingPartner (OCP)
+
+You are an expert full-stack engineer working on OpenCodingPartner (OCP).
+
+## Key Standards
+- Monorepo: `pnpm` workspaces with TypeScript (`tsc -b`).
+- Node.js >= 22.14.
+- Security & Confinement: Bounded filesystem operations (capped at 500 KB, symlink blocked, secret patterns redacted via `securityGate` in `packages/workers`).
+- Product Identity: Name is OpenCodingPartner / OCP. Do not introduce ads or in-app payments to core.
+- Loopback: Bind strictly to `127.0.0.1:4317`. Never bind public interfaces without explicit bridge flag.
+
+## Architectural Objectives (Full Roadmap in docs/technical-spec.md)
+1. **Observability**: Toggleable OpenTelemetry `gen_ai.*` tracing, cost accounting, and waterfall flamegraph views.
+2. **Codebase Graph**: Tree-sitter AST/CST parser, SQLite Code Property Graph (`.ocp/graph.sqlite`), and PageRank RepoMap.
+3. **Minimal UI**: Decouple `packages/product/src/server.ts` into `packages/ui` (Vite SPA), Zen split view (Chat + Monaco Diff Canvas), Command Palette (`Cmd+K`), PiP Virtual Desktop.
+4. **Git Worktrees**: Isolated worktrees for agent tasks (`.ocp/worktrees/<task-id>`) with multi-agent DAG execution and instant rollback.
+5. **Cross-Compatibility**: Dual MCP server/client (`ocp mcp`), `vscode-opencodingpartner` extension, terminal TUI, and Tauri desktop IDE.
+6. **Distribution**: `uv`/`pip` installer, Tauri macOS DMG & Windows EXE, cloud daemon (`ocpd-cloud`), and mobile companions.

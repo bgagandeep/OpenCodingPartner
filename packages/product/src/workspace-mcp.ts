@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { chmod, lstat, mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -16,6 +16,7 @@ import {
   rmdirSandboxDir,
   securityGate,
   writeSandboxFile,
+  globalCodeGraph,
 } from "@opencodingpartner/workers";
 import { invokeExternalTool, loadExternalCatalog, parseExternalToolName, type ExternalToolCatalog } from "./connectors.js";
 import {
@@ -56,8 +57,13 @@ import { ACCOUNT_TOOL_DEFS, isAccountTool, runAccountTool } from "./accounts.js"
 import { generateOperatorImage } from "./images.js";
 import { visibleSkillCatalog } from "./plugins.js";
 import { gateTool, recordAudit } from "./teammate.js";
+import { globalTracer } from "./telemetry.js";
+import { createTaskWorktree, discardTaskWorktree, reconcileTaskWorktree, isGitRepository } from "./worktree.js";
 
 const PROACTIVE_ALLOWED = new Set([
+  "code_symbol_find",
+  "code_blast_radius",
+  "code_repomap",
   "workspace_read",
   "workspace_list",
   "memory_search",
@@ -134,6 +140,11 @@ const DIRECT_TOOLS = [
   { name: "bot_delete", description: "Delete an inactive bot from the fleet by ID or name.", inputSchema: { type: "object", properties: { bot: { type: "string", description: "Bot ID or name to delete." } }, required: ["bot"] } },
   { name: "bot_delegate", description: "Delegate a task to another bot in the fleet (by ID or name), optionally chaining a QA or security reviewer bot, and return the teammate's response.", inputSchema: { type: "object", properties: { bot: { type: "string", description: "Target bot ID or name (e.g. Linus, Grace)." }, prompt: { type: "string", description: "Task instructions for the delegated bot." }, reviewer: { type: "string", description: "Optional QA or security reviewer bot ID or name." } }, required: ["bot", "prompt"] } },
   { name: "swarm_setup", description: "Provision a complete multi-agent engineering team (Ada Lead Orchestrator, Linus OCP Coder, Grace QA Reviewer, Sentinel Security Auditor, Atlas Computer Specialist) in the current workspace.", inputSchema: { type: "object", properties: {} } },
+  { name: "code_symbol_find", description: "Search the workspace Code Property Graph for functions, classes, interfaces, types, or routes.", inputSchema: { type: "object", properties: { query: { type: "string", description: "Symbol name or signature substring." } }, required: ["query"] } },
+  { name: "code_blast_radius", description: "Analyze the blast radius and downstream callers affected before modifying a function or class.", inputSchema: { type: "object", properties: { path: { type: "string", description: "Relative file path." }, symbol: { type: "string", description: "Target symbol name to analyze." } }, required: ["path", "symbol"] } },
+  { name: "code_repomap", description: "Generate a compact, token-efficient architectural symbol outline (RepoMap) of the workspace.", inputSchema: { type: "object", properties: { maxChars: { type: "number", description: "Maximum character budget (default 2000)." } } } },
+  { name: "swarm_parallel_dispatch", description: "Concurrently dispatch a DAG of subtasks across parallel bots, each isolated in their own Git worktree sandboxes to avoid file conflicts.", inputSchema: { type: "object", properties: { tasks: { type: "array", items: { type: "object", properties: { bot: { type: "string", description: "Target bot ID or name (e.g. Linus, Grace, Sentinel)." }, prompt: { type: "string", description: "Task instructions for the delegated bot." }, reviewer: { type: "string", description: "Optional QA or security reviewer bot ID or name." }, useWorktree: { type: "boolean", description: "Whether to run in an isolated Git worktree (default true if git repo)." } }, required: ["bot", "prompt"] }, description: "List of subtasks to execute in parallel." } }, required: ["tasks"] } },
+  { name: "swarm_reconcile", description: "Reconcile and merge a completed subtask's Git worktree back into the main workspace, or discard it (Time Machine rollback).", inputSchema: { type: "object", properties: { taskId: { type: "string", description: "The task ID whose worktree to reconcile or discard." }, action: { type: "string", enum: ["merge", "discard"], description: "Action: 'merge' to integrate worktree changes, 'discard' to rollback." }, message: { type: "string", description: "Optional commit message when merging." } }, required: ["taskId", "action"] } },
 ];
 
 const DISCOVERY_TOOLS = [
@@ -142,7 +153,9 @@ const DISCOVERY_TOOLS = [
   { name: "tool_call", description: "Invoke a built-in workspace tool or an attached external MCP tool (mcp:server/tool) by name and arguments. External calls are approved by the session before they run.", inputSchema: { type: "object", properties: { name: { type: "string" }, arguments: { type: "object" } }, required: ["name"] } },
 ];
 
-const TOOLS = [...DIRECT_TOOLS, ...ACCOUNT_TOOL_DEFS, ...DISCOVERY_TOOLS];
+function getAllTools() {
+  return [...DIRECT_TOOLS, ...(ACCOUNT_TOOL_DEFS || []), ...DISCOVERY_TOOLS];
+}
 const DISCOVERY_NAMES = new Set(DISCOVERY_TOOLS.map((t) => t.name));
 const MAX_FILE_BYTES = 500_000;
 
@@ -225,7 +238,7 @@ async function handleMcpRequest(root: string, method: string, params: Record<str
     return { protocolVersion: typeof params.protocolVersion === "string" ? params.protocolVersion : "2024-11-05", capabilities: { tools: { listChanged: false } }, serverInfo: { name: "opencodingpartner-workspace", version: "0.1.0" } };
   }
   if (method === "ping") return {};
-  if (method === "tools/list") return { tools: TOOLS };
+  if (method === "tools/list") return { tools: getAllTools() };
   if (method !== "tools/call") throw new Error(`Unsupported MCP method: ${method}`);
   const name = typeof params.name === "string" ? params.name : "";
   const args = params.arguments && typeof params.arguments === "object" && !Array.isArray(params.arguments) ? params.arguments as Record<string, unknown> : {};
@@ -238,18 +251,38 @@ async function safeExternalCatalog(): Promise<ExternalToolCatalog> {
 }
 
 async function executeToolCall(root: string, name: string, args: Record<string, unknown>, viaDiscovery: boolean): Promise<unknown> {
+  const traceId = process.env.OCP_TELEMETRY_TRACE_ID;
+  const span = traceId
+    ? globalTracer.startSpan(traceId, `tool:${name}`, {
+        attributes: {
+          "gen_ai.operation.name": "tool_call",
+          "gen_ai.tool.name": name,
+          "gen_ai.tool.arguments": JSON.stringify(args).slice(0, 500),
+        },
+      })
+    : undefined;
+
+  const finish = <T extends { isError?: boolean }>(res: T): T => {
+    if (traceId && span) {
+      globalTracer.endSpan(traceId, span.id, {
+        status: res.isError ? "error" : "ok",
+      });
+    }
+    return res;
+  };
+
   if (name !== "workspace_shell") {
     const blocked = await proactiveBlock(name);
-    if (blocked) return mcpToolResult(blocked);
+    if (blocked) return finish(mcpToolResult(blocked));
   }
   if (name === "workspace_shell") {
     const argv = Array.isArray(args.argv) ? args.argv.filter((item): item is string => typeof item === "string") : [];
-    return mcpToolResult(await runGatedShell(root, argv));
+    return finish(mcpToolResult(await runGatedShell(root, argv)));
   }
   const decision = await decideToolGate(name, args);
   if (!decision.ok) {
     await recordAudit(resolveDataDir(), { outcome: "refused", action: name, ruleId: decision.ruleId, detail: decision.detail });
-    return mcpToolResult({ ok: false, detail: decision.detail });
+    return finish(mcpToolResult({ ok: false, detail: decision.detail }));
   }
   if (name === "tool_search") {
     if (viaDiscovery) return mcpToolResult({ ok: false, detail: "A discovery tool cannot call another discovery tool." });
@@ -626,6 +659,102 @@ async function executeToolCall(root: string, name: string, args: Record<string, 
     }
   }
 
+  if (name === "swarm_parallel_dispatch") {
+    const rawTasks = Array.isArray(args.tasks) ? args.tasks : [];
+    if (rawTasks.length === 0) {
+      return mcpToolResult({ ok: false, detail: "swarm_parallel_dispatch requires a non-empty 'tasks' array." });
+    }
+    const isGit = await isGitRepository(root);
+    const parentTaskId = process.env.OCP_TASK_ID;
+    const dispatched: Array<{ taskId: string; bot: string; role: string; worktreePath?: string; status: string }> = [];
+
+    for (const item of rawTasks) {
+      if (typeof item !== "object" || !item) continue;
+      const targetRef = typeof (item as Record<string, unknown>).bot === "string" ? ((item as Record<string, unknown>).bot as string).trim() : "";
+      const delegatedPrompt = typeof (item as Record<string, unknown>).prompt === "string" ? ((item as Record<string, unknown>).prompt as string).trim() : "";
+      const reviewerRef = typeof (item as Record<string, unknown>).reviewer === "string" ? ((item as Record<string, unknown>).reviewer as string).trim() : "";
+      const useWorktree = (item as Record<string, unknown>).useWorktree !== false;
+
+      if (!targetRef || !delegatedPrompt) continue;
+      const targetBot = await findBot(targetRef, dataDir, root);
+      if (!targetBot) continue;
+      const reviewerBot = reviewerRef ? await findBot(reviewerRef, dataDir, root) : undefined;
+
+      const subTaskId = randomUUID();
+      let worktreePath: string | undefined;
+
+      if (isGit && useWorktree) {
+        const wtResult = await createTaskWorktree(targetBot.workspace, subTaskId);
+        if (wtResult.ok && wtResult.worktree) {
+          worktreePath = wtResult.worktree.worktreePath;
+        }
+      }
+
+      await createTask(
+        {
+          id: subTaskId,
+          botId: targetBot.id,
+          prompt: delegatedPrompt,
+          reviewerBotId: reviewerBot?.id,
+          worktreePath,
+          dagParentId: parentTaskId,
+          parallel: true,
+        },
+        dataDir,
+      );
+
+      dispatched.push({
+        taskId: subTaskId,
+        bot: targetBot.name,
+        role: targetBot.role,
+        worktreePath,
+        status: "queued-parallel",
+      });
+    }
+
+    return mcpToolResult({
+      ok: true,
+      detail: JSON.stringify(
+        {
+          ok: true,
+          dispatchedCount: dispatched.length,
+          tasks: dispatched,
+          message: `Dispatched ${dispatched.length} parallel tasks in isolated Git worktree sandboxes.`,
+        },
+        null,
+        2,
+      ),
+    });
+  }
+
+  if (name === "swarm_reconcile") {
+    const taskId = typeof args.taskId === "string" ? args.taskId.trim() : "";
+    const action = typeof args.action === "string" ? args.action.trim() : "merge";
+    const message = typeof args.message === "string" ? args.message.trim() : undefined;
+
+    if (!taskId) {
+      return mcpToolResult({ ok: false, detail: "swarm_reconcile requires a 'taskId'." });
+    }
+
+    if (action === "discard") {
+      const res = await discardTaskWorktree(root, taskId);
+      return mcpToolResult({
+        ok: res.ok,
+        detail: res.ok
+          ? `Worktree for task ${taskId} successfully discarded (rollback complete).`
+          : `Failed to discard worktree: ${res.error}`,
+      });
+    }
+
+    const res = await reconcileTaskWorktree(root, taskId, { message });
+    return mcpToolResult({
+      ok: res.ok,
+      detail: res.ok
+        ? `Worktree for task ${taskId} successfully merged into workspace.`
+        : `Reconcile failed: ${res.error}`,
+    });
+  }
+
   if (name === "plan_submit") {
     const plan = typeof args.plan === "string" ? args.plan.trim() : "";
     const taskId = process.env.OCP_TASK_ID;
@@ -661,6 +790,25 @@ async function executeToolCall(root: string, name: string, args: Record<string, 
     const prompt = typeof args.prompt === "string" ? args.prompt : "";
     const botId = process.env.OCP_ACTOR_BOT_ID?.trim() ?? "";
     return mcpToolResult(await generateOperatorImage(resolveDataDir(), { botId, prompt }));
+  }
+
+  if (name === "code_symbol_find") {
+    const query = typeof args.query === "string" ? args.query : "";
+    const hits = globalCodeGraph.findSymbols(query);
+    return mcpToolResult({ ok: true, detail: JSON.stringify(hits, null, 2) });
+  }
+
+  if (name === "code_blast_radius") {
+    const targetPath = typeof args.path === "string" ? args.path : "";
+    const symbol = typeof args.symbol === "string" ? args.symbol : "";
+    const blast = globalCodeGraph.calculateBlastRadius(targetPath, symbol);
+    return mcpToolResult({ ok: true, detail: JSON.stringify(blast, null, 2) });
+  }
+
+  if (name === "code_repomap") {
+    const maxChars = typeof args.maxChars === "number" ? args.maxChars : 2000;
+    const outline = globalCodeGraph.generateRepoMap(maxChars);
+    return mcpToolResult({ ok: true, detail: outline });
   }
 
   const pathArg = typeof args.path === "string" ? args.path : "";
@@ -752,7 +900,7 @@ async function executeToolCall(root: string, name: string, args: Record<string, 
     await assertSafeWorkspacePath(root, pathArg, true);
     result = await rmdirSandboxDir(root, pathArg);
   } else throw new Error(`Unknown workspace tool: ${name}`);
-  return mcpToolResult(result);
+  return finish(mcpToolResult(result));
 }
 
 function mcpToolResult(result: { ok: boolean; detail: string }) {
